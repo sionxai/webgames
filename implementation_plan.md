@@ -1,3 +1,22 @@
+# WEBGAMES Portal Plan
+
+## Goal
+
+여러 웹게임을 모아 광고 수익을 내는 포털. `/` 홈에서 게임을 고르고 `/games/<id>/`에서 플레이한다 (Vite 멀티엔트리 MPA).
+
+## Portal Work Packages
+
+- [x] PT1 — GitHub 연동: origin 등록, 베이스라인 커밋/푸시, .gitignore
+- [x] PT2 — 멀티엔트리 전환: 루트 홈 엔트리 + `games/forge/` 게임 엔트리, vite input 등록
+- [x] PT3 — 홈 UI: 히어로, 게임 그리드, 광고 슬롯 placeholder, 정책 푸터(LegalDocsModal 재사용)
+- [x] PT4 — 게임 레지스트리(`src/home/games.ts`)와 신규 게임 추가 절차 문서화(README)
+- [x] PT5 — 검증: tsc+build exit 0, 데스크톱/모바일 실검, 콘솔 오류 0
+- [ ] PT6 — 배포: 호스팅 선정(Vercel/Netlify 등), 도메인, og:image 절대 URL 교체
+- [ ] PT7 — 광고: AdSense 신청, `.ad-slot` 실코드 교체, ads.txt
+- [ ] PT8 — 두 번째 게임 기획·구현 (레지스트리 등록으로 홈 노출)
+
+---
+
 # Project Forge UI/UX & Economy Development Plan
 
 ## Goal

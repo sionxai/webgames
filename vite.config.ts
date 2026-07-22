@@ -6,5 +6,13 @@ export default defineConfig({
   server: {
     port: 3000,
     open: false
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        home: 'index.html',
+        forge: 'games/forge/index.html'
+      }
+    }
   }
 });
