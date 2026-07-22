@@ -2,12 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   calculateEnhancePreview,
   calculateSwordSellValue,
-  getCatalystGateStatus,
+  getRequiredProgressChargeId,
   SWORD_SERIES_LIST,
   SWORD_STAGES
 } from '../../constants/gameBalance';
-import { CatalystActivationResult, EnhanceAttemptResult, UserGameProfile } from '../../types/game';
-import { MaterialSprite } from '../common/MaterialSprite';
+import { EnhanceAttemptResult, EnhancePreview, UserGameProfile } from '../../types/game';
 import { SwordSprite } from '../common/SwordSprite';
 import confetti from 'canvas-confetti';
 import { AlertTriangle, ArrowRight, Coins, RotateCcw, ShieldCheck, Tv, Wrench, Zap } from 'lucide-react';
@@ -15,7 +14,6 @@ import { AlertTriangle, ArrowRight, Coins, RotateCcw, ShieldCheck, Tv, Wrench, Z
 interface EnhancePanelProps {
   profile: UserGameProfile;
   onAttemptEnhance: () => EnhanceAttemptResult | null;
-  onActivateCatalyst: () => CatalystActivationResult;
   onRepairCrack: () => void;
   onAdRestore: () => void;
   onFinishRun: () => void;
@@ -31,10 +29,27 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function getDisplayedRates(preview: EnhancePreview) {
+  const raw = [preview.successRate, preview.keepRate, preview.crackRate, preview.dropRate];
+  const tenths = raw.map(rate => Math.floor(rate * 10 + Number.EPSILON));
+  const remainder = 1000 - tenths.reduce((sum, rate) => sum + rate, 0);
+  const order = raw
+    .map((rate, index) => ({ index, fraction: rate * 10 - tenths[index] }))
+    .sort((left, right) => right.fraction - left.fraction);
+  for (let index = 0; index < remainder; index += 1) {
+    tenths[order[index % order.length].index] += 1;
+  }
+  return {
+    success: tenths[0] / 10,
+    keep: tenths[1] / 10,
+    crack: tenths[2] / 10,
+    drop: tenths[3] / 10
+  };
+}
+
 export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   profile,
   onAttemptEnhance,
-  onActivateCatalyst,
   onRepairCrack,
   onAdRestore,
   onFinishRun,
@@ -66,35 +81,22 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   const estimatedEssences = Math.floor(Math.pow(profile.currentLevel, 1.2));
   const isDestroyed = profile.currentCrackCount >= 3;
   const isMaxLevel = profile.currentLevel >= SWORD_STAGES.length - 1;
-  const catalystGate = getCatalystGateStatus(profile);
+  const requiredChargeId = getRequiredProgressChargeId(profile.currentLevel);
+  const progressCharges = profile.currentWeapon.progressCharges;
+  const requiredChargeCount = requiredChargeId ? progressCharges[requiredChargeId] : 0;
+  const requiredChargeName = requiredChargeId === 'tempered' ? '제련의 불씨' : '심연의 인장';
+  const displayedRates = getDisplayedRates(preview);
   const lacksGold = profile.gold < preview.cost;
   const canSell = profile.currentLevel > 0;
 
   let enhanceDisabledReason: string | null = null;
   if (isDestroyed) enhanceDisabledReason = '검이 파괴되어 복구 또는 런 정산이 필요합니다.';
   else if (isMaxLevel) enhanceDisabledReason = '최고 +20 단계에 도달했습니다.';
-  else if (catalystGate && catalystGate.activeCharges <= 0) {
-    enhanceDisabledReason = catalystGate.inventoryCount > 0
-      ? `${catalystGate.definition.name}을 먼저 장착하세요.`
-      : `${catalystGate.definition.name} 촉매 충전이 필요합니다. 보스 추적으로 획득하세요.`;
+  else if (requiredChargeId && requiredChargeCount <= 0) {
+    enhanceDisabledReason = `${requiredChargeName} 충전이 필요합니다. 일반 적을 처치해 보스 징조를 진행하세요.`;
   }
   else if (lacksGold) enhanceDisabledReason = `${(preview.cost - profile.gold).toLocaleString()} G가 더 필요합니다.`;
   else if (isEnhancing) enhanceDisabledReason = '망치질 결과를 확인하는 중입니다.';
-
-  const handleActivateCatalyst = () => {
-    if (!catalystGate?.canActivate) return;
-
-    try {
-      const result = onActivateCatalyst();
-      setLastResult(null);
-      setNotice({
-        tone: 'success',
-        message: `${catalystGate.definition.name} 장착 완료 · 강화 충전 ${result.activeCharges}회`
-      });
-    } catch (error: unknown) {
-      setNotice({ tone: 'error', message: getErrorMessage(error, '촉매 장착에 실패했습니다.') });
-    }
-  };
 
   const handleEnhanceClick = () => {
     if (enhanceDisabledReason) {
@@ -221,54 +223,30 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         )}
       </div>
 
-      {catalystGate && (
-        <div className={catalystGate.activeCharges > 0 ? 'catalyst-card is-charged' : 'catalyst-card'}>
-          <div className="catalyst-card__material">
-            <MaterialSprite atlasCell={catalystGate.definition.atlasCell} size={62} />
+      {(profile.currentLevel >= 5 || progressCharges.tempered > 0 || progressCharges.awakened > 0) && (
+        <div className="progress-charge-card">
+          <div className="progress-charge-card__heading">
             <div>
-              <small>+{profile.currentLevel} 강화 필수 촉매</small>
-              <strong>{catalystGate.definition.name}</strong>
-              <span>
-                {catalystGate.discovered ? '발견 완료' : '미발견'} · 보유 {catalystGate.inventoryCount}개
-              </span>
+              <small>WEAPON-BOUND CHARGES</small>
+              <strong>현재 검의 공용 진행 충전</strong>
             </div>
+            <span>{profile.currentWeapon.weaponId}</span>
           </div>
-
-          <dl className="catalyst-card__stats">
-            <div>
-              <dt>활성 충전</dt>
-              <dd>{catalystGate.activeCharges} / {catalystGate.definition.chargesPerItem}</dd>
+          <dl className="progress-charge-grid">
+            <div className={requiredChargeId === 'tempered' ? 'is-required' : ''}>
+              <dt>제련의 불씨</dt>
+              <dd>{progressCharges.tempered} / 4</dd>
+              <span>+10~+13 시도</span>
             </div>
-            <div>
-              <dt>드롭률</dt>
-              <dd>{catalystGate.definition.dropRate}%</dd>
-            </div>
-            <div>
-              <dt>천장</dt>
-              <dd>{catalystGate.pityCount} / {catalystGate.definition.pityThreshold}</dd>
+            <div className={requiredChargeId === 'awakened' ? 'is-required' : ''}>
+              <dt>심연의 인장</dt>
+              <dd>{progressCharges.awakened} / 3</dd>
+              <span>+14~+19 시도</span>
             </div>
           </dl>
-
-          {catalystGate.activeCharges > 0 ? (
-            <p className="catalyst-card__guide" role="status">
-              장착 완료 · 다음 강화 시 충전 1회를 소모합니다.
-            </p>
-          ) : catalystGate.inventoryCount > 0 ? (
-            <button
-              type="button"
-              className="catalyst-activate-button"
-              onClick={handleActivateCatalyst}
-              disabled={!catalystGate.canActivate}
-            >
-              {catalystGate.canActivate
-                ? `촉매 장착 · ${catalystGate.definition.chargesPerItem}회 충전`
-                : '검 복구 후 촉매 장착 가능'}
-            </button>
-          ) : (
-            <p className="catalyst-card__guide">
-              보스 추적에서 {catalystGate.definition.name}을 획득하세요. 확정까지 최대 {catalystGate.killsUntilGuaranteed}회
-            </p>
-          )}
+          <p className="progress-charge-card__lifecycle" role="note">
+            현재 검에 귀속 · 성공·유지·균열·하락과 파괴 후 복구에서는 유지됩니다. 매각·런 정산으로 새 검을 만들면 모두 소멸합니다.
+          </p>
         </div>
       )}
 
@@ -276,11 +254,17 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         <div className={lastResult.success ? 'forge-result is-success' : 'forge-result is-failure'} role="status">
           <strong>{lastResult.success ? '강화 성공' : '강화 결과'}</strong>
           <span>{lastResult.message}</span>
-          {lastResult.catalystChargeSpent && (
-            <small className="forge-result__catalyst">
-              촉매 충전 1회 소모 · 잔여 {lastResult.catalystChargesRemaining}회
+          {lastResult.progressChargeSpent && lastResult.progressChargeId && (
+            <small className="forge-result__progress">
+              {lastResult.progressChargeId === 'tempered' ? '제련의 불씨' : '심연의 인장'} 1회 소모 · 잔여 {lastResult.progressChargesRemaining}회
             </small>
           )}
+          {lastResult.transcendenceRewards.map((reward, index) => (
+            <small key={`${reward.source}:${index}`} className="forge-result__transcendence">
+              초월 보상 · {reward.relicId === 'godblood' ? '신혈' : '종말'} 조각 +{reward.shardsGained}
+              {reward.relicsGained > 0 ? ` · 성유물 +${reward.relicsGained}` : ''}
+            </small>
+          ))}
         </div>
       )}
 
@@ -317,26 +301,26 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         </div>
       ) : (
         <>
-          <div className="enhance-odds" aria-label="강화 확률과 비용">
+          <div className="enhance-odds" aria-label={`최종 강화 4분포, 합계 ${(displayedRates.success + displayedRates.keep + displayedRates.crack + displayedRates.drop).toFixed(1)}%`}>
             <div className="odds-cell odds-cell--success">
               <small>성공 확률</small>
-              <strong>{preview.successRate.toFixed(1)}%</strong>
-              {preview.isProtected && <span><ShieldCheck size={13} aria-hidden="true" /> 초반 보호 적용</span>}
-            </div>
-            <div className="odds-cell odds-cell--risk">
-              <small>실패 시 균열 위험</small>
-              <strong>{preview.crackRate.toFixed(1)}%</strong>
-              <span>현재 실제 판정값</span>
+              <strong>{displayedRates.success.toFixed(1)}%</strong>
+              <span>{preview.isProtected ? <><ShieldCheck size={13} aria-hidden="true" /> 초반 보호 적용</> : `연속 실패 +${preview.failBonus.toFixed(1)}%p`}</span>
             </div>
             <div className="odds-cell">
-              <small>연속 실패 보정</small>
-              <strong>+{preview.failBonus.toFixed(1)}%p</strong>
-              <span>{profile.consecutiveFailCount}회 연속 실패</span>
+              <small>단계 유지</small>
+              <strong>{displayedRates.keep.toFixed(1)}%</strong>
+              <span>균열 저항 감소분 포함</span>
             </div>
-            <div className="odds-cell odds-cell--cost">
-              <small>강화 비용</small>
-              <strong>{preview.cost.toLocaleString()} G</strong>
-              <span>보유 {profile.gold.toLocaleString()} G</span>
+            <div className="odds-cell odds-cell--risk">
+              <small>균열 발생</small>
+              <strong>{displayedRates.crack.toFixed(1)}%</strong>
+              <span>3번째 균열은 파괴</span>
+            </div>
+            <div className="odds-cell odds-cell--drop">
+              <small>단계 하락</small>
+              <strong>{displayedRates.drop.toFixed(1)}%</strong>
+              <span>최종 4분포 합계 100.0%</span>
             </div>
           </div>
 
@@ -353,8 +337,8 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
                 <small>
                   {isMaxLevel
                     ? '더 이상 강화할 수 없습니다'
-                    : catalystGate && catalystGate.activeCharges > 0
-                      ? `${preview.cost.toLocaleString()} G + 촉매 충전 1회 사용`
+                    : requiredChargeId && requiredChargeCount > 0
+                      ? `${preview.cost.toLocaleString()} G + ${requiredChargeName} 1회 사용`
                       : `${preview.cost.toLocaleString()} G 사용`}
                 </small>
               </span>

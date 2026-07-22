@@ -6,6 +6,7 @@ import type {
   EnhancePreview,
   EnhancePreviewInput,
   PermanentUpgrade,
+  ProgressChargeId,
   SwordSeries,
   SwordStageInfo,
   UserGameProfile
@@ -169,52 +170,52 @@ type CatalystBossDefinition = BossDefinition & {
 const CATALYST_BOSSES: readonly CatalystBossDefinition[] = [
   {
     id: 'boss_10', name: '불꽃 골렘', milestone: 10, maxHp: SWORD_STAGES[10].attackPower * 36,
-    rewardEssences: 30, rewardGold: 2000, rewardBlueprint: true, icon: '🔥', isBoss: true, atlasCell: 0,
+    rewardEssences: 30, rewardGold: 2000, rewardBlueprint: true, icon: '🔥', isBoss: true, atlasSource: 'boss', atlasCell: 0,
     catalyst: { id: 'molten_core', name: '용융된 화염핵', gateLevel: 10, dropRate: 60, pityThreshold: 3, chargesPerItem: 3, atlasCell: 0 }
   },
   {
     id: 'boss_11', name: '심해 크라켄', milestone: 11, maxHp: SWORD_STAGES[11].attackPower * 40,
-    rewardEssences: 0, rewardGold: 3000, rewardBlueprint: false, icon: '🐙', isBoss: true, atlasCell: 1,
+    rewardEssences: 0, rewardGold: 3000, rewardBlueprint: false, icon: '🐙', isBoss: true, atlasSource: 'boss', atlasCell: 1,
     catalyst: { id: 'abyss_pearl', name: '심연의 진주', gateLevel: 11, dropRate: 55, pityThreshold: 3, chargesPerItem: 3, atlasCell: 1 }
   },
   {
     id: 'boss_12', name: '흑철 거신', milestone: 12, maxHp: SWORD_STAGES[12].attackPower * 44,
-    rewardEssences: 0, rewardGold: 4500, rewardBlueprint: false, icon: '🗿', isBoss: true, atlasCell: 2,
+    rewardEssences: 0, rewardGold: 4500, rewardBlueprint: false, icon: '🗿', isBoss: true, atlasSource: 'boss', atlasCell: 2,
     catalyst: { id: 'titan_heart', name: '거인의 심장', gateLevel: 12, dropRate: 50, pityThreshold: 4, chargesPerItem: 3, atlasCell: 2 }
   },
   {
     id: 'boss_13', name: '천뢰신수', milestone: 13, maxHp: SWORD_STAGES[13].attackPower * 48,
-    rewardEssences: 0, rewardGold: 6500, rewardBlueprint: false, icon: '⚡', isBoss: true, atlasCell: 3,
+    rewardEssences: 0, rewardGold: 6500, rewardBlueprint: false, icon: '⚡', isBoss: true, atlasSource: 'boss', atlasCell: 3,
     catalyst: { id: 'thunder_horn', name: '뇌전의 뿔', gateLevel: 13, dropRate: 45, pityThreshold: 4, chargesPerItem: 3, atlasCell: 3 }
   },
   {
     id: 'boss_14', name: '시간의 사신', milestone: 14, maxHp: SWORD_STAGES[14].attackPower * 52,
-    rewardEssences: 0, rewardGold: 8000, rewardBlueprint: false, icon: '⏳', isBoss: true, atlasCell: 4,
+    rewardEssences: 0, rewardGold: 8000, rewardBlueprint: false, icon: '⏳', isBoss: true, atlasSource: 'boss', atlasCell: 4,
     catalyst: { id: 'stopped_gear', name: '멈춰버린 톱니', gateLevel: 14, dropRate: 40, pityThreshold: 5, chargesPerItem: 3, atlasCell: 4 }
   },
   {
     id: 'boss_15', name: '불멸의 봉황', milestone: 15, maxHp: SWORD_STAGES[15].attackPower * 56,
-    rewardEssences: 150, rewardGold: 10000, rewardBlueprint: true, icon: '🦅', isBoss: true, atlasCell: 5,
+    rewardEssences: 150, rewardGold: 10000, rewardBlueprint: true, icon: '🦅', isBoss: true, atlasSource: 'boss', atlasCell: 5,
     catalyst: { id: 'rebirth_feather', name: '윤회의 깃털', gateLevel: 15, dropRate: 35, pityThreshold: 5, chargesPerItem: 2, atlasCell: 5 }
   },
   {
     id: 'boss_16', name: '공허룡', milestone: 16, maxHp: SWORD_STAGES[16].attackPower * 60,
-    rewardEssences: 0, rewardGold: 15000, rewardBlueprint: false, icon: '🐉', isBoss: true, atlasCell: 6,
+    rewardEssences: 0, rewardGold: 15000, rewardBlueprint: false, icon: '🐉', isBoss: true, atlasSource: 'boss', atlasCell: 6,
     catalyst: { id: 'void_fang', name: '공허의 송곳니', gateLevel: 16, dropRate: 28, pityThreshold: 6, chargesPerItem: 2, atlasCell: 6 }
   },
   {
     id: 'boss_17', name: '별을 먹는 자', milestone: 17, maxHp: SWORD_STAGES[17].attackPower * 64,
-    rewardEssences: 0, rewardGold: 22000, rewardBlueprint: false, icon: '🌌', isBoss: true, atlasCell: 7,
+    rewardEssences: 0, rewardGold: 22000, rewardBlueprint: false, icon: '🌌', isBoss: true, atlasSource: 'boss', atlasCell: 7,
     catalyst: { id: 'collapsed_star', name: '붕괴한 별의 핵', gateLevel: 17, dropRate: 20, pityThreshold: 8, chargesPerItem: 2, atlasCell: 7 }
   },
   {
     id: 'boss_18', name: '타락한 신', milestone: 18, maxHp: SWORD_STAGES[18].attackPower * 68,
-    rewardEssences: 0, rewardGold: 32000, rewardBlueprint: false, icon: '😈', isBoss: true, atlasCell: 8,
+    rewardEssences: 0, rewardGold: 32000, rewardBlueprint: false, icon: '😈', isBoss: true, atlasSource: 'boss', atlasCell: 8,
     catalyst: { id: 'godblood_crystal', name: '신혈 결정', gateLevel: 18, dropRate: 15, pityThreshold: 10, chargesPerItem: 1, atlasCell: 8 }
   },
   {
     id: 'boss_19', name: '종말의 마왕', milestone: 19, maxHp: SWORD_STAGES[19].attackPower * 72,
-    rewardEssences: 0, rewardGold: 45000, rewardBlueprint: false, icon: '👿', isBoss: true, atlasCell: 9,
+    rewardEssences: 0, rewardGold: 45000, rewardBlueprint: false, icon: '👿', isBoss: true, atlasSource: 'boss', atlasCell: 9,
     catalyst: { id: 'end_ember', name: '종말의 불씨', gateLevel: 19, dropRate: 10, pityThreshold: 15, chargesPerItem: 1, atlasCell: 9 }
   }
 ];
@@ -223,17 +224,52 @@ export const CATALYST_DEFINITIONS: readonly CatalystDefinition[] = CATALYST_BOSS
 
 export const BOSS_LIST: readonly BossDefinition[] = [
   {
-    id: 'boss_5', name: '불꽃 골렘', milestone: 5, maxHp: 1500,
-    rewardEssences: 8, rewardGold: 500, rewardBlueprint: true, icon: '🗿', isBoss: true,
-    atlasCell: null, catalyst: null
+    id: 'boss_5', name: '잿불 사냥개', milestone: 5, maxHp: SWORD_STAGES[5].attackPower * 28,
+    rewardEssences: 8, rewardGold: 500, rewardBlueprint: true, icon: '🐺', isBoss: true,
+    atlasSource: 'midboss', atlasCell: 0, catalyst: null
+  },
+  {
+    id: 'boss_6', name: '용광로 난동꾼', milestone: 6, maxHp: SWORD_STAGES[6].attackPower * 30,
+    rewardEssences: 0, rewardGold: 750, rewardBlueprint: false, icon: '👹', isBoss: true,
+    atlasSource: 'midboss', atlasCell: 1, catalyst: null
+  },
+  {
+    id: 'boss_7', name: '쇠사슬 감시자', milestone: 7, maxHp: SWORD_STAGES[7].attackPower * 32,
+    rewardEssences: 0, rewardGold: 1000, rewardBlueprint: false, icon: '⛓️', isBoss: true,
+    atlasSource: 'midboss', atlasCell: 2, catalyst: null
+  },
+  {
+    id: 'boss_8', name: '잿불 와이번', milestone: 8, maxHp: SWORD_STAGES[8].attackPower * 34,
+    rewardEssences: 0, rewardGold: 1350, rewardBlueprint: false, icon: '🐲', isBoss: true,
+    atlasSource: 'midboss', atlasCell: 3, catalyst: null
+  },
+  {
+    id: 'boss_9', name: '흑철 모루기사', milestone: 9, maxHp: SWORD_STAGES[9].attackPower * 36,
+    rewardEssences: 0, rewardGold: 1700, rewardBlueprint: false, icon: '🛡️', isBoss: true,
+    atlasSource: 'midboss', atlasCell: 4, catalyst: null
   },
   ...CATALYST_BOSSES,
   {
     id: 'boss_20', name: '종말의 마왕', milestone: 20, maxHp: 250000000,
     rewardEssences: 600, rewardGold: 50000, rewardBlueprint: true, icon: '👿', isBoss: true,
-    atlasCell: null, catalyst: null
+    atlasSource: null, atlasCell: null, catalyst: null
   }
 ];
+
+export function getBossBagSizeForLevel(level: number): number | null {
+  if (level >= 5 && level <= 9) return 6;
+  if (level >= 10 && level <= 13) return 8;
+  if (level >= 14 && level <= 17) return 12;
+  if (level === 18) return 20;
+  if (level === 19) return 30;
+  return null;
+}
+
+export function getRequiredProgressChargeId(level: number): ProgressChargeId | null {
+  if (level >= 10 && level <= 13) return 'tempered';
+  if (level >= 14 && level <= 19) return 'awakened';
+  return null;
+}
 
 export function createEmptyCatalystCountMap(): CatalystCountMap {
   return Object.fromEntries(CATALYST_DEFINITIONS.map(definition => [definition.id, 0])) as CatalystCountMap;
@@ -291,7 +327,7 @@ export function calculateEnhancePreview(profile: EnhancePreviewInput): EnhancePr
 
   let successRate = stageInfo.baseSuccessRate + seriesInfo.baseSuccessBonus + failBonus;
   const maxAllowedSuccess = Math.min(stageInfo.baseSuccessRate * 2, stageInfo.baseSuccessRate + 5);
-  successRate = Math.min(successRate, maxAllowedSuccess);
+  successRate = Math.max(0, Math.min(100, successRate, maxAllowedSuccess));
 
   const isProtected = profile.totalEnhanceAttempts + 1 <= 3 && profile.currentLevel < 3;
   if (isProtected) {
@@ -300,11 +336,18 @@ export function calculateEnhancePreview(profile: EnhancePreviewInput): EnhancePr
 
   const crackControlLevel = profile.upgrades.crack_control || 0;
   const crackResistance = seriesInfo.crackResistanceBonus + crackControlLevel * 0.02;
-  const crackRate = Math.max(0, stageInfo.crackFailRate * (1 - crackResistance));
+  const failureMass = Math.max(0, 100 - successRate);
+  const conditionalCrackRate = Math.max(0, Math.min(100, stageInfo.crackFailRate * (1 - crackResistance)));
+  const conditionalDropRate = Math.max(0, Math.min(stageInfo.dropFailRate, 100 - conditionalCrackRate));
+  const crackRate = failureMass * conditionalCrackRate / 100;
+  const dropRate = failureMass * conditionalDropRate / 100;
+  const keepRate = Math.max(0, 100 - successRate - crackRate - dropRate);
 
   return {
     successRate,
+    keepRate,
     crackRate,
+    dropRate,
     failBonus,
     cost: stageInfo.enhanceCost,
     isProtected

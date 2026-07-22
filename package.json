@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:contract": "esbuild scripts/verify-game-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/project-forge-contract-verify.mjs && node /tmp/project-forge-contract-verify.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

@@ -2,11 +2,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { serverSimulator } from './services/serverSimulator';
 import {
   BossDefeatResult,
-  CatalystActivationResult,
   EnhanceAttemptResult,
+  HuntResolution,
   UserGameProfile
 } from './types/game';
-import { getCatalystDefinitionForLevel } from './constants/gameBalance';
 import { CombatCanvas } from './components/game/CombatCanvas';
 import { EnhancePanel } from './components/game/EnhancePanel';
 import { PermanentUpgradesModal } from './components/game/PermanentUpgradesModal';
@@ -66,15 +65,18 @@ export default function App() {
     toastTimersRef.current.set(id, timer);
   }, []);
 
-  const handleAttackHit = useCallback((baseGold: number): number => {
-    const goldGained = serverSimulator.addGoldFromHunting(baseGold);
+  const handleNormalEnemyDefeated = useCallback((baseGold: number): HuntResolution => {
+    const result = serverSimulator.defeatNormalEnemy(baseGold);
     refreshProfile();
-    return goldGained;
-  }, [refreshProfile]);
+    if (result.bossRevealed && result.activeEncounter) {
+      showToast(`보스 조우 · +${result.activeEncounter.levelSnapshot} 단계의 징조가 현실이 되었습니다.`, 'info');
+    }
+    return result;
+  }, [refreshProfile, showToast]);
 
-  const handleBossKilled = useCallback((milestone: number): BossDefeatResult => {
+  const handleBossDefeated = useCallback((encounterId: string): BossDefeatResult => {
     try {
-      const result = serverSimulator.defeatBoss(milestone);
+      const result = serverSimulator.defeatBoss(encounterId);
       refreshProfile();
 
       if (result.firstRewardGranted) {
@@ -82,31 +84,28 @@ export default function App() {
           `최초 격파 보상 · ${result.goldGained.toLocaleString()} G / 정수 ${result.essencesGained.toLocaleString()}개`,
           'success'
         );
-      } else if (!result.catalystDrop) {
+      } else {
         showToast('이 마일스톤의 보상은 이번 런에서 이미 수령했습니다.', 'info');
       }
 
-      if (result.catalystDrop) {
-        const drop = result.catalystDrop;
-        const definition = getCatalystDefinitionForLevel(drop.gateLevel);
-        const materialName = definition?.name || '보스 재료';
+      const progressParts: string[] = [];
+      if (result.progressReward.gained.tempered > 0) {
+        progressParts.push(`제련의 불씨 +${result.progressReward.gained.tempered} (보유 ${result.progressReward.after.tempered}/4)`);
+      }
+      if (result.progressReward.gained.awakened > 0) {
+        progressParts.push(`심연의 인장 +${result.progressReward.gained.awakened} (보유 ${result.progressReward.after.awakened}/3)`);
+      }
+      if (progressParts.length > 0) {
+        showToast(`확정 진행 충전 · ${progressParts.join(' / ')}`, 'success');
+      }
 
-        if (drop.dropped) {
-          const source = drop.reason === 'PITY'
-            ? '천장 확정'
-            : drop.reason === 'FIRST_DISCOVERY'
-              ? '최초 발견 확정'
-              : '재료 획득';
-          showToast(
-            `${source} · ${materialName} +${drop.quantityGained} (보유 ${drop.inventoryAfter})`,
-            'success'
-          );
-        } else {
-          showToast(
-            `${materialName} 미획득 · 천장 ${drop.pityAfter}/${definition?.pityThreshold ?? '?'}`,
-            'info'
-          );
-        }
+      if (result.transcendenceReward) {
+        const rare = result.transcendenceReward;
+        const relicName = rare.relicId === 'godblood' ? '신혈의 성유물' : '종말의 성유물';
+        const rareSummary = rare.fullRelicDropped
+          ? `${relicName} 완제품 +${rare.relicsGained}`
+          : `${relicName} 조각 +${rare.shardsGained}`;
+        showToast(`초월 판정 · ${rareSummary}`, rare.fullRelicDropped ? 'success' : 'info');
       }
 
       return result;
@@ -121,17 +120,6 @@ export default function App() {
     refreshProfile();
     return result;
   }, [refreshProfile]);
-
-  const handleActivateCatalyst = useCallback((): CatalystActivationResult => {
-    const result = serverSimulator.activateCatalyst(profile.currentLevel);
-    refreshProfile();
-    const definition = getCatalystDefinitionForLevel(result.gateLevel);
-    showToast(
-      `${definition?.name || '촉매'} 장착 · 강화 충전 ${result.activeCharges}회`,
-      'success'
-    );
-    return result;
-  }, [profile.currentLevel, refreshProfile, showToast]);
 
   const handleRepairCrack = useCallback(() => {
     serverSimulator.repairCrack();
@@ -287,13 +275,12 @@ export default function App() {
           <>
             <CombatCanvas
               profile={profile}
-              onAttackHit={handleAttackHit}
-              onBossKilled={handleBossKilled}
+              onNormalEnemyDefeated={handleNormalEnemyDefeated}
+              onBossDefeated={handleBossDefeated}
             />
             <EnhancePanel
               profile={profile}
               onAttemptEnhance={handleAttemptEnhance}
-              onActivateCatalyst={handleActivateCatalyst}
               onRepairCrack={handleRepairCrack}
               onAdRestore={handleAdRestore}
               onFinishRun={handleFinishRun}
