@@ -28,62 +28,6 @@ export interface SwordStageInfo {
 
 export type FailResultType = 'KEEP' | 'CRACK' | 'DROP' | 'DESTROYED';
 
-export type ProgressChargeId = 'tempered' | 'awakened';
-
-export interface ProgressChargeMap {
-  tempered: number;
-  awakened: number;
-}
-
-export interface ActiveBossEncounter {
-  encounterId: string;
-  weaponId: string;
-  levelSnapshot: number;
-  bossId: string;
-  revealedAt: number;
-}
-
-export interface BossEncounterState {
-  weaponId: string;
-  bagSize: number;
-  cursor: number;
-  bossSlot: number;
-  cycle: number;
-  active: ActiveBossEncounter | null;
-}
-
-export interface CurrentWeaponState {
-  weaponId: string;
-  ordinal: number;
-  progressCharges: ProgressChargeMap;
-  bossEncounter: BossEncounterState | null;
-  claimedRareBossStages: Array<18 | 19>;
-  endShardFirstAttemptGranted: boolean;
-}
-
-export type TranscendenceRelicId = 'godblood' | 'end';
-
-export interface TranscendenceRelicProgress {
-  relics: number;
-  shards: number;
-}
-
-export interface TranscendenceProgress {
-  godblood: TranscendenceRelicProgress;
-  end: TranscendenceRelicProgress;
-}
-
-export interface TranscendenceRewardResult {
-  source: 'BOSS_18' | 'BOSS_19' | 'ENHANCE_20_FIRST_ATTEMPT' | 'ENHANCE_20_SUCCESS';
-  relicId: TranscendenceRelicId;
-  fullRelicDropped: boolean;
-  relicsGained: number;
-  shardsGained: number;
-  synthesizedRelics: number;
-  relicsAfter: number;
-  shardsAfter: number;
-}
-
 export type CatalystId =
   | 'molten_core'
   | 'abyss_pearl'
@@ -151,10 +95,6 @@ export interface EnhanceAttemptResult {
   catalystId: CatalystId | null;
   catalystChargeSpent: boolean;
   catalystChargesRemaining: number;
-  progressChargeId: ProgressChargeId | null;
-  progressChargeSpent: boolean;
-  progressChargesRemaining: number;
-  transcendenceRewards: TranscendenceRewardResult[];
   message: string;
   timestamp: number;
 }
@@ -169,9 +109,7 @@ export interface EnhancePreviewInput {
 
 export interface EnhancePreview {
   successRate: number;
-  keepRate: number;
   crackRate: number;
-  dropRate: number;
   failBonus: number;
   cost: number;
   isProtected: boolean;
@@ -185,28 +123,8 @@ export interface BossRewardClaimResult {
 }
 
 export interface BossDefeatResult extends BossRewardClaimResult {
-  encounterId: string;
-  levelSnapshot: number;
   firstRewardGranted: boolean;
   catalystDrop: CatalystDropResult | null;
-  progressReward: ProgressChargeRewardResult;
-  transcendenceReward: TranscendenceRewardResult | null;
-  nextEncounter: BossEncounterState | null;
-}
-
-export interface ProgressChargeRewardResult {
-  before: ProgressChargeMap;
-  gained: ProgressChargeMap;
-  after: ProgressChargeMap;
-}
-
-export interface HuntResolution {
-  goldGained: number;
-  bagProgressed: boolean;
-  paused: boolean;
-  bossRevealed: boolean;
-  activeEncounter: ActiveBossEncounter | null;
-  encounter: BossEncounterState | null;
 }
 
 export interface BossDefinition {
@@ -219,7 +137,6 @@ export interface BossDefinition {
   readonly rewardBlueprint: boolean;
   readonly icon: string;
   readonly isBoss: true;
-  readonly atlasSource: 'midboss' | 'boss' | null;
   readonly atlasCell: number | null;
   readonly catalyst: CatalystDefinition | null;
 }
@@ -236,7 +153,6 @@ export interface PermanentUpgrade {
 }
 
 export interface UserGameProfile {
-  schemaVersion: 2;
   userId: string;
   nickname: string;
   gold: number;
@@ -256,8 +172,6 @@ export interface UserGameProfile {
   catalystPity: CatalystCountMap;
   discoveredCatalysts: CatalystId[];
   activeCatalystCharges: CatalystCountMap;
-  currentWeapon: CurrentWeaponState;
-  transcendence: TranscendenceProgress;
   
   // 영구 성장 레벨
   upgrades: Record<string, number>;
