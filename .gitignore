@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Local image-generation intermediates
+tmp/
+
+# Local agent/session tooling
+.claude/
+
+# OS
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+*.local
+
+# Logs
+*.log
