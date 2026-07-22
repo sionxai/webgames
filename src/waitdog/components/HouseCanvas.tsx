@@ -5,6 +5,8 @@ import type { RoomId, Visibility } from "../types";
 interface HouseCanvasProps {
   view: WaitdogUiView;
   lastSeenRoom: RoomId | null;
+  ownerAway: boolean;
+  disabled: boolean;
   onRoomSelect: (room: RoomId) => void;
 }
 
@@ -191,7 +193,13 @@ const drawSound = (context: CanvasRenderingContext2D) => {
   }
 };
 
-export function HouseCanvas({ view, lastSeenRoom, onRoomSelect }: HouseCanvasProps) {
+export function HouseCanvas({
+  view,
+  lastSeenRoom,
+  ownerAway,
+  disabled,
+  onRoomSelect,
+}: HouseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useEffect(() => {
@@ -208,7 +216,7 @@ export function HouseCanvas({ view, lastSeenRoom, onRoomSelect }: HouseCanvasPro
     }
     drawMat(context);
     drawFence(context, view.blocked);
-    drawOwner(context, view.owner.room);
+    if (!ownerAway) drawOwner(context, view.owner.room);
 
     if (view.visibility === "seen" && view.room !== null) {
       drawDog(context, view.room);
@@ -224,18 +232,23 @@ export function HouseCanvas({ view, lastSeenRoom, onRoomSelect }: HouseCanvasPro
       drawPoop(context, view.activePoop.room, view.activePoop.location);
     }
 
-    if (view.owner.focusLocked) {
+    if (view.owner.focusLocked || ownerAway) {
       context.fillStyle = "rgba(37, 48, 52, 0.62)";
       context.fillRect(0, 0, WIDTH, HEIGHT);
       context.fillStyle = "#fff8df";
       context.font = "800 26px sans-serif";
       context.textAlign = "center";
-      context.fillText("집중 업무 중 · 관찰 제한", WIDTH / 2, HEIGHT / 2);
+      context.fillText(
+        ownerAway ? "보호자 외출 중 · 개입 불가" : "집중 업무 중 · 관찰 제한",
+        WIDTH / 2,
+        HEIGHT / 2,
+      );
       context.textAlign = "start";
     }
-  }, [lastSeenRoom, view]);
+  }, [lastSeenRoom, ownerAway, view]);
 
   const handlePointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+    if (disabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const bounds = canvas.getBoundingClientRect();
@@ -269,6 +282,7 @@ export function HouseCanvas({ view, lastSeenRoom, onRoomSelect }: HouseCanvasPro
         width={WIDTH}
         height={HEIGHT}
         role="img"
+        aria-disabled={disabled}
         aria-label={`생활방, 부엌, 화장실 평면도. ${dogLabel} 방을 클릭하면 보호자가 이동합니다.`}
         onPointerUp={handlePointer}
       />
@@ -277,6 +291,7 @@ export function HouseCanvas({ view, lastSeenRoom, onRoomSelect }: HouseCanvasPro
           <button
             type="button"
             key={room}
+            disabled={disabled}
             aria-pressed={view.owner.room === room}
             onClick={() => onRoomSelect(room)}
           >

@@ -1,4 +1,5 @@
 import type { RoomId } from "../types";
+import type { OwnerResources } from "../services/campaign";
 
 export type GameSpeed = 0 | 1 | 2 | 4;
 
@@ -8,6 +9,9 @@ interface TopBarProps {
   speed: GameSpeed;
   ownerRoom: RoomId;
   focusLocked: boolean;
+  away: boolean;
+  resources: OwnerResources;
+  guide: string | null;
   ended: boolean;
   onSpeedChange: (speed: GameSpeed) => void;
 }
@@ -37,6 +41,9 @@ export function TopBar({
   speed,
   ownerRoom,
   focusLocked,
+  away,
+  resources,
+  guide,
   ended,
   onSpeedChange,
 }: TopBarProps) {
@@ -69,12 +76,35 @@ export function TopBar({
         ))}
       </div>
 
+      <div className="resource-gauges" aria-label="보호자 자원">
+        {([
+          ["energy", "에너지"],
+          ["focus", "집중"],
+          ["workScore", "업무 성과"],
+        ] as const).map(([key, label]) => (
+          <div className="resource-gauge" key={key}>
+            <span>{label}</span>
+            <div
+              className={`resource-meter resource-${key}`}
+              role="progressbar"
+              aria-label={label}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={resources[key]}
+            >
+              <span style={{ width: `${resources[key]}%` }} />
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="owner-status" role="status">
-        <span>보호자 · {ROOM_NAMES[ownerRoom]}</span>
+        <span>{away ? "보호자 · 외출 중" : `보호자 · ${ROOM_NAMES[ownerRoom]}`}</span>
         <span className={focusLocked ? "focus-on" : "focus-off"}>
-          {focusLocked ? "focusLock 켜짐" : "focusLock 꺼짐"}
+          {away ? "개입 불가" : focusLocked ? "집중 업무 중" : "관찰 가능"}
         </span>
       </div>
+      {guide && <div className="day-guide" role="note">{guide}</div>}
     </header>
   );
 }

@@ -58,6 +58,40 @@ export interface WaitdogUiView extends DogView {
 
 export interface WaitdogUiSim extends WaitdogSim {
   getDogView(): WaitdogUiView;
+  serialize(): WaitdogSnapshot;
+  restore(snapshot: unknown): void;
+}
+
+export interface WaitdogSnapshot {
+  version: 1;
+  seed: number;
+  rngCursor: number;
+  day: number;
+  minuteOfDay: number;
+  absoluteMinute: number;
+  dogRoom: RoomId;
+  owner: Required<OwnerState>;
+  personality: Personality;
+  stats: DogStats;
+  memory: LearningMemory;
+  matSkill: MatSkill;
+  matSkillOwnerAway: number;
+  blocked: boolean;
+  currentAction: ActionId | "idle";
+  actionStartedAt: number;
+  digestionQueue: DigestionItem[];
+  activePoop: ActivePoop | null;
+  pendingEatAt: number | null;
+  poopDueAt: number | null;
+  pendingPressurePerMinute: number | null;
+  scheduledSignals: ScheduledSignal[];
+  lastBehavior: LastBehavior | null;
+  lastCalmSuccessAt: number | null;
+  cleanupUntil: number | null;
+  lastDigestedFeedAt: number | null;
+  poopDelayHistory: number[];
+  log: EventLog[];
+  poopRevision: number;
 }
 
 const clamp = (value: number): number => {
@@ -75,6 +109,95 @@ const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const isRoom = (value: string): value is RoomId =>
   (ROOMS as readonly string[]).includes(value);
 
+const ACTIONS: ReadonlyArray<ActionId | "idle"> = [
+  "idle",
+  "eatPoop",
+  "moveToMat",
+  "watchOwner",
+  "flee",
+  "sniffLeave",
+  "zoomies",
+];
+
+const VISIBILITIES: readonly Visibility[] = ["seen", "heard", "hidden"];
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const hasExactKeys = (
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean => {
+  const actual = Object.keys(value);
+  return actual.length === keys.length && keys.every((key) => key in value);
+};
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isBoundedNumber = (value: unknown): value is number =>
+  isFiniteNumber(value) && value >= BALANCE.NUMBER.ZERO &&
+  value <= BALANCE.NUMBER.ONE_HUNDRED;
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  isFiniteNumber(value) && Number.isInteger(value) &&
+  value >= BALANCE.NUMBER.ZERO;
+
+const isNullableInteger = (value: unknown): value is number | null =>
+  value === null || isNonNegativeInteger(value);
+
+const hasBoundedNumbers = (
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, number> =>
+  isRecord(value) && hasExactKeys(value, keys) &&
+  keys.every((key) => isBoundedNumber(value[key]));
+
+const isJsonValue = (value: unknown): boolean => {
+  if (
+    value === null || typeof value === "string" || typeof value === "boolean"
+  ) return true;
+  if (isFiniteNumber(value)) return true;
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecord(value) && Object.values(value).every(isJsonValue);
+};
+
+const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
+  "version",
+  "seed",
+  "rngCursor",
+  "day",
+  "minuteOfDay",
+  "absoluteMinute",
+  "dogRoom",
+  "owner",
+  "personality",
+  "stats",
+  "memory",
+  "matSkill",
+  "matSkillOwnerAway",
+  "blocked",
+  "currentAction",
+  "actionStartedAt",
+  "digestionQueue",
+  "activePoop",
+  "pendingEatAt",
+  "poopDueAt",
+  "pendingPressurePerMinute",
+  "scheduledSignals",
+  "lastBehavior",
+  "lastCalmSuccessAt",
+  "cleanupUntil",
+  "lastDigestedFeedAt",
+  "poopDelayHistory",
+  "log",
+  "poopRevision",
+];
+
+const invalidSnapshot = (): never => {
+  throw new RangeError("snapshot is not a valid Waitdog simulation snapshot");
+};
+
 const requireNonNegative = (value: number, label: string): number => {
   if (!Number.isFinite(value) || value < BALANCE.NUMBER.ZERO) {
     throw new RangeError(`${label} must be a finite non-negative number`);
@@ -90,7 +213,9 @@ const requirePositiveVolume = (value: number, label: string): number => {
 };
 
 class WaitdogSimulation implements WaitdogUiSim {
-  private readonly rng: WaitdogRng;
+  private rng: WaitdogRng;
+  private seed: number;
+  private rngCursor = 0;
   private day: number = BALANCE.NUMBER.ONE;
   private minuteOfDay: number = BALANCE.TIME.DAY_START;
   private absoluteMinute: number = BALANCE.TIME.DAY_START;
@@ -126,7 +251,8 @@ class WaitdogSimulation implements WaitdogUiSim {
     if (!Number.isFinite(seed)) {
       throw new RangeError("seed must be finite");
     }
-    this.rng = createRng(seed);
+    this.seed = seed;
+    this.rng = this.createCountedRng(seed);
     this.dogRoom = opts.dogRoom ?? "living";
     if (!isRoom(this.dogRoom)) {
       throw new RangeError("dogRoom must be a known room");
@@ -372,6 +498,85 @@ class WaitdogSimulation implements WaitdogUiSim {
       this.advanceMinutes(BALANCE.TIME.CLEANUP_MINUTES);
     }
     return { kind, interrupted, success, attributedTo };
+  }
+
+  serialize(): WaitdogSnapshot {
+    return clone({
+      version: 1,
+      seed: this.seed,
+      rngCursor: this.rngCursor,
+      day: this.day,
+      minuteOfDay: this.minuteOfDay,
+      absoluteMinute: this.absoluteMinute,
+      dogRoom: this.dogRoom,
+      owner: this.owner,
+      personality: this.personality,
+      stats: this.stats,
+      memory: this.memory,
+      matSkill: this.matSkill,
+      matSkillOwnerAway: this.matSkillOwnerAway,
+      blocked: this.blocked,
+      currentAction: this.currentAction,
+      actionStartedAt: this.actionStartedAt,
+      digestionQueue: this.digestionQueue,
+      activePoop: this.activePoop,
+      pendingEatAt: this.pendingEatAt,
+      poopDueAt: this.poopDueAt,
+      pendingPressurePerMinute: this.pendingPressurePerMinute,
+      scheduledSignals: this.scheduledSignals,
+      lastBehavior: this.lastBehavior,
+      lastCalmSuccessAt: this.lastCalmSuccessAt,
+      cleanupUntil: this.cleanupUntil,
+      lastDigestedFeedAt: this.lastDigestedFeedAt,
+      poopDelayHistory: this.poopDelayHistory,
+      log: this.log,
+      poopRevision: this.poopRevision,
+    });
+  }
+
+  restore(snapshot: unknown): void {
+    let candidate: unknown;
+    try {
+      candidate = clone(snapshot);
+    } catch {
+      invalidSnapshot();
+    }
+    const restored = this.isValidSnapshot(candidate)
+      ? candidate
+      : invalidSnapshot();
+
+    this.seed = restored.seed;
+    this.rng = this.createCountedRng(restored.seed, restored.rngCursor);
+    this.day = restored.day;
+    this.minuteOfDay = restored.minuteOfDay;
+    this.absoluteMinute = restored.absoluteMinute;
+    this.dogRoom = restored.dogRoom;
+    this.owner = restored.owner;
+    Object.assign(this.personality, restored.personality);
+    Object.assign(this.stats, restored.stats);
+    Object.assign(this.memory, restored.memory);
+    Object.assign(this.matSkill, restored.matSkill);
+    this.matSkillOwnerAway = restored.matSkillOwnerAway;
+    this.blocked = restored.blocked;
+    this.currentAction = restored.currentAction;
+    this.actionStartedAt = restored.actionStartedAt;
+    this.digestionQueue = restored.digestionQueue;
+    this.activePoop = restored.activePoop;
+    this.pendingEatAt = restored.pendingEatAt;
+    this.poopDueAt = restored.poopDueAt;
+    this.pendingPressurePerMinute = restored.pendingPressurePerMinute;
+    this.scheduledSignals = restored.scheduledSignals;
+    this.lastBehavior = restored.lastBehavior;
+    this.lastCalmSuccessAt = restored.lastCalmSuccessAt;
+    this.cleanupUntil = restored.cleanupUntil;
+    this.lastDigestedFeedAt = restored.lastDigestedFeedAt;
+    this.poopDelayHistory.splice(
+      BALANCE.NUMBER.ZERO,
+      this.poopDelayHistory.length,
+      ...restored.poopDelayHistory,
+    );
+    this.log.splice(BALANCE.NUMBER.ZERO, this.log.length, ...restored.log);
+    this.poopRevision = restored.poopRevision;
   }
 
   getDogView(): WaitdogUiView {
@@ -868,6 +1073,152 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.poopDueAt = null;
     this.pendingPressurePerMinute = null;
     this.scheduledSignals = [];
+  }
+
+  private createCountedRng(seed: number, consumed = 0): WaitdogRng {
+    const base = createRng(seed);
+    for (let call = 0; call < consumed; call += BALANCE.NUMBER.ONE) {
+      base.next();
+    }
+    this.rngCursor = consumed;
+    const next = (): number => {
+      this.rngCursor += BALANCE.NUMBER.ONE;
+      return base.next();
+    };
+    return {
+      next,
+      range: (min, max) => min + (max - min) * next(),
+      integer: (min, max) =>
+        Math.floor(min + (max - min + BALANCE.NUMBER.ONE) * next()),
+      chance: (probability) => {
+        const safeProbability = Math.max(
+          BALANCE.NUMBER.ZERO,
+          Math.min(BALANCE.NUMBER.ONE, probability),
+        );
+        return next() < safeProbability;
+      },
+    };
+  }
+
+  private isValidSnapshot(value: unknown): value is WaitdogSnapshot {
+    if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
+    const stats = [
+      "hunger",
+      "thirst",
+      "bowelPressure",
+      "fatigue",
+      "stress",
+      "excitement",
+      "boredom",
+      "comfort",
+    ];
+    const personality = [
+      "foodDrive",
+      "impulsivity",
+      "sensitivity",
+      "sociability",
+      "adaptability",
+    ];
+    const memory = [
+      "approachSafety",
+      "recallTrust",
+      "nameSkill",
+      "waitSkill",
+      "matExpectation",
+      "coproHabit",
+      "snatchExpectation",
+      "hiddenPoopTendency",
+      "attentionViaPoop",
+    ];
+    const owner = value.owner;
+    const activePoop = value.activePoop;
+    const lastBehavior = value.lastBehavior;
+    const digestionQueue = value.digestionQueue;
+    const scheduledSignals = value.scheduledSignals;
+    const log = value.log;
+    const nullableTimes = [
+      value.pendingEatAt,
+      value.poopDueAt,
+      value.lastCalmSuccessAt,
+      value.cleanupUntil,
+      value.lastDigestedFeedAt,
+    ];
+    return value.version === BALANCE.NUMBER.ONE &&
+      isFiniteNumber(value.seed) &&
+      isNonNegativeInteger(value.rngCursor) &&
+      value.rngCursor <= 10_000_000 &&
+      isNonNegativeInteger(value.day) &&
+      value.day >= BALANCE.NUMBER.ONE &&
+      isNonNegativeInteger(value.minuteOfDay) &&
+      value.minuteOfDay >= BALANCE.TIME.DAY_START &&
+      value.minuteOfDay <= BALANCE.TIME.DAY_END &&
+      isNonNegativeInteger(value.absoluteMinute) &&
+      value.absoluteMinute ===
+        (value.day - BALANCE.NUMBER.ONE) *
+            BALANCE.TIME.DAY_LENGTH +
+          value.minuteOfDay &&
+      typeof value.dogRoom === "string" && isRoom(value.dogRoom) &&
+      isRecord(owner) &&
+      hasExactKeys(owner, ["room", "focusLocked", "away"]) &&
+      typeof owner.room === "string" &&
+      isRoom(owner.room) && typeof owner.focusLocked === "boolean" &&
+      typeof owner.away === "boolean" &&
+      hasBoundedNumbers(value.personality, personality) &&
+      hasBoundedNumbers(value.stats, stats) &&
+      hasBoundedNumbers(value.memory, memory) &&
+      hasBoundedNumbers(value.matSkill, ROOMS) &&
+      isBoundedNumber(value.matSkillOwnerAway) &&
+      typeof value.blocked === "boolean" &&
+      typeof value.currentAction === "string" &&
+      ACTIONS.includes(value.currentAction as ActionId | "idle") &&
+      isNonNegativeInteger(value.actionStartedAt) &&
+      Array.isArray(digestionQueue) && digestionQueue.every((item) =>
+        isRecord(item) && hasExactKeys(item, ["fedAt", "dueAt", "volume"]) &&
+        isNonNegativeInteger(item.fedAt) &&
+        isNonNegativeInteger(item.dueAt) && isFiniteNumber(item.volume) &&
+        item.volume > BALANCE.NUMBER.ZERO &&
+        item.volume <= BALANCE.NUMBER.ONE_HUNDRED
+      ) &&
+      (activePoop === null ||
+        (isRecord(activePoop) &&
+          hasExactKeys(activePoop, ["room", "createdAt", "location"]) &&
+          typeof activePoop.room === "string" &&
+          isRoom(activePoop.room) &&
+          isNonNegativeInteger(activePoop.createdAt) &&
+          (activePoop.location === "pad" || activePoop.location === "corner"))) &&
+      nullableTimes.every(isNullableInteger) &&
+      (value.pendingPressurePerMinute === null ||
+        (isFiniteNumber(value.pendingPressurePerMinute) &&
+          value.pendingPressurePerMinute >= BALANCE.NUMBER.ZERO)) &&
+      Array.isArray(scheduledSignals) && scheduledSignals.every((signal) =>
+        isRecord(signal) &&
+        hasExactKeys(signal, ["at", "type", "emitted"]) &&
+        isNonNegativeInteger(signal.at) &&
+        typeof signal.type === "string" &&
+        (SIGNALS as readonly string[]).includes(signal.type) &&
+        typeof signal.emitted === "boolean"
+      ) &&
+      (lastBehavior === null ||
+        (isRecord(lastBehavior) &&
+          hasExactKeys(lastBehavior, ["action", "at", "room"]) &&
+          typeof lastBehavior.action === "string" &&
+          ACTIONS.includes(lastBehavior.action as ActionId) &&
+          lastBehavior.action !== "idle" &&
+          isNonNegativeInteger(lastBehavior.at) &&
+          typeof lastBehavior.room === "string" && isRoom(lastBehavior.room))) &&
+      Array.isArray(value.poopDelayHistory) &&
+      value.poopDelayHistory.every(isNonNegativeInteger) &&
+      Array.isArray(log) && log.every((event) =>
+        isRecord(event) &&
+        hasExactKeys(event, ["t", "type", "room", "visibility", "detail"]) &&
+        isNonNegativeInteger(event.t) &&
+        typeof event.type === "string" && typeof event.room === "string" &&
+        isRoom(event.room) && typeof event.visibility === "string" &&
+        VISIBILITIES.includes(event.visibility as Visibility) &&
+        isRecord(event.detail) && isJsonValue(event.detail)
+      ) &&
+      Number.isInteger(value.poopRevision) &&
+      (value.poopRevision as number) >= BALANCE.NUMBER.ZERO;
   }
 
   private normalizeOwner(owner: OwnerState): Required<OwnerState> {

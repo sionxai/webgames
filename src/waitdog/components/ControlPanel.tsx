@@ -3,9 +3,10 @@ import type { InterventionKind } from "../types";
 interface ControlPanelProps {
   blocked: boolean;
   focusLocked: boolean;
+  away: boolean;
   disabled: boolean;
   onIntervene: (kind: InterventionKind, label: string) => void;
-  onFocusToggle: () => void;
+  onInterruptWork: () => void;
   onWalk: () => void;
   onFeed: () => void;
   onWater: () => void;
@@ -25,13 +26,15 @@ const INTERVENTIONS: ReadonlyArray<{ kind: InterventionKind; label: string }> = 
 export function ControlPanel({
   blocked,
   focusLocked,
+  away,
   disabled,
   onIntervene,
-  onFocusToggle,
+  onInterruptWork,
   onWalk,
   onFeed,
   onWater,
 }: ControlPanelProps) {
+  const unavailable = disabled || away;
   return (
     <section className="panel-card control-card" aria-labelledby="control-title">
       <div className="section-heading compact">
@@ -49,7 +52,7 @@ export function ControlPanel({
           <button
             type="button"
             key={kind}
-            disabled={disabled}
+            disabled={unavailable}
             onClick={() => onIntervene(kind, label)}
           >
             {label}
@@ -59,13 +62,16 @@ export function ControlPanel({
 
       <div className="owner-controls" aria-label="보호자 컨트롤">
         <h3>보호자 컨트롤</h3>
-        <button type="button" disabled={disabled} onClick={onFocusToggle}>
-          {focusLocked ? "업무 종료" : "업무 시작"}
-        </button>
-        <button type="button" disabled={disabled} onClick={onWalk}>산책 30분</button>
-        <button type="button" disabled={disabled} onClick={onFeed}>급식</button>
-        <button type="button" disabled={disabled} onClick={onWater}>급수</button>
+        {focusLocked && (
+          <button type="button" disabled={away || disabled} onClick={onInterruptWork}>
+            업무 중단
+          </button>
+        )}
+        <button type="button" disabled={unavailable} onClick={onWalk}>산책 30분</button>
+        <button type="button" disabled={unavailable} onClick={onFeed}>급식</button>
+        <button type="button" disabled={unavailable} onClick={onWater}>급수</button>
       </div>
+      {away && <p className="away-notice">보호자 외출 중 · 모든 개입이 잠겼습니다.</p>}
     </section>
   );
 }

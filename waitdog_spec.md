@@ -135,3 +135,45 @@ npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts
 
 ## 완료 보고 형식 (30줄 이내)
 변경 파일 / 수용 커맨드 결과 마지막 5줄 / view API 추가 내역 / 해석·가정 / 미해결.
+
+---
+
+# W3 스펙 — 하루 루프·7일 캠페인·저장
+
+## 1. 목표
+아침 계획 → 라이브(W2) → 하루 평가의 하루 루프와 7일 캠페인(기획 §27 커리큘럼), localStorage 저장을 완성한다. Day 7 종료 시 캠페인 결과 화면이 나온다.
+
+## 2. 변경 파일 (목록 밖 수정 금지)
+- 신규: `src/waitdog/components/{MorningPlan,DayReview,CampaignEnd}.tsx`, `src/waitdog/services/campaign.ts`(일정 커리큘럼·저장), 필요시 `src/waitdog/services/narrative.ts`(문장 생성)
+- 수정: `src/waitdog/App.tsx`(화면 전환), `waitdog.css`, `src/waitdog/components/**`(기존 4개 보완), `scripts/waitdog-contract.ts`(검사 추가), `src/waitdog/services/waitdogSim.ts`(직렬화 API `serialize()/restore(snapshot)` 추가만 — 판정 로직 수정 금지)
+- balance.ts에 W3 상수 추가 허용(기존 값 변경 금지)
+
+## 3. 계약
+### 3.1 하루 루프
+- 아침 계획(시간 정지): 오늘 일정 리스트, `predictPoopWindow()` 예상 창+신뢰도 표시("과거 기록 기반"), "하루 시작" 버튼.
+- 보호자 일정 자동 실행: 회의 등 focusLock 일정은 시간 도달 시 자동 시작/종료. 진행 중 "업무 중단" 버튼 → 즉시 해제 + `workScore` 감소. 보호자 자원은 3종만 도입: `energy, focus, workScore`(0..100, balance 상수) — 표시는 게이지, 산책·개입·중단이 소모/감소.
+- 하루 평가(시간 정지): ① 행동일지 — 가시성 필터된 이벤트 타임라인(시각·문장) ② 학습 변화 요약 — 규칙 기반 2~4문장. DecisionTrace·메모리 델타에서 생성하되 내부 수치 직접 노출 금지(예: "큰소리 제지 후, 보호자가 다가올 때 긴장하는 경향이 늘었습니다"). ③ "다음 날" 버튼 → newDay().
+
+### 3.2 7일 캠페인 (기획 §27 → 일자 계약)
+- D1 관찰: 가이드 배너("오늘은 지켜보세요"), 개입 버튼 전부 사용 가능하되 안내만.
+- D2 제지 체험: 아침 팁 "빠른 제지는 어떤 학습을 남길까요?" — 강제 없음.
+- D3 훈련: 아침 팁으로 매트+보상 타이밍 안내(90초 귀속 언급).
+- D4 회의 충돌: 일정에 회의 2건 배치, 예상 배변 창과 겹치게 커리큘럼 고정.
+- D5 추리: 하루 평가에 가설 선택지 3개(배고픔/관심/불안) — 선택은 기록만.
+- D6 자유 운영. D7 자율 시험: 12:00~15:00 보호자 외출 고정(개입 불가, away).
+- Day7 종료 → CampaignEnd: 학습 변화 스토리 요약(식분 빈도 D1~7 추이 문장, 매트 이동 성공 여부, 신뢰 방향), "무한 모드로 계속"(커리큘럼 없이 계속) + "새 캠페인".
+### 3.3 저장
+- localStorage 키 `waitdog_profile_v1`: {day, phase, simSnapshot, ownerResources, hypotheses, settings}. 새로고침 시 정확 복원(라이브 중이면 그 날 아침으로 복원해도 됨 — 명시할 것). 저장 실패는 조용히 무시하지 말고 관찰 패널에 1회 안내.
+
+## 4. 수용 기준
+```
+npm run build
+npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts/waitdog-contract.js
+```
+계약 검사 추가(≥8): serialize→restore 라운드트립 후 트레이스 동일성(결정성 유지), 7일 커리큘럼 일정 생성 결정성(같은 시드), D7 외출 창 존재, 보호자 자원 0..100 클램프.
+브라우저 검증은 Claude 담당.
+
+## 5. 금지
+- getFullState UI 사용, 판정·학습 로직 변경, 기존 balance 값 변경, forge·home 파일, git 커밋. 평가 문장에 내부 수치 노출 금지.
+
+## 완료 보고 형식 (30줄 이내): 변경 파일 / 수용 커맨드 마지막 5줄 / 추가 API·상수 / 해석·가정 / 미해결.

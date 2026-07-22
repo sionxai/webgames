@@ -1,5 +1,23 @@
 import { BALANCE } from "../src/waitdog/constants/balance";
-import { createSim } from "../src/waitdog/services/waitdogSim";
+import {
+  createCampaignSettings,
+  createOwnerResources,
+  generateDaySchedule,
+  loadProfile,
+  saveProfile,
+  updateOwnerResources,
+  WAITDOG_PROFILE_KEY,
+  type StorageAdapter,
+  type WaitdogProfile,
+} from "../src/waitdog/services/campaign";
+import {
+  buildDayNarrative,
+  filteredTimeline,
+} from "../src/waitdog/services/narrative";
+import {
+  createSim,
+  type WaitdogSnapshot,
+} from "../src/waitdog/services/waitdogSim";
 import type {
   DecisionTrace,
   EventLog,
@@ -509,6 +527,232 @@ try {
   invalidInputRejected = true;
 }
 assert(invalidInputRejected, "NaN minutes were accepted");
+
+const roundtripSource = createSim(8101);
+roundtripSource.feed(70);
+roundtripSource.advanceMinutes(210);
+const detachedSnapshot = roundtripSource.serialize();
+detachedSnapshot.log.push({
+  t: 0,
+  type: "mutated-copy",
+  room: "living",
+  visibility: "seen",
+  detail: {},
+});
+assert(
+  !roundtripSource.getLog().some((event) => event.type === "mutated-copy"),
+  "W3 serialize snapshot was not a deep copy",
+);
+const roundtripSnapshot = roundtripSource.serialize();
+const roundtripRestored = createSim(999999);
+roundtripRestored.restore(roundtripSnapshot);
+roundtripSnapshot.owner.room = "toilet";
+roundtripSnapshot.stats.thirst = 0;
+assert(
+  roundtripRestored.serialize().owner.room !== "toilet" &&
+    roundtripRestored.serialize().stats.thirst !== 0,
+  "W3 restore retained an alias to its input",
+);
+roundtripSource.intervene("toyLure");
+roundtripRestored.intervene("toyLure");
+roundtripSource.advanceMinutes(180);
+roundtripRestored.advanceMinutes(180);
+assert(
+  JSON.stringify(roundtripSource.getLog()) ===
+    JSON.stringify(roundtripRestored.getLog()),
+  "W3 serialize restore log trace lost determinism",
+);
+assert(
+  JSON.stringify(roundtripSource.serialize()) ===
+    JSON.stringify(roundtripRestored.serialize()),
+  "W3 serialize restore state or RNG continuation differs",
+);
+
+const largeMealSource = createSim(8103);
+largeMealSource.feed(150);
+const largeMealSnapshot = largeMealSource.serialize();
+assert(
+  largeMealSnapshot.digestionQueue.length === 1 &&
+    largeMealSnapshot.digestionQueue[0].volume === 100,
+  "W3 large feed snapshot did not preserve the 100-volume clamp",
+);
+const largeMealRestored = createSim(0);
+largeMealRestored.restore(largeMealSnapshot);
+assert(
+  JSON.stringify(largeMealRestored.serialize()) ===
+    JSON.stringify(largeMealSource.serialize()),
+  "W3 clamped large feed snapshot failed restore roundtrip",
+);
+
+const atomicRestore = createSim(8102);
+atomicRestore.feed(70);
+const beforeInvalidRestore = atomicRestore.serialize();
+const malformedSnapshot: WaitdogSnapshot = {
+  ...beforeInvalidRestore,
+  absoluteMinute: beforeInvalidRestore.absoluteMinute + 1,
+};
+let malformedRejected = false;
+try {
+  atomicRestore.restore(malformedSnapshot);
+} catch {
+  malformedRejected = true;
+}
+assert(malformedRejected, "W3 malformed snapshot was accepted");
+assert(
+  JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
+  "W3 malformed restore partially polluted live state",
+);
+
+const curriculumPrediction = {
+  start: 3 * BALANCE.TIME.DAY_LENGTH + 600,
+  end: 3 * BALANCE.TIME.DAY_LENGTH + 780,
+  confidence: 20,
+};
+const curriculumA = Array.from({ length: 7 }, (_, index) =>
+  generateDaySchedule(index + 1, 4242, curriculumPrediction)
+);
+const curriculumB = Array.from({ length: 7 }, (_, index) =>
+  generateDaySchedule(index + 1, 4242, curriculumPrediction)
+);
+assert(
+  JSON.stringify(curriculumA) === JSON.stringify(curriculumB),
+  "W3 same seed campaign schedule differs",
+);
+const dayFourFocus = curriculumA[3].filter((item) => item.focusLock);
+assert(dayFourFocus.length === 2, "W3 D4 did not contain exactly two meetings");
+assert(
+  dayFourFocus.every((item) =>
+    item.startMinute <= 780 && item.endMinute >= 600
+  ),
+  "W3 D4 meeting did not overlap the predicted poop window",
+);
+const daySevenAway = curriculumA[6].find((item) => item.away);
+assert(
+  daySevenAway?.startMinute === 720 && daySevenAway.endMinute === 900,
+  "W3 D7 away window was not exactly 12:00-15:00",
+);
+
+const resourcesHigh = updateOwnerResources(
+  { energy: 95, focus: 99, workScore: 100 },
+  { energy: 80, focus: 1, workScore: 1000 },
+);
+assert(
+  Object.values(resourcesHigh).every((value) => value === 100),
+  "W3 owner resources did not clamp the upper bound",
+);
+const resourcesLow = updateOwnerResources(
+  { energy: 3, focus: 2, workScore: 1 },
+  { energy: -80, focus: -3, workScore: -1000 },
+);
+assert(
+  Object.values(resourcesLow).every((value) => value === 0),
+  "W3 owner resources did not clamp the lower bound",
+);
+const resourceShape = createOwnerResources();
+assert(
+  Object.keys(resourceShape).sort().join(",") ===
+    ["energy", "focus", "workScore"].sort().join(","),
+  "W3 owner resource shape was not exact",
+);
+assert(
+  updateOwnerResources(resourceShape, { energy: Number.NaN }).energy === 0,
+  "W3 NaN owner resource was not clamped safely",
+);
+
+const memoryStorage = (() => {
+  let stored: string | null = null;
+  return {
+    getItem: (key: string) => key === WAITDOG_PROFILE_KEY ? stored : null,
+    setItem: (key: string, value: string) => {
+      if (key !== WAITDOG_PROFILE_KEY) throw new Error("wrong storage key");
+      stored = value;
+    },
+    removeItem: () => {
+      stored = null;
+    },
+    raw: () => stored,
+  };
+})();
+const saveResult = saveProfile(memoryStorage, {
+  day: roundtripSource.serialize().day,
+  phase: "morning",
+  simSnapshot: roundtripSource.serialize(),
+  ownerResources: { energy: 50, focus: 60, workScore: 70 },
+  hypotheses: ["관심"],
+  settings: createCampaignSettings(4242),
+});
+assert(saveResult.ok, "W3 profile save failed through the exact storage key");
+const storedProfile = JSON.parse(memoryStorage.raw() ?? "null") as Record<
+  string,
+  unknown
+>;
+assert(
+  Object.keys(storedProfile).sort().join(",") ===
+    ["day", "phase", "simSnapshot", "ownerResources", "hypotheses", "settings"]
+      .sort().join(","),
+  "W3 profile top-level shape was not exact",
+);
+assert(loadProfile(memoryStorage).ok, "W3 saved profile did not load");
+
+const throwingStorage: StorageAdapter = {
+  getItem: () => {
+    throw new Error("storage unavailable");
+  },
+  setItem: () => {
+    throw new Error("storage unavailable");
+  },
+};
+const typedStoredProfile = JSON.parse(
+  memoryStorage.raw() ?? "null",
+) as WaitdogProfile;
+assert(
+  !saveProfile(throwingStorage, typedStoredProfile).ok,
+  "W3 storage write failure was silently ignored",
+);
+assert(
+  !loadProfile(throwingStorage).ok,
+  "W3 storage read failure was silently ignored",
+);
+
+const narrativeMorning = createSim(8201).serialize();
+const narrativeEvening = JSON.parse(
+  JSON.stringify(narrativeMorning),
+) as WaitdogSnapshot;
+narrativeEvening.log.push(
+  {
+    t: 800,
+    type: "poop",
+    room: "toilet",
+    visibility: "hidden",
+    detail: { secret: 314159 },
+  },
+  {
+    t: 801,
+    type: "poop",
+    room: "toilet",
+    visibility: "heard",
+    detail: { secret: 271828 },
+  },
+);
+const narrative = buildDayNarrative(narrativeMorning, narrativeEvening);
+assert(
+  narrative.learning.length >= 2 && narrative.learning.length <= 4,
+  "W3 learning narrative was not two to four sentences",
+);
+assert(
+  narrative.learning.every((sentence) => !/[0-9%]/.test(sentence)),
+  "W3 learning narrative exposed a raw number",
+);
+const redactedTimeline = filteredTimeline(narrativeEvening);
+assert(
+  redactedTimeline.length === 2 &&
+    redactedTimeline.every((item) => !item.sentence.includes("314159")) &&
+    redactedTimeline.some((item) =>
+      item.sentence === "어딘가에서 작은 소리가 들렸습니다."
+    ),
+  "W3 timeline leaked hidden or heard details",
+);
+
 assert(assertionCount >= 25, "contract contains fewer than 25 assertions");
 
 console.log(`CONTRACT OK ${assertionCount} assertions`);

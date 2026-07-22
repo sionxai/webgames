@@ -184,6 +184,21 @@ export const BALANCE = {
     FALLBACK_START_MINUTES: 180,
     FALLBACK_END_MINUTES: 360,
   },
+  W3: {
+    RESOURCE_MIN: 0,
+    RESOURCE_MAX: 100,
+    INITIAL_OWNER_RESOURCES: {
+      energy: 100,
+      focus: 100,
+      workScore: 100,
+    },
+    COST: {
+      WALK_ENERGY: 18,
+      INTERVENTION_ENERGY: 3,
+      INTERVENTION_FOCUS: 2,
+      INTERRUPT_WORK_SCORE: 15,
+    },
+  },
 } as const;
 
 export const ROOMS = ["living", "kitchen", "toilet"] as const;
