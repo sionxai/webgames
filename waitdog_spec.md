@@ -177,3 +177,42 @@ npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts
 - getFullState UI 사용, 판정·학습 로직 변경, 기존 balance 값 변경, forge·home 파일, git 커밋. 평가 문장에 내부 수치 노출 금지.
 
 ## 완료 보고 형식 (30줄 이내): 변경 파일 / 수용 커맨드 마지막 5줄 / 추가 API·상수 / 해석·가정 / 미해결.
+
+---
+
+# W4 스펙 — 아트 통합 (배경·모션 스프라이트)
+
+## 1. 목표
+하우스 뷰를 도형 렌더에서 생성 아트 렌더로 교체한다: 탑다운 집 배경 + 강아지 4모션 스프라이트 애니메이션 + 소품 스프라이트. 시뮬 로직·UI 패널은 불변.
+
+## 2. 변경 파일 (목록 밖 수정 금지)
+- 신규: `src/waitdog/constants/artAssets.ts` (경로·그리드 메타·모션 매핑 상수)
+- 수정: `src/waitdog/components/HouseCanvas.tsx` (렌더 교체), `src/waitdog/waitdog.css` (캔버스 비율 관련 최소 수정)
+- 에셋(이미 존재, 수정 금지): `public/assets/images/waitdog-house-bg-v1.webp`(1100×1100), `waitdog-dog-a-v1.webp`(1538×624, 4열2행), `waitdog-dog-b-v1.webp`(1318×510, 4열2행), `waitdog-props-v1.webp`(1526×906, 4열2행)
+
+## 3. 계약
+### 3.1 좌표계·배경
+- 캔버스 내부 좌표를 정사각(예: 900×900)으로 바꾸고 배경 이미지를 전체에 그린다(늘림 없음). CSS는 반응형 유지(모바일 1열).
+- 방 히트영역·이동 목표를 배경 이미지 비율로 재정의: living {x:2.5%, y:2%, w:55.5%, h:96%}, kitchen {x:60.5%, y:2%, w:37%, h:47%}, toilet {x:60.5%, y:51%, w:37%, h:47%}. 기존 방 라벨·클릭 이동은 유지(라벨은 좌상단 소형 배지로).
+### 3.2 스프라이트
+- 셀 크기는 `이미지 자연폭/4, 자연높이/2`로 계산(하드코딩 금지). 그리기는 drawImage 서브렉트.
+- 강아지 모션 매핑(5fps 루프, `prefers-reduced-motion`이면 1프레임 고정):
+  idle→A행0 / 이동 중→A행1(왼쪽 이동 시 수평 플립) / sniffFloor·circle·wander·eatPoop 접근→B행0 / moveToMat 후 대기·엎드림→B행1 / zoomies·flee→A행1 고속(8fps).
+- 소품 셀 인덱스(0~7): 매트, 응가, 사료그릇, 물그릇, 공, 펜스, 보호자, 배변패드. 보호자는 스프라이트로 교체, 배설물 마커는 응가 셀로 교체(크기 소형), 화장실에 배변패드 상시 표시, 펜스는 차단 활성 시 생활방 우측 경계에.
+- 크기 가이드: 강아지 폭 = living 폭의 약 20%, 보호자 높이 = living 높이의 약 22%, 응가 폭 약 8%. 바닥 접점 기준 정렬(발 피벗), 간단한 타원 그림자 허용.
+### 3.3 가시성 마스킹 유지
+- 기존 계약 그대로: hidden 방 어둡게+개 미렌더+? 마커, heard 소리 아이콘, focusLock 전체 가림. 마스킹 레이어는 배경·스프라이트 위에 그린다.
+### 3.4 로딩
+- 이미지 4장 프리로드. 로드 전 프레임은 현재 도형 렌더로 폴백(크래시 금지). 로드 실패 시에도 게임 진행 가능.
+
+## 4. 수용 기준
+```
+npm run build
+npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts/waitdog-contract.js
+```
+브라우저 시각 검증(배경 정합·모션 재생·마스킹)은 Claude 담당.
+
+## 5. 금지
+- 시뮬·campaign·narrative·balance 수정, 에셋 파일 수정, 다른 게임·홈 파일, git 커밋, getFullState UI 사용.
+
+## 완료 보고 형식 (30줄 이내): 변경 파일 / 수용 커맨드 결과 / 모션 매핑 구현 요약 / 가정 / 미해결.
