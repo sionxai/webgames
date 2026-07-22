@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+.waitdog-contract-dist/
 
 # Local image-generation intermediates
 tmp/
