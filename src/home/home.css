@@ -203,6 +203,34 @@ a:focus-visible {
   color: var(--forge-faint);
 }
 
+.hero-card__chips,
+.game-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-support-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  color: #e4ccf1;
+  background: rgba(104, 69, 128, 0.28);
+  border: 1px solid rgba(183, 132, 214, 0.52);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.agent-support-chip--hero {
+  color: #f1dff9;
+  background: rgba(66, 38, 83, 0.76);
+  backdrop-filter: blur(5px);
+}
+
 .play-cta {
   display: inline-flex;
   align-items: center;

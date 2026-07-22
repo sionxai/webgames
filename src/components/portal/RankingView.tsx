@@ -1,122 +1,122 @@
 import React, { useState } from 'react';
-import { UserGameProfile, RankingEntry, SwordSeriesId } from '../../types/game';
-import { Trophy, ShieldCheck, Zap } from 'lucide-react';
+import { SWORD_SERIES_LIST, SWORD_STAGES } from '../../constants/gameBalance';
+import { ForgeController, ForgeRunRecord, UserGameProfile } from '../../types/game';
+import { Bot, CalendarDays, Hammer, RotateCcw, ShieldCheck, Trophy, Wrench } from 'lucide-react';
 
 interface RankingViewProps {
-  profile: UserGameProfile;
+  humanProfile: UserGameProfile;
+  agentProfile: UserGameProfile;
 }
 
-export const RankingView: React.FC<RankingViewProps> = ({ profile }) => {
-  const [tab, setTab] = useState<'daily' | 'pure'>('daily');
+function formatAchievedAt(timestamp: number): string {
+  const date = new Date(timestamp);
+  if (!Number.isFinite(timestamp) || Number.isNaN(date.getTime())) return '기록 시각 없음';
+  return date.toLocaleString('ko-KR', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
 
-  // 모의 랭킹 리스트 데이터
-  const mockRankings: RankingEntry[] = [
-    { id: '1', userId: 'usr_sword_master', nickname: '강화의신', swordSeriesId: 'dragon' as SwordSeriesId, maxLevel: 19, attemptsCount: 142, isPure: true, timestamp: Date.now(), dateStr: '오늘' },
-    { id: '2', userId: 'usr_hero99', nickname: '초보대장장이', swordSeriesId: 'flame' as SwordSeriesId, maxLevel: 17, attemptsCount: 98, isPure: false, timestamp: Date.now(), dateStr: '오늘' },
-    { id: '3', userId: profile.userId, nickname: `${profile.nickname} (나)`, swordSeriesId: profile.currentSeriesId as SwordSeriesId, maxLevel: profile.maxLevelReached, attemptsCount: profile.totalEnhanceAttempts, isPure: profile.isPureRun, timestamp: Date.now(), dateStr: '오늘' },
-    { id: '4', userId: 'usr_luck7', nickname: '운7기3', swordSeriesId: 'guardian' as SwordSeriesId, maxLevel: 15, attemptsCount: 65, isPure: true, timestamp: Date.now(), dateStr: '오늘' },
-    { id: '5', userId: 'usr_iron', nickname: '무쇠팔', swordSeriesId: 'kingdom' as SwordSeriesId, maxLevel: 14, attemptsCount: 110, isPure: true, timestamp: Date.now(), dateStr: '오늘' }
-  ].sort((a, b) => b.maxLevel - a.maxLevel);
-
-  const filtered = tab === 'pure' ? mockRankings.filter(r => r.isPure) : mockRankings;
+function RecordCard({ record }: { record: ForgeRunRecord }) {
+  const stage = SWORD_STAGES[record.level] || SWORD_STAGES[0];
+  const series = SWORD_SERIES_LIST.find(item => item.id === record.seriesId) || SWORD_SERIES_LIST[0];
 
   return (
-    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#ffd700' }}>
-        <Trophy size={24} />
-        <h2 style={{ margin: 0, fontSize: '1.2rem' }}>전설의 명예의 전당 (랭킹)</h2>
+    <article className="local-record-card">
+      <div className="local-record-card__hero">
+        <div>
+          <small>PERSONAL BEST</small>
+          <strong style={{ color: stage.color }}>+{record.level} {stage.name}</strong>
+          <span>{series.icon} {series.name}</span>
+        </div>
+        <span className={record.isPure ? 'record-purity is-pure' : 'record-purity'}>
+          {record.isPure ? <ShieldCheck size={15} aria-hidden="true" /> : <RotateCcw size={15} aria-hidden="true" />}
+          {record.isPure ? '순수 기록' : '복구·수리 기록'}
+        </span>
       </div>
 
-      {/* 탭 버튼 */}
-      <div style={{ display: 'flex', gap: '8px', background: 'rgba(0,0,0,0.3)', padding: '4px', borderRadius: '8px' }}>
+      <dl className="local-record-stats">
+        <div>
+          <dt><Hammer size={14} aria-hidden="true" /> 강화 시도</dt>
+          <dd>{record.weaponAttempts.toLocaleString()}회</dd>
+        </div>
+        <div>
+          <dt><Wrench size={14} aria-hidden="true" /> 수리</dt>
+          <dd>{record.repairCount.toLocaleString()}회</dd>
+        </div>
+        <div>
+          <dt><RotateCcw size={14} aria-hidden="true" /> 광고 복구</dt>
+          <dd>{record.adRestoreCount.toLocaleString()}회</dd>
+        </div>
+        <div>
+          <dt><Bot size={14} aria-hidden="true" /> 조작 주체</dt>
+          <dd>{record.controller === 'agent' ? 'AI' : '사람'}</dd>
+        </div>
+      </dl>
+
+      <div className="local-record-card__date">
+        <CalendarDays size={14} aria-hidden="true" />
+        달성 {formatAchievedAt(record.achievedAt)}
+      </div>
+    </article>
+  );
+}
+
+export const RankingView: React.FC<RankingViewProps> = ({ humanProfile, agentProfile }) => {
+  const [controller, setController] = useState<ForgeController>('human');
+  const record = controller === 'human'
+    ? humanProfile.bestRecords.human
+    : agentProfile.bestRecords.agent;
+
+  return (
+    <section className="local-ranking" aria-labelledby="local-ranking-title">
+      <header className="local-ranking__heading">
+        <div>
+          <span className="section-kicker">LOCAL RECORDS</span>
+          <h2 id="local-ranking-title"><Trophy size={22} aria-hidden="true" /> 최고 기록</h2>
+        </div>
+        <span className="local-ranking__notice">로컬 비공식 기록</span>
+      </header>
+
+      <p className="local-ranking__description">
+        서버 경쟁자가 아닌 이 브라우저의 사람·AI 최고 기록 스냅샷만 표시합니다.
+      </p>
+
+      <div className="local-ranking__tabs" role="tablist" aria-label="기록 조작 주체">
         <button
-          onClick={() => setTab('daily')}
-          style={{
-            flex: 1,
-            background: tab === 'daily' ? '#ff9800' : 'transparent',
-            color: '#fff',
-            border: 'none',
-            padding: '8px',
-            borderRadius: '6px',
-            fontWeight: 'bold',
-            fontSize: '0.85rem',
-            cursor: 'pointer'
-          }}
+          type="button"
+          role="tab"
+          aria-selected={controller === 'human'}
+          className={controller === 'human' ? 'is-active' : ''}
+          onClick={() => setController('human')}
         >
-          🏆 오늘의 최고 강화
+          사람 로컬
         </button>
         <button
-          onClick={() => setTab('pure')}
-          style={{
-            flex: 1,
-            background: tab === 'pure' ? '#4caf50' : 'transparent',
-            color: '#fff',
-            border: 'none',
-            padding: '8px',
-            borderRadius: '6px',
-            fontWeight: 'bold',
-            fontSize: '0.85rem',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '4px'
-          }}
+          type="button"
+          role="tab"
+          aria-selected={controller === 'agent'}
+          className={controller === 'agent' ? 'is-active' : ''}
+          onClick={() => setController('agent')}
         >
-          <ShieldCheck size={16} /> 순수 대장장이 랭킹
+          AI 로컬
         </button>
       </div>
 
-      {/* 랭킹 목록 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {filtered.map((entry, index) => {
-          const isMe = entry.userId === profile.userId;
-          return (
-            <div
-              key={entry.id}
-              style={{
-                background: isMe ? 'rgba(255, 215, 0, 0.15)' : 'rgba(255, 255, 255, 0.03)',
-                border: isMe ? '1px solid #ffd700' : '1px solid rgba(255,255,255,0.06)',
-                borderRadius: '10px',
-                padding: '10px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <span style={{
-                  fontSize: '1.1rem',
-                  fontWeight: 'bold',
-                  color: index === 0 ? '#ffd700' : index === 1 ? '#c0c0c0' : index === 2 ? '#cd7f32' : '#888',
-                  width: '24px'
-                }}>
-                  #{index + 1}
-                </span>
-                <div>
-                  <div style={{ fontWeight: 'bold', color: '#fff', fontSize: '0.9rem' }}>
-                    {entry.nickname}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: '#aaa', display: 'flex', gap: '6px', marginTop: '2px' }}>
-                    <span>시도 {entry.attemptsCount}회</span>
-                    {entry.isPure ? (
-                      <span style={{ color: '#81c784' }}>• 🛡️ 순수</span>
-                    ) : (
-                      <span style={{ color: '#b388ff' }}>• 🎬 광고복구 포함</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ textAlign: 'right' }}>
-                <span style={{ fontSize: '1.1rem', fontWeight: 'bold', color: '#ffca28' }}>
-                  +{entry.maxLevel}
-                </span>
-              </div>
-            </div>
-          );
-        })}
+      <div role="tabpanel" className="local-ranking__panel">
+        {record ? (
+          <RecordCard record={record} />
+        ) : (
+          <div className="local-record-empty" role="status">
+            <Trophy size={28} aria-hidden="true" />
+            <strong>{controller === 'agent' ? 'AI 최고 기록이 아직 없습니다.' : '사람 최고 기록이 아직 없습니다.'}</strong>
+            <span>강화에 성공하면 해당 검의 불변 최고 기록이 여기에 저장됩니다.</span>
+          </div>
+        )}
       </div>
-    </div>
+    </section>
   );
 };

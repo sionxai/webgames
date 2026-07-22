@@ -2,13 +2,11 @@ import React, { useEffect, useRef, useState } from 'react';
 import { BOSS_LIST, SWORD_SERIES_LIST, SWORD_STAGES } from '../../constants/gameBalance';
 import {
   BossDefeatResult,
-  CatalystDefinition,
-  CatalystDropResult,
+  HuntResolution,
   SwordSeriesId,
   UserGameProfile
 } from '../../types/game';
 import { GAME_IMAGES } from '../../constants/imageAssets';
-import { MaterialSprite } from '../common/MaterialSprite';
 import {
   getSwordAtlasCell,
   SWORD_ATLAS_CELL_SIZE,
@@ -21,15 +19,23 @@ declare global {
   }
 }
 
-interface CombatCanvasProps {
-  profile: UserGameProfile;
-  onAttackHit: (baseGold: number) => number;
-  onBossKilled: (milestone: number) => BossDefeatResult;
+export interface CombatAttackResult {
+  ok: boolean;
+  message: string;
 }
 
-type HuntMode = 'normal' | 'boss';
+interface CombatCanvasProps {
+  profile: UserGameProfile;
+  onNormalEnemyDefeated: (baseGold: number) => HuntResolution;
+  onBossDefeated: (encounterId: string) => BossDefeatResult;
+  mode?: 'human' | 'agent';
+  autoAttackEnabled?: boolean;
+  onAgentAttackReady?: (requestAttack: (() => CombatAttackResult) | null) => void;
+  onRenderStateReady?: (renderState: (() => string) | null) => void;
+}
 
 interface CombatConfig {
+  weaponId: string;
   level: number;
   seriesId: SwordSeriesId;
   attackPower: number;
@@ -37,16 +43,19 @@ interface CombatConfig {
   swordGlow: string;
   destroyed: boolean;
   isBoss: boolean;
-  repeatableBoss: boolean;
-  huntMode: HuntMode;
+  encounterId: string | null;
   bossId: string | null;
+  bossLevelSnapshot: number | null;
+  bossAtlasSource: 'midboss' | 'boss' | null;
   bossAtlasCell: number | null;
-  bossMilestone: number | null;
   bossClaimed: boolean;
-  catalyst: CatalystDefinition | null;
-  catalystPity: number;
-  catalystInventory: number;
-  activeCatalystCharges: number;
+  progressCharges: { tempered: number; awakened: number };
+  encounterBagSize: number | null;
+  encounterCursor: number;
+  encounterBossSlot: number | null;
+  encounterCycle: number | null;
+  encounterPaused: boolean;
+  encounterPausedReason: string | null;
   targetName: string;
   maxHp: number;
   normalMaxHp: number;
@@ -110,8 +119,6 @@ const TARGET_X = 360;
 const TARGET_Y = 186;
 const AUTO_ATTACK_INTERVAL = 1050;
 const BOSS_MANUAL_ATTACK_COOLDOWN = 900;
-const BOSS_ATLAS_CELL_SIZE = 384;
-const MATERIAL_ATLAS_CELL_SIZE = 256;
 
 function drawImageCover(
   ctx: CanvasRenderingContext2D,
@@ -207,36 +214,41 @@ function drawBossAtlasCell(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement,
   atlasCell: number,
+  atlasSource: 'midboss' | 'boss',
   time: number,
   reducedMotion: boolean,
   destroyed: boolean
 ) {
-  const column = atlasCell % 5;
-  const row = Math.floor(atlasCell / 5);
+  const column = Math.max(0, Math.min(4, atlasCell % 5));
   const bob = reducedMotion || destroyed ? 0 : Math.sin(time * 0.0024) * 4;
   const pulse = reducedMotion ? 1 : 1 + Math.sin(time * 0.0018) * 0.012;
-  const drawSize = 330;
+  const isMidboss = atlasSource === 'midboss';
+  const sourceWidth = image.naturalWidth / 5;
+  const sourceHeight = isMidboss ? image.naturalHeight : image.naturalHeight / 2;
+  const sourceY = isMidboss ? 0 : Math.floor(atlasCell / 5) * sourceHeight;
+  const drawHeight = isMidboss ? 420 : 330;
+  const drawWidth = isMidboss ? drawHeight * sourceWidth / sourceHeight : 330;
 
   ctx.save();
   ctx.translate(TARGET_X, TARGET_Y + 5 + bob);
   ctx.scale(pulse, pulse);
-  ctx.shadowColor = atlasCell >= 5 ? 'rgba(156, 91, 255, 0.78)' : 'rgba(240, 95, 44, 0.75)';
+  ctx.shadowColor = !isMidboss && atlasCell >= 5 ? 'rgba(156, 91, 255, 0.78)' : 'rgba(240, 95, 44, 0.75)';
   ctx.shadowBlur = 28;
   ctx.drawImage(
     image,
-    column * BOSS_ATLAS_CELL_SIZE,
-    row * BOSS_ATLAS_CELL_SIZE,
-    BOSS_ATLAS_CELL_SIZE,
-    BOSS_ATLAS_CELL_SIZE,
-    -drawSize / 2,
-    -drawSize / 2,
-    drawSize,
-    drawSize
+    column * sourceWidth,
+    sourceY,
+    sourceWidth,
+    sourceHeight,
+    -drawWidth / 2,
+    -drawHeight / 2,
+    drawWidth,
+    drawHeight
   );
   ctx.restore();
 }
 
-function drawMaterialDropBurst(
+function drawTranscendenceDropBurst(
   ctx: CanvasRenderingContext2D,
   image: HTMLImageElement | undefined,
   burst: DropBurst,
@@ -269,16 +281,16 @@ function drawMaterialDropBurst(
   ctx.fillRect(TARGET_X - 92, centerY - 92, 184, 184);
 
   if (image?.complete && image.naturalWidth > 0) {
-    const column = burst.atlasCell % 5;
-    const row = Math.floor(burst.atlasCell / 5);
+    const column = Math.max(0, Math.min(1, burst.atlasCell));
+    const sourceSize = image.naturalWidth / 2;
     ctx.shadowColor = '#85f0c2';
     ctx.shadowBlur = 24;
     ctx.drawImage(
       image,
-      column * MATERIAL_ATLAS_CELL_SIZE,
-      row * MATERIAL_ATLAS_CELL_SIZE,
-      MATERIAL_ATLAS_CELL_SIZE,
-      MATERIAL_ATLAS_CELL_SIZE,
+      column * sourceSize,
+      0,
+      sourceSize,
+      image.naturalHeight,
       TARGET_X - 48,
       centerY - 48,
       96,
@@ -494,17 +506,36 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '보상 처리 오류';
 }
 
-export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit, onBossKilled }) => {
+export const CombatCanvas: React.FC<CombatCanvasProps> = ({
+  profile,
+  onNormalEnemyDefeated,
+  onBossDefeated,
+  mode = 'human',
+  autoAttackEnabled = true,
+  onAgentAttackReady,
+  onRenderStateReady
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const imagesRef = useRef<Partial<Record<'arena' | 'imp' | 'swords' | 'bosses' | 'materials', HTMLImageElement>>>({});
-  const callbacksRef = useRef({ onAttackHit, onBossKilled });
+  const imagesRef = useRef<Partial<Record<'arena' | 'imp' | 'swords' | 'bosses' | 'midbosses' | 'transcendence', HTMLImageElement>>>({});
+  const callbacksRef = useRef({ onNormalEnemyDefeated, onBossDefeated });
+  const profileRef = useRef(profile);
+  const autoAttackEnabledRef = useRef(autoAttackEnabled);
   const configRef = useRef<CombatConfig | null>(null);
   const hpRef = useRef(1);
   const rewardRef = useRef('아직 획득한 전투 보상이 없습니다.');
-  const lastDropRef = useRef<CatalystDropResult | null>(null);
+  const lastBossResultRef = useRef<BossDefeatResult | null>(null);
   const lastManualBossHitAtRef = useRef(Number.NEGATIVE_INFINITY);
   const reducedMotionRef = useRef(false);
-  const performHitRef = useRef<(damage: number, x: number, y: number, isTap: boolean) => void>(() => undefined);
+  const performHitRef = useRef<(
+    damage: number,
+    x: number,
+    y: number,
+    isTap: boolean
+  ) => CombatAttackResult>(() => ({ ok: false, message: '전투가 준비되지 않았습니다.' }));
+  const performAgentAttackRef = useRef<() => CombatAttackResult>(() => ({
+    ok: false,
+    message: 'AI 공격 입력이 준비되지 않았습니다.'
+  }));
   const visualRef = useRef<VisualState>({
     autoElapsed: 0,
     swingPhase: 0,
@@ -515,43 +546,44 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
     arcs: [],
     dropBurst: null
   });
-  const initialHuntTarget = `${profile.runStartTime}:${profile.currentLevel}`;
   const [monsterHp, setMonsterHp] = useState(1);
   const [lastReward, setLastReward] = useState('아직 획득한 전투 보상이 없습니다.');
-  const [lastDrop, setLastDrop] = useState<CatalystDropResult | null>(null);
-  const [locallyClaimedBoss, setLocallyClaimedBoss] = useState<number | null>(null);
-  const [huntState, setHuntState] = useState<{ target: string; mode: HuntMode }>(() => ({
-    target: initialHuntTarget,
-    mode: profile.currentLevel >= 10 && profile.currentLevel <= 19 ? 'boss' : 'normal'
-  }));
+  const [lastBossResult, setLastBossResult] = useState<BossDefeatResult | null>(null);
 
-  callbacksRef.current = { onAttackHit, onBossKilled };
+  callbacksRef.current = { onNormalEnemyDefeated, onBossDefeated };
+  profileRef.current = profile;
+  autoAttackEnabledRef.current = autoAttackEnabled;
 
   const currentStage = SWORD_STAGES[profile.currentLevel] || SWORD_STAGES[0];
   const series = SWORD_SERIES_LIST.find(item => item.id === profile.currentSeriesId) || SWORD_SERIES_LIST[0];
-  const boss = BOSS_LIST.find(item => item.milestone === profile.currentLevel) || null;
-  const repeatableBoss = Boolean(boss?.catalyst);
-  const huntTarget = `${profile.runStartTime}:${profile.currentLevel}`;
-  const huntMode: HuntMode = huntState.target === huntTarget
-    ? huntState.mode
-    : repeatableBoss ? 'boss' : 'normal';
-  const bossClaimed = Boolean(
-    boss && (
-      profile.claimedBossMilestonesThisRun.includes(boss.milestone)
-      || locallyClaimedBoss === boss.milestone
-    )
+  const encounter = profile.currentWeapon.bossEncounter;
+  const activeEncounter = encounter?.active ?? null;
+  const boss = activeEncounter
+    ? BOSS_LIST.find(item => item.id === activeEncounter.bossId && item.milestone === activeEncounter.levelSnapshot) || null
+    : null;
+  const isBoss = Boolean(activeEncounter && boss);
+  const bossClaimed = Boolean(activeEncounter && profile.claimedBossMilestonesThisRun.includes(activeEncounter.levelSnapshot));
+  const progressCharges = profile.currentWeapon.progressCharges;
+  const encounterPaused = !isBoss && profile.currentLevel >= 5 && profile.currentLevel <= 19 && (
+    profile.currentLevel <= 13 ? progressCharges.tempered > 0 : progressCharges.awakened > 0
   );
-  const isBoss = Boolean(boss && (repeatableBoss ? huntMode === 'boss' : !bossClaimed));
-  const catalyst = repeatableBoss && boss ? boss.catalyst : null;
+  const encounterPausedReason = encounterPaused
+    ? profile.currentLevel <= 13
+      ? '제련의 불씨 충전 보유 중'
+      : '심연의 인장 충전 보유 중'
+    : null;
   const normalMaxHp = (profile.currentLevel + 1) * 150;
   const baseGoldReward = (profile.currentLevel + 1) * 15;
   const visibleNormalGold = Math.round(baseGoldReward * series.goldBonusMultiplier);
   const maxHp = isBoss && boss ? boss.maxHp : normalMaxHp;
   const targetName = isBoss && boss ? boss.name : '용광로 임프';
-  const targetKey = `${huntTarget}:${isBoss ? boss?.id : 'imp'}`;
+  const targetKey = isBoss && activeEncounter
+    ? `${profile.currentWeapon.weaponId}:${activeEncounter.encounterId}`
+    : `${profile.currentWeapon.weaponId}:${profile.currentLevel}:imp`;
   const isDestroyed = profile.currentCrackCount >= 3;
 
   const config: CombatConfig = {
+    weaponId: profile.currentWeapon.weaponId,
     level: profile.currentLevel,
     seriesId: profile.currentSeriesId,
     attackPower: currentStage.attackPower,
@@ -559,16 +591,19 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
     swordGlow: currentStage.glowColor,
     destroyed: isDestroyed,
     isBoss,
-    repeatableBoss,
-    huntMode,
+    encounterId: activeEncounter?.encounterId ?? null,
     bossId: boss?.id ?? null,
+    bossLevelSnapshot: activeEncounter?.levelSnapshot ?? null,
+    bossAtlasSource: isBoss ? boss?.atlasSource ?? null : null,
     bossAtlasCell: isBoss ? boss?.atlasCell ?? null : null,
-    bossMilestone: boss?.milestone ?? null,
     bossClaimed,
-    catalyst,
-    catalystPity: catalyst ? profile.catalystPity[catalyst.id] || 0 : 0,
-    catalystInventory: catalyst ? profile.catalystInventory[catalyst.id] || 0 : 0,
-    activeCatalystCharges: catalyst ? profile.activeCatalystCharges[catalyst.id] || 0 : 0,
+    progressCharges: { ...progressCharges },
+    encounterBagSize: encounter?.bagSize ?? null,
+    encounterCursor: encounter?.cursor ?? 0,
+    encounterBossSlot: encounter?.bossSlot ?? null,
+    encounterCycle: encounter?.cycle ?? null,
+    encounterPaused,
+    encounterPausedReason,
     targetName,
     maxHp,
     normalMaxHp,
@@ -582,15 +617,10 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
   configRef.current = config;
 
   useEffect(() => {
-    setLocallyClaimedBoss(null);
-    setHuntState({
-      target: huntTarget,
-      mode: profile.currentLevel >= 10 && profile.currentLevel <= 19 ? 'boss' : 'normal'
-    });
-    lastDropRef.current = null;
-    setLastDrop(null);
+    lastBossResultRef.current = null;
+    setLastBossResult(null);
     lastManualBossHitAtRef.current = Number.NEGATIVE_INFINITY;
-  }, [huntTarget, profile.currentLevel]);
+  }, [profile.currentWeapon.weaponId]);
 
   useEffect(() => {
     hpRef.current = maxHp;
@@ -614,7 +644,7 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
   useEffect(() => {
     let disposed = false;
     const loadImage = (
-      key: 'arena' | 'imp' | 'swords' | 'bosses' | 'materials',
+      key: 'arena' | 'imp' | 'swords' | 'bosses' | 'midbosses' | 'transcendence',
       source: string
     ) => {
       const image = new Image();
@@ -631,8 +661,9 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
     loadImage('arena', GAME_IMAGES.forgeArena);
     loadImage('imp', GAME_IMAGES.forgeImp);
     loadImage('swords', GAME_IMAGES.swordLevelAtlas);
+    loadImage('midbosses', GAME_IMAGES.forgeMidbossAtlas);
     loadImage('bosses', GAME_IMAGES.forgeBossAtlas);
-    loadImage('materials', GAME_IMAGES.forgeMaterialAtlas);
+    loadImage('transcendence', GAME_IMAGES.forgeTranscendenceAtlas);
     return () => {
       disposed = true;
     };
@@ -640,7 +671,8 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
 
   performHitRef.current = (damage, x, y, isTap) => {
     const activeConfig = configRef.current;
-    if (!activeConfig || activeConfig.destroyed) return;
+    if (!activeConfig) return { ok: false, message: '전투 상태를 읽을 수 없습니다.' };
+    if (activeConfig.destroyed) return { ok: false, message: '파괴된 검으로는 공격할 수 없습니다.' };
 
     const visual = visualRef.current;
     const reducedMotion = reducedMotionRef.current;
@@ -687,11 +719,15 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
     hpRef.current = nextHp;
     setMonsterHp(nextHp);
 
-    if (nextHp > 0) return;
+    if (nextHp > 0) {
+      return { ok: true, message: `${activeConfig.targetName}에게 ${damage.toLocaleString()} 피해를 입혔습니다.` };
+    }
 
-    if (activeConfig.isBoss && activeConfig.bossMilestone !== null) {
+    if (activeConfig.isBoss && activeConfig.encounterId !== null) {
       try {
-        const reward = callbacksRef.current.onBossKilled(activeConfig.bossMilestone);
+        const reward = callbacksRef.current.onBossDefeated(activeConfig.encounterId);
+        lastBossResultRef.current = reward;
+        setLastBossResult(reward);
         const rewardParts: string[] = [];
         if (reward.firstRewardGranted) {
           rewardParts.push(`최초 보상 +${reward.goldGained.toLocaleString()} G · 정수 +${reward.essencesGained.toLocaleString()}`);
@@ -705,84 +741,84 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
           });
         }
 
-        const drop = reward.catalystDrop;
-        lastDropRef.current = drop;
-        setLastDrop(drop);
-        if (drop && activeConfig.catalyst) {
-          if (drop.dropped) {
-            const dropReason = drop.reason === 'PITY'
-              ? '천장 확정'
-              : drop.reason === 'FIRST_DISCOVERY'
-                ? '최초 발견'
-                : '재료 드롭';
-            rewardParts.push(`${dropReason} · ${activeConfig.catalyst.name} +${drop.quantityGained}`);
-            visual.dropBurst = {
-              atlasCell: activeConfig.catalyst.atlasCell,
-              name: activeConfig.catalyst.name,
-              life: reducedMotion ? 720 : 1650,
-              maxLife: reducedMotion ? 720 : 1650
-            };
-            visual.texts.push({
+        const gainedCharges: string[] = [];
+        if (reward.progressReward.gained.tempered > 0) {
+          gainedCharges.push(`제련 +${reward.progressReward.gained.tempered}`);
+        }
+        if (reward.progressReward.gained.awakened > 0) {
+          gainedCharges.push(`심연 +${reward.progressReward.gained.awakened}`);
+        }
+        rewardParts.push(gainedCharges.length > 0 ? `확정 충전 ${gainedCharges.join(' / ')}` : '확정 충전 상한 유지');
+
+        if (reward.transcendenceReward) {
+          const rare = reward.transcendenceReward;
+          const relicName = rare.relicId === 'godblood' ? '신혈의 성유물' : '종말의 성유물';
+          rewardParts.push(rare.fullRelicDropped ? `${relicName} 완제품 획득` : `${relicName} 조각 +${rare.shardsGained}`);
+          visual.dropBurst = {
+            atlasCell: rare.relicId === 'godblood' ? 0 : 1,
+            name: relicName,
+            life: reducedMotion ? 720 : 1650,
+            maxLife: reducedMotion ? 720 : 1650
+          };
+          visual.texts.push({
+            x: TARGET_X,
+            y: 116,
+            value: rare.fullRelicDropped ? `${relicName} 획득!` : `초월 조각 +${rare.shardsGained}`,
+            color: '#d7a8ff',
+            life: reducedMotion ? 720 : 1580,
+            maxLife: reducedMotion ? 720 : 1580
+          });
+          for (let index = 0; index < (reducedMotion ? 8 : 24); index += 1) {
+            const angle = Math.random() * Math.PI * 2;
+            const speed = 95 + Math.random() * 210;
+            visual.particles.push({
               x: TARGET_X,
-              y: 116,
-              value: `${activeConfig.catalyst.name} 획득!`,
-              color: '#9df0ca',
-              life: reducedMotion ? 720 : 1580,
-              maxLife: reducedMotion ? 720 : 1580
+              y: TARGET_Y,
+              vx: Math.cos(angle) * speed,
+              vy: Math.sin(angle) * speed - 100,
+              life: 420 + Math.random() * 520,
+              maxLife: 940,
+              size: 2 + Math.random() * 4,
+              color: index % 2 === 0 ? '#d7a8ff' : '#fff0ff',
+              debris: false
             });
-            for (let index = 0; index < (reducedMotion ? 8 : 24); index += 1) {
-              const angle = Math.random() * Math.PI * 2;
-              const speed = 95 + Math.random() * 210;
-              visual.particles.push({
-                x: TARGET_X,
-                y: TARGET_Y,
-                vx: Math.cos(angle) * speed,
-                vy: Math.sin(angle) * speed - 100,
-                life: 420 + Math.random() * 520,
-                maxLife: 940,
-                size: 2 + Math.random() * 4,
-                color: index % 2 === 0 ? '#9df0ca' : '#e5fff2',
-                debris: false
-              });
-            }
-          } else {
-            rewardParts.push(
-              `${activeConfig.catalyst.name} 미획득 · 천장 ${drop.pityAfter}/${activeConfig.catalyst.pityThreshold}`
-            );
           }
         }
 
-        if (rewardParts.length === 0) rewardParts.push('최초 격파 보상은 이미 수령했습니다.');
         const rewardText = rewardParts.join(' · ');
         rewardRef.current = rewardText;
         setLastReward(rewardText);
 
-        if (reward.firstRewardGranted) setLocallyClaimedBoss(activeConfig.bossMilestone);
-        const nextBossConfig: CombatConfig = {
+        const nextEncounter = reward.nextEncounter;
+        const nextPaused = activeConfig.level >= 5 && activeConfig.level <= 19 && (
+          activeConfig.level <= 13
+            ? reward.progressReward.after.tempered > 0
+            : reward.progressReward.after.awakened > 0
+        );
+        configRef.current = {
           ...activeConfig,
-          bossClaimed: activeConfig.bossClaimed || reward.firstRewardGranted,
-          catalystPity: drop?.pityAfter ?? activeConfig.catalystPity,
-          catalystInventory: drop?.inventoryAfter ?? activeConfig.catalystInventory
+          isBoss: false,
+          encounterId: null,
+          bossId: null,
+          bossLevelSnapshot: null,
+          bossAtlasSource: null,
+          bossAtlasCell: null,
+          bossClaimed: false,
+          progressCharges: { ...reward.progressReward.after },
+          encounterBagSize: nextEncounter?.bagSize ?? null,
+          encounterCursor: nextEncounter?.cursor ?? 0,
+          encounterBossSlot: nextEncounter?.bossSlot ?? null,
+          encounterCycle: nextEncounter?.cycle ?? null,
+          encounterPaused: nextPaused,
+          encounterPausedReason: nextPaused ? '사용 가능한 진행 충전 보유 중' : null,
+          targetName: '용광로 임프',
+          maxHp: activeConfig.normalMaxHp,
+          visibleGoldReward: Math.round(activeConfig.baseGoldReward * series.goldBonusMultiplier),
+          visibleEssenceReward: 0
         };
-
-        if (activeConfig.repeatableBoss) {
-          configRef.current = nextBossConfig;
-          hpRef.current = activeConfig.maxHp;
-          setMonsterHp(activeConfig.maxHp);
-        } else {
-          configRef.current = {
-            ...nextBossConfig,
-            isBoss: false,
-            huntMode: 'normal',
-            bossAtlasCell: null,
-            targetName: '용광로 임프',
-            maxHp: activeConfig.normalMaxHp,
-            visibleGoldReward: Math.round(activeConfig.baseGoldReward * series.goldBonusMultiplier),
-            visibleEssenceReward: 0
-          };
-          hpRef.current = activeConfig.normalMaxHp;
-          setMonsterHp(activeConfig.normalMaxHp);
-        }
+        hpRef.current = activeConfig.normalMaxHp;
+        setMonsterHp(activeConfig.normalMaxHp);
+        return { ok: true, message: `${activeConfig.targetName}을 처치하고 보상을 정산했습니다.` };
       } catch (error: unknown) {
         const rewardText = errorMessage(error);
         rewardRef.current = rewardText;
@@ -797,31 +833,40 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
         });
         hpRef.current = activeConfig.maxHp;
         setMonsterHp(activeConfig.maxHp);
+        return { ok: false, message: rewardText };
       }
-      return;
     }
 
+    let attackResult: CombatAttackResult;
     try {
-      const goldGained = callbacksRef.current.onAttackHit(activeConfig.baseGoldReward);
-      const rewardText = `임프 처치 · +${goldGained.toLocaleString()} G`;
+      const hunt = callbacksRef.current.onNormalEnemyDefeated(activeConfig.baseGoldReward);
+      const rewardText = hunt.bossRevealed
+        ? `임프 처치 · +${hunt.goldGained.toLocaleString()} G · 보스 조우!`
+        : `임프 처치 · +${hunt.goldGained.toLocaleString()} G`;
       rewardRef.current = rewardText;
       setLastReward(rewardText);
       visual.texts.push({
         x: TARGET_X,
         y: 98,
-        value: `◆ +${goldGained.toLocaleString()} G`,
+        value: hunt.bossRevealed ? '보스 출현!' : `◆ +${hunt.goldGained.toLocaleString()} G`,
         color: '#f5c56a',
         life: reducedMotion ? 560 : 1050,
         maxLife: reducedMotion ? 560 : 1050
       });
+      attackResult = {
+        ok: true,
+        message: hunt.bossRevealed ? '일반 적을 처치하고 보스 조우를 공개했습니다.' : '일반 적을 처치했습니다.'
+      };
     } catch (error: unknown) {
       const rewardText = errorMessage(error);
       rewardRef.current = rewardText;
       setLastReward(rewardText);
+      attackResult = { ok: false, message: rewardText };
     }
 
     hpRef.current = activeConfig.maxHp;
     setMonsterHp(activeConfig.maxHp);
+    return attackResult;
   };
 
   useEffect(() => {
@@ -862,11 +907,15 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
           visual.autoElapsed = 0;
           visual.swingPhase = 0;
         } else {
-          visual.autoElapsed += elapsedMs;
           visual.swingPhase += elapsedSeconds * 2.2;
-          if (visual.autoElapsed >= AUTO_ATTACK_INTERVAL) {
-            visual.autoElapsed %= AUTO_ATTACK_INTERVAL;
-            performHitRef.current(activeConfig.attackPower, TARGET_X, TARGET_Y, false);
+          if (autoAttackEnabledRef.current) {
+            visual.autoElapsed += elapsedMs;
+            if (visual.autoElapsed >= AUTO_ATTACK_INTERVAL) {
+              visual.autoElapsed %= AUTO_ATTACK_INTERVAL;
+              performHitRef.current(activeConfig.attackPower, TARGET_X, TARGET_Y, false);
+            }
+          } else {
+            visual.autoElapsed = 0;
           }
         }
 
@@ -882,10 +931,13 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
         ctx.fillStyle = floorGlow;
         ctx.fillRect(130, 220, 460, 190);
 
-        if (activeConfig.isBoss && activeConfig.bossMilestone !== null) {
-          const bosses = imagesRef.current.bosses;
+        if (activeConfig.isBoss && activeConfig.bossLevelSnapshot !== null) {
+          const bosses = activeConfig.bossAtlasSource === 'midboss'
+            ? imagesRef.current.midbosses
+            : imagesRef.current.bosses;
           if (
             activeConfig.bossAtlasCell !== null
+            && activeConfig.bossAtlasSource !== null
             && bosses?.complete
             && bosses.naturalWidth > 0
           ) {
@@ -893,12 +945,13 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
               ctx,
               bosses,
               activeConfig.bossAtlasCell,
+              activeConfig.bossAtlasSource,
               time,
               reducedMotionRef.current,
               activeConfig.destroyed
             );
           } else {
-            drawBoss(ctx, activeConfig.bossMilestone);
+            drawBoss(ctx, activeConfig.bossLevelSnapshot);
           }
         } else {
           const imp = imagesRef.current.imp;
@@ -965,9 +1018,9 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
         });
 
         if (visual.dropBurst) {
-          drawMaterialDropBurst(
+          drawTranscendenceDropBurst(
             ctx,
-            imagesRef.current.materials,
+            imagesRef.current.transcendence,
             visual.dropBurst,
             elapsedMs,
             reducedMotionRef.current
@@ -1046,7 +1099,28 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
           height: CANVAS_HEIGHT
         },
         level: activeConfig?.level ?? 0,
-        huntMode: activeConfig?.huntMode ?? 'normal',
+        weapon: {
+          id: activeConfig?.weaponId ?? null,
+          level: activeConfig?.level ?? 0,
+          seriesId: activeConfig?.seriesId ?? 'kingdom',
+          progressCharges: activeConfig?.progressCharges ?? { tempered: 0, awakened: 0 }
+        },
+        encounter: {
+          active: activeConfig?.isBoss ? {
+            encounterId: activeConfig.encounterId,
+            bossId: activeConfig.bossId,
+            levelSnapshot: activeConfig.bossLevelSnapshot,
+            atlasSource: activeConfig.bossAtlasSource
+          } : null,
+          bagSize: activeConfig?.encounterBagSize ?? null,
+          draws: activeConfig?.encounterCursor ?? 0,
+          cycle: activeConfig?.encounterCycle ?? null,
+          maxCardsRemaining: activeConfig?.encounterBagSize === null || activeConfig?.encounterBagSize === undefined
+            ? null
+            : Math.max(0, activeConfig.encounterBagSize - activeConfig.encounterCursor),
+          paused: activeConfig?.encounterPaused ?? false,
+          pausedReason: activeConfig?.encounterPausedReason ?? null
+        },
         sword: {
           seriesId: activeConfig?.seriesId ?? 'kingdom',
           spriteCell: getSwordAtlasCell(activeConfig?.level ?? 0),
@@ -1066,26 +1140,16 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
         destroyed: activeConfig?.destroyed ?? false,
         attackPower: activeConfig?.attackPower ?? 0,
         claimedStatus: {
-          milestone: activeConfig?.bossMilestone ?? null,
+          milestone: activeConfig?.bossLevelSnapshot ?? null,
           claimedThisRun: activeConfig?.bossClaimed ?? false
         },
-        catalyst: activeConfig?.catalyst ? {
-          id: activeConfig.catalyst.id,
-          name: activeConfig.catalyst.name,
-          dropChance: activeConfig.catalyst.dropRate,
-          pity: {
-            current: activeConfig.catalystPity,
-            threshold: activeConfig.catalyst.pityThreshold
-          },
-          inventory: activeConfig.catalystInventory,
-          activeCharges: activeConfig.activeCatalystCharges
-        } : null,
+        transcendence: profileRef.current.transcendence,
         manualAttackCooldownMs: activeConfig?.isBoss
           ? Math.max(0, Math.ceil(
             BOSS_MANUAL_ATTACK_COOLDOWN - (performance.now() - lastManualBossHitAtRef.current)
           ))
           : 0,
-        lastDrop: lastDropRef.current,
+        lastBossReward: lastBossResultRef.current,
         visibleReward: {
           gold: activeConfig?.visibleGoldReward ?? 0,
           essences: activeConfig?.visibleEssenceReward ?? 0,
@@ -1095,29 +1159,41 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
     };
 
     window.render_game_to_text = renderGameToText;
+    onRenderStateReady?.(renderGameToText);
     return () => {
       if (window.render_game_to_text === renderGameToText) {
         delete window.render_game_to_text;
       }
+      onRenderStateReady?.(null);
     };
-  }, []);
+  }, [onRenderStateReady]);
 
-  const performManualHit = (x: number, y: number) => {
+  const performManualHit = (x: number, y: number): CombatAttackResult => {
     const activeConfig = configRef.current;
-    if (!activeConfig || activeConfig.destroyed) return;
+    if (!activeConfig) return { ok: false, message: '전투 상태를 읽을 수 없습니다.' };
+    if (activeConfig.destroyed) return { ok: false, message: '파괴된 검으로는 공격할 수 없습니다.' };
 
     const now = performance.now();
     if (
       activeConfig.isBoss
       && now - lastManualBossHitAtRef.current < BOSS_MANUAL_ATTACK_COOLDOWN
-    ) return;
+    ) return { ok: false, message: '보스 강타 재사용 대기 중입니다.' };
 
     if (activeConfig.isBoss) lastManualBossHitAtRef.current = now;
-    performHitRef.current(Math.round(activeConfig.attackPower * 1.5), x, y, true);
+    return performHitRef.current(Math.round(activeConfig.attackPower * 1.5), x, y, true);
   };
 
+  performAgentAttackRef.current = () => performManualHit(TARGET_X, TARGET_Y);
+
+  useEffect(() => {
+    if (mode !== 'agent' || !onAgentAttackReady) return;
+    const requestAttack = () => performAgentAttackRef.current();
+    onAgentAttackReady(requestAttack);
+    return () => onAgentAttackReady(null);
+  }, [mode, onAgentAttackReady]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isDestroyed) return;
+    if (isDestroyed || mode === 'agent') return;
     const rectangle = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rectangle.left) * (CANVAS_WIDTH / rectangle.width);
     const y = (event.clientY - rectangle.top) * (CANVAS_HEIGHT / rectangle.height);
@@ -1127,26 +1203,43 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
   const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    if (!isDestroyed) {
+    if (!isDestroyed && mode !== 'agent') {
       performManualHit(TARGET_X, TARGET_Y);
     }
   };
 
-  const handleHuntModeChange = (mode: HuntMode) => {
-    if (!repeatableBoss || mode === huntMode) return;
-    setHuntState({ target: huntTarget, mode });
-    setLastReward(mode === 'boss' ? '보스 추적을 시작합니다.' : '일반 사냥으로 전환했습니다.');
-    rewardRef.current = mode === 'boss' ? '보스 추적을 시작합니다.' : '일반 사냥으로 전환했습니다.';
-  };
-
   const hpPercent = Math.max(0, Math.min(100, (monsterHp / maxHp) * 100));
   const rewardSummary = isBoss && boss
-    ? catalyst
-      ? bossClaimed
-        ? `${catalyst.name} ${catalyst.dropRate}%`
-        : `최초 ${config.visibleGoldReward.toLocaleString()} G + 재료 ${catalyst.dropRate}%`
-      : `${config.visibleGoldReward.toLocaleString()} G + 정수 ${boss.rewardEssences}`
+    ? bossClaimed
+      ? '확정 진행 충전'
+      : `최초 ${config.visibleGoldReward.toLocaleString()} G + 확정 충전`
     : `${visibleNormalGold.toLocaleString()} G / 처치`;
+  const maxCardsRemaining = encounter ? Math.max(0, encounter.bagSize - encounter.cursor) : null;
+  const showEncounterHud = Boolean(encounter && (isBoss || (profile.currentLevel >= 5 && profile.currentLevel <= 19)));
+  const lastProgressReward = lastBossResult?.progressReward;
+  const progressRewardSummary = lastProgressReward
+    ? [
+      lastProgressReward.gained.tempered > 0 ? `제련 +${lastProgressReward.gained.tempered}` : null,
+      lastProgressReward.gained.awakened > 0 ? `심연 +${lastProgressReward.gained.awakened}` : null
+    ].filter(Boolean).join(' · ') || '이미 충전 상한입니다.'
+    : '';
+  const rareRewardSummary = lastBossResult?.transcendenceReward
+    ? lastBossResult.transcendenceReward.fullRelicDropped
+      ? `${lastBossResult.transcendenceReward.relicId === 'godblood' ? '신혈' : '종말'} 성유물 완제품 +${lastBossResult.transcendenceReward.relicsGained}`
+      : `${lastBossResult.transcendenceReward.relicId === 'godblood' ? '신혈' : '종말'} 조각 +${lastBossResult.transcendenceReward.shardsGained}`
+    : lastBossResult && (lastBossResult.levelSnapshot === 18 || lastBossResult.levelSnapshot === 19)
+      ? '이 검·단계의 희귀 판정은 이미 완료됐습니다.'
+      : '해당 단계에는 초월 희귀 판정이 없습니다.';
+  const userAttackDisabled = isDestroyed || mode === 'agent';
+  const combatHint = isDestroyed
+    ? '자동·탭 공격 및 보상 지급 중단'
+    : mode === 'agent'
+      ? autoAttackEnabled
+        ? 'AI 실행 중 · 자동 사냥 진행 · 관전자 직접 입력 차단'
+        : 'AI 관전 전용 · 시작 또는 계속 전까지 자동 사냥 중단'
+      : isBoss
+        ? '자동 공격 중 · 보스 강타는 0.9초마다 사용 가능'
+        : '자동 공격 중 · 화면을 탭하면 강타';
 
   return (
     <section className={`combat-card${isDestroyed ? ' is-destroyed' : ''}`} aria-labelledby="combat-title">
@@ -1161,67 +1254,45 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
         </div>
       </div>
 
-      {repeatableBoss && catalyst && (
-        <div className="hunt-mode-control">
-          <div>
-            <small>HUNT MODE</small>
-            <strong>{huntMode === 'boss' ? `${boss?.name} 추적` : '용광로 임프 사냥'}</strong>
+      {showEncounterHud && encounter && (
+        <div className={`encounter-hud${isBoss ? ' is-active' : ''}${encounterPaused ? ' is-paused' : ''}`} role="status" aria-live="polite">
+          <div className="encounter-hud__identity">
+            <small>{isBoss ? 'ACTIVE ENCOUNTER' : 'BOSS OMEN'}</small>
+            <strong>{isBoss && boss ? boss.name : '보스 징조'}</strong>
+            <span>{isBoss && activeEncounter ? `+${activeEncounter.levelSnapshot} 공개 스냅샷 · 격파 전까지 강제 조우` : `최대 ${maxCardsRemaining}장 안에 보스 출현`}</span>
           </div>
-          <div className="hunt-mode-toggle" role="group" aria-label="사냥 대상 선택">
-            <button
-              type="button"
-              className={huntMode === 'normal' ? 'is-active' : ''}
-              aria-pressed={huntMode === 'normal'}
-              onClick={() => handleHuntModeChange('normal')}
-            >
-              일반
-            </button>
-            <button
-              type="button"
-              className={huntMode === 'boss' ? 'is-active' : ''}
-              aria-pressed={huntMode === 'boss'}
-              onClick={() => handleHuntModeChange('boss')}
-            >
-              보스 추적
-            </button>
-          </div>
+          <dl className="encounter-hud__stats">
+            <div><dt>셔플백</dt><dd>{encounter.cursor}/{encounter.bagSize}</dd></div>
+            <div><dt>제련</dt><dd>{progressCharges.tempered}/4</dd></div>
+            <div><dt>심연</dt><dd>{progressCharges.awakened}/3</dd></div>
+          </dl>
+          {!isBoss && (
+            <div className="encounter-omen__meter" aria-label={`보스 징조 카드 ${encounter.cursor} / ${encounter.bagSize}`}>
+              <span style={{ width: `${Math.min(100, encounter.cursor / encounter.bagSize * 100)}%` }} />
+            </div>
+          )}
+          {encounterPaused && <p className="encounter-pause-reason">진행 충전 보유 중 · {encounterPausedReason} · 카드 공개 일시정지</p>}
         </div>
       )}
 
       {bossClaimed && boss && (
         <div className="claimed-banner" role="status">
-          {repeatableBoss
-            ? '최초 격파 보상 수령 완료 · 반복 처치의 재료 판정은 계속됩니다'
-            : '보스 보상 수령 완료 · 이번 런에서는 일반 적이 출현합니다'}
+          이 마일스톤의 최초 골드·정수 보상은 수령 완료 · 확정 진행 충전은 정상 지급
         </div>
       )}
 
-      {repeatableBoss && catalyst && (
-        <div className={huntMode === 'boss' ? 'catalyst-hunt-hud is-active' : 'catalyst-hunt-hud'}>
-          <MaterialSprite atlasCell={catalyst.atlasCell} size={56} />
-          <div className="catalyst-hunt-hud__identity">
-            <small>REQUIRED CATALYST</small>
-            <strong>{catalyst.name}</strong>
-            <span>{huntMode === 'boss' ? '처치할 때마다 독립 드롭 판정' : '보스 추적 모드에서 획득 가능'}</span>
+      {lastBossResult && (
+        <div className="boss-reward-lanes" aria-label="최근 보스 처치 보상">
+          <div className="boss-reward-lane boss-reward-lane--progress">
+            <small>GUARANTEED PROGRESS</small>
+            <strong>확정 진행 충전</strong>
+            <span>{progressRewardSummary} · 현재 제련 {lastProgressReward?.after.tempered}/4, 심연 {lastProgressReward?.after.awakened}/3</span>
           </div>
-          <dl>
-            <div><dt>드롭</dt><dd>{catalyst.dropRate}%</dd></div>
-            <div><dt>천장</dt><dd>{profile.catalystPity[catalyst.id] || 0}/{catalyst.pityThreshold}</dd></div>
-            <div><dt>보유</dt><dd>{profile.catalystInventory[catalyst.id] || 0}</dd></div>
-            <div><dt>충전</dt><dd>{profile.activeCatalystCharges[catalyst.id] || 0}</dd></div>
-          </dl>
-          <div className={bossClaimed ? 'catalyst-hunt-hud__first is-claimed' : 'catalyst-hunt-hud__first'}>
-            {bossClaimed
-              ? '최초 보상 수령 완료'
-              : `최초 보상 ${config.visibleGoldReward.toLocaleString()} G · 정수 ${boss?.rewardEssences || 0}`}
+          <div className={`boss-reward-lane boss-reward-lane--rare${lastBossResult.transcendenceReward?.fullRelicDropped ? ' is-relic' : ''}`}>
+            <small>RARE TRANSCENDENCE</small>
+            <strong>초월 희귀 판정</strong>
+            <span>{rareRewardSummary}</span>
           </div>
-          {lastDrop && (
-            <div className={lastDrop.dropped ? 'catalyst-hunt-hud__last is-drop' : 'catalyst-hunt-hud__last'}>
-              {lastDrop.dropped
-                ? `최근 획득 +${lastDrop.quantityGained} · 보유 ${lastDrop.inventoryAfter}`
-                : `최근 미획득 · 천장 ${lastDrop.pityAfter}/${catalyst.pityThreshold}`}
-            </div>
-          )}
         </div>
       )}
 
@@ -1247,22 +1318,20 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onAttackHit
           onPointerDown={handlePointerDown}
           onKeyDown={handleKeyDown}
           role="button"
-          tabIndex={isDestroyed ? -1 : 0}
-          aria-disabled={isDestroyed}
-          aria-label={isDestroyed ? '검이 파괴되어 전투가 중단되었습니다' : `${targetName} 공격하기`}
+          tabIndex={userAttackDisabled ? -1 : 0}
+          aria-disabled={userAttackDisabled}
+          aria-label={isDestroyed
+            ? '검이 파괴되어 전투가 중단되었습니다'
+            : mode === 'agent'
+              ? `${targetName} AI 관전 전용 전투 화면, 직접 공격 불가`
+              : `${targetName} 공격하기`}
         />
       </div>
 
       <div className="combat-feedback" role="status" aria-live="polite">
         <span className="combat-feedback__spark" aria-hidden="true">✦</span>
         <span>{lastReward}</span>
-        <small>
-          {isDestroyed
-            ? '자동·탭 공격 및 보상 지급 중단'
-            : isBoss
-              ? '자동 공격 중 · 보스 강타는 0.9초마다 사용 가능'
-              : '자동 공격 중 · 화면을 탭하면 강타'}
-        </small>
+        <small>{combatHint}</small>
       </div>
     </section>
   );
