@@ -17,14 +17,14 @@ import {
   UserGameProfile
 } from './types/game';
 import {
+  FORGE_AGENT_READY_EVENT,
   ForgeAgentActionEnvelope,
   ForgeAgentActionOption,
-  ForgeAgentActionResult,
+  ForgeAgentBridge,
   ForgeAgentObservation,
   ForgeAgentRuntimeSnapshot,
   ForgeAgentSpeed,
-  ForgeAgentStrategy,
-  ForgeAgentTraceExport
+  ForgeAgentStrategy
 } from './types/agent';
 import { createForgeAgentRuntime } from './services/forgeAgentRuntime';
 import { CombatAttackResult, CombatCanvas } from './components/game/CombatCanvas';
@@ -45,19 +45,6 @@ interface ToastMessage {
   id: number;
   message: string;
   tone: ToastTone;
-}
-
-interface ForgeAgentBridge {
-  observe(): ForgeAgentObservation;
-  actions(): ForgeAgentActionOption[];
-  act(envelope: ForgeAgentActionEnvelope): Promise<ForgeAgentActionResult>;
-  exportTrace(): ForgeAgentTraceExport;
-}
-
-declare global {
-  interface Window {
-    webgamesAgent?: ForgeAgentBridge;
-  }
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -426,12 +413,16 @@ export default function App() {
       agentDisposeTimerRef.current = null;
     }
     const bridge: ForgeAgentBridge = Object.freeze({
+      describe: agentRuntime.describe.bind(agentRuntime),
       observe: agentRuntime.observe.bind(agentRuntime),
       actions: agentRuntime.actions.bind(agentRuntime),
       act: agentRuntime.act.bind(agentRuntime),
       exportTrace: agentRuntime.exportTrace.bind(agentRuntime)
     });
     window.webgamesAgent = bridge;
+    window.dispatchEvent(new CustomEvent(FORGE_AGENT_READY_EVENT, {
+      detail: bridge.describe()
+    }));
     return () => {
       if (window.webgamesAgent === bridge) delete window.webgamesAgent;
       // React StrictMode는 개발 중 effect를 setup → cleanup → setup으로 재실행한다.

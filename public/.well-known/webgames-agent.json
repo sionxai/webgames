@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "protocol": "webgames-agent",
+  "protocolVersion": "1.0.0",
+  "gameId": "forge",
+  "entryPath": "/games/forge/",
+  "transport": {
+    "kind": "browser-window",
+    "global": "window.webgamesAgent",
+    "readyEvent": "webgames:agent-ready"
+  },
+  "methods": [
+    "describe",
+    "observe",
+    "actions",
+    "act",
+    "exportTrace"
+  ],
+  "actions": [
+    "attack",
+    "enhance",
+    "repair",
+    "sell",
+    "extract",
+    "ad_restore",
+    "select_series",
+    "wait"
+  ],
+  "persistence": {
+    "kind": "browser-local",
+    "storage": "localStorage",
+    "agentHumanSeparated": true,
+    "serverAuthoritative": false,
+    "officialRanking": false
+  },
+  "limits": {
+    "maxTraceEvents": 120,
+    "maxRationaleLength": 180,
+    "concurrentActions": 1
+  },
+  "limitations": {
+    "browserControlRequired": true,
+    "remoteMcp": false,
+    "remoteRest": false,
+    "builtInExternalModel": false,
+    "accounts": false
+  }
+}

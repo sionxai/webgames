@@ -1,3 +1,21 @@
+export const FORGE_AGENT_SCHEMA_VERSION = 1 as const;
+export const FORGE_AGENT_PROTOCOL = 'webgames-agent' as const;
+export const FORGE_AGENT_PROTOCOL_VERSION = '1.0.0' as const;
+export const FORGE_AGENT_GAME_ID = 'forge' as const;
+export const FORGE_AGENT_TRANSPORT_KIND = 'browser-window' as const;
+export const FORGE_AGENT_BRIDGE_GLOBAL = 'window.webgamesAgent' as const;
+export const FORGE_AGENT_READY_EVENT = 'webgames:agent-ready' as const;
+export const FORGE_AGENT_METHODS = [
+  'describe',
+  'observe',
+  'actions',
+  'act',
+  'exportTrace'
+] as const;
+export const FORGE_AGENT_DEFAULT_MAX_TRACE_EVENTS = 120;
+export const FORGE_AGENT_MAX_RATIONALE_LENGTH = 180;
+export const FORGE_AGENT_MAX_CONCURRENT_ACTIONS = 1;
+
 export const FORGE_AGENT_ACTION_ALLOWLIST = [
   'attack',
   'enhance',
@@ -9,6 +27,7 @@ export const FORGE_AGENT_ACTION_ALLOWLIST = [
   'wait'
 ] as const;
 
+export type ForgeAgentMethod = (typeof FORGE_AGENT_METHODS)[number];
 export type ForgeAgentAction = (typeof FORGE_AGENT_ACTION_ALLOWLIST)[number];
 export type ForgeAgentStrategy = 'aggressive' | 'cautious' | 'balanced';
 export type ForgeAgentStatus = 'idle' | 'running' | 'paused';
@@ -108,6 +127,40 @@ export interface ForgeAgentTraceExport {
   readonly events: readonly ForgeAgentTraceEvent[];
 }
 
+export interface ForgeAgentDescription {
+  readonly schemaVersion: typeof FORGE_AGENT_SCHEMA_VERSION;
+  readonly protocol: typeof FORGE_AGENT_PROTOCOL;
+  readonly protocolVersion: typeof FORGE_AGENT_PROTOCOL_VERSION;
+  readonly gameId: typeof FORGE_AGENT_GAME_ID;
+  readonly transport: Readonly<{
+    kind: typeof FORGE_AGENT_TRANSPORT_KIND;
+    global: typeof FORGE_AGENT_BRIDGE_GLOBAL;
+    readyEvent: typeof FORGE_AGENT_READY_EVENT;
+  }>;
+  readonly methods: readonly ForgeAgentMethod[];
+  readonly actions: readonly ForgeAgentAction[];
+  readonly persistence: Readonly<{
+    kind: 'browser-local';
+    storage: 'localStorage';
+    agentHumanSeparated: true;
+    serverAuthoritative: false;
+    officialRanking: false;
+  }>;
+  readonly limits: Readonly<{
+    maxTraceEvents: number;
+    maxRationaleLength: typeof FORGE_AGENT_MAX_RATIONALE_LENGTH;
+    concurrentActions: typeof FORGE_AGENT_MAX_CONCURRENT_ACTIONS;
+  }>;
+}
+
+export interface ForgeAgentBridge {
+  describe(): ForgeAgentDescription;
+  observe(): ForgeAgentObservation;
+  actions(): ForgeAgentActionOption[];
+  act(envelope: ForgeAgentActionEnvelope): Promise<ForgeAgentActionResult>;
+  exportTrace(): ForgeAgentTraceExport;
+}
+
 export interface ForgeAgentRuntimeSnapshot {
   readonly agentName: string;
   readonly strategy: ForgeAgentStrategy;
@@ -140,3 +193,13 @@ export interface ForgeAgentRuntimeOptions {
 }
 
 export type ForgeAgentRuntimeListener = (snapshot: ForgeAgentRuntimeSnapshot) => void;
+
+declare global {
+  interface Window {
+    webgamesAgent?: ForgeAgentBridge;
+  }
+
+  interface WindowEventMap {
+    'webgames:agent-ready': CustomEvent<ForgeAgentDescription>;
+  }
+}

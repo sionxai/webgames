@@ -1,5 +1,16 @@
 import {
   FORGE_AGENT_ACTION_ALLOWLIST,
+  FORGE_AGENT_BRIDGE_GLOBAL,
+  FORGE_AGENT_DEFAULT_MAX_TRACE_EVENTS,
+  FORGE_AGENT_GAME_ID,
+  FORGE_AGENT_MAX_CONCURRENT_ACTIONS,
+  FORGE_AGENT_MAX_RATIONALE_LENGTH,
+  FORGE_AGENT_METHODS,
+  FORGE_AGENT_PROTOCOL,
+  FORGE_AGENT_PROTOCOL_VERSION,
+  FORGE_AGENT_READY_EVENT,
+  FORGE_AGENT_SCHEMA_VERSION,
+  FORGE_AGENT_TRANSPORT_KIND,
   ForgeAgentAction,
   ForgeAgentActionEnvelope,
   ForgeAgentActionError,
@@ -7,6 +18,7 @@ import {
   ForgeAgentActionResult,
   ForgeAgentBindings,
   ForgeAgentDecision,
+  ForgeAgentDescription,
   ForgeAgentExecutionResult,
   ForgeAgentObservation,
   ForgeAgentRuntimeListener,
@@ -22,8 +34,6 @@ import {
 const ACTION_SET = new Set<string>(FORGE_AGENT_ACTION_ALLOWLIST);
 const RESOURCE_SHORTAGE_PATTERN = /gold|charge|cost|resource|골드|충전|비용|재화/i;
 const DEFAULT_STEP_INTERVAL_MS = 1200;
-const DEFAULT_MAX_TRACE_EVENTS = 120;
-const MAX_RATIONALE_LENGTH = 180;
 
 let runtimeSequence = 0;
 
@@ -64,7 +74,35 @@ function cloneUnknown(
 function sanitizeRationale(value: unknown, fallback = '다음 안전한 행동을 선택합니다.'): string {
   if (typeof value !== 'string') return fallback;
   const oneLine = value.replace(/\s+/g, ' ').trim();
-  return oneLine.length > 0 ? oneLine.slice(0, MAX_RATIONALE_LENGTH) : fallback;
+  return oneLine.length > 0 ? oneLine.slice(0, FORGE_AGENT_MAX_RATIONALE_LENGTH) : fallback;
+}
+
+function createDescription(maxTraceEvents: number): ForgeAgentDescription {
+  return {
+    schemaVersion: FORGE_AGENT_SCHEMA_VERSION,
+    protocol: FORGE_AGENT_PROTOCOL,
+    protocolVersion: FORGE_AGENT_PROTOCOL_VERSION,
+    gameId: FORGE_AGENT_GAME_ID,
+    transport: {
+      kind: FORGE_AGENT_TRANSPORT_KIND,
+      global: FORGE_AGENT_BRIDGE_GLOBAL,
+      readyEvent: FORGE_AGENT_READY_EVENT
+    },
+    methods: [...FORGE_AGENT_METHODS],
+    actions: [...FORGE_AGENT_ACTION_ALLOWLIST],
+    persistence: {
+      kind: 'browser-local',
+      storage: 'localStorage',
+      agentHumanSeparated: true,
+      serverAuthoritative: false,
+      officialRanking: false
+    },
+    limits: {
+      maxTraceEvents,
+      maxRationaleLength: FORGE_AGENT_MAX_RATIONALE_LENGTH,
+      concurrentActions: FORGE_AGENT_MAX_CONCURRENT_ACTIONS
+    }
+  };
 }
 
 function readPath(root: unknown, path: readonly string[]): unknown {
@@ -312,6 +350,7 @@ export class ForgeAgentRuntime {
   private readonly now: () => number;
   private readonly stepIntervalMs: number;
   private readonly maxTraceEvents: number;
+  private readonly description: ForgeAgentDescription;
   private readonly listeners = new Set<ForgeAgentRuntimeListener>();
   private readonly usedActionIds = new Set<string>();
   private timerId: number | null = null;
@@ -339,8 +378,16 @@ export class ForgeAgentRuntime {
     this.strategy = options.strategy ?? 'balanced';
     this.speed = options.speed ?? 1;
     this.stepIntervalMs = Math.max(10, Math.floor(options.stepIntervalMs ?? DEFAULT_STEP_INTERVAL_MS));
-    this.maxTraceEvents = Math.max(10, Math.floor(options.maxTraceEvents ?? DEFAULT_MAX_TRACE_EVENTS));
+    this.maxTraceEvents = Math.max(
+      10,
+      Math.floor(options.maxTraceEvents ?? FORGE_AGENT_DEFAULT_MAX_TRACE_EVENTS)
+    );
+    this.description = createDescription(this.maxTraceEvents);
     this.runId = this.createRunId();
+  }
+
+  public describe(): ForgeAgentDescription {
+    return cloneUnknown(this.description) as ForgeAgentDescription;
   }
 
   public observe(): ForgeAgentObservation {

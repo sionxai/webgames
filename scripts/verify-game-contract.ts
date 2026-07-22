@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import type { ForgeAgentActionEnvelope } from '../src/types/agent';
 
 const STORAGE_KEY = 'project_forge_user_profile_v1';
 const V2_BACKUP_STORAGE_KEY = 'project_forge_user_profile_v1_backup_before_schema_v2';
@@ -59,6 +62,8 @@ const {
   getBossBagSizeForLevel,
   getBossDefinitionForMilestone
 } = await import('../src/constants/gameBalance');
+const { createForgeAgentRuntime } = await import('../src/services/forgeAgentRuntime');
+const { FORGE_AGENT_ACTION_ALLOWLIST } = await import('../src/types/agent');
 
 type Simulator = InstanceType<typeof ServerSimulator>;
 type Profile = ReturnType<Simulator['getProfile']>;
@@ -879,6 +884,240 @@ same(observedRngCalls, [1, 1, 1, 1]);
   rejects(() => simulator.defeatNormalEnemy(100), /injected storage failure/);
   same(simulator.getProfile(), before);
   storage.failWrites = false;
+}
+
+// 공개 bridge v1 설명은 manifest와 일치하고 반환값 변조가 후속 호출을 오염시키지 않는다.
+{
+  let bridgeState = {
+    revision: 0,
+    profile: { gold: 10 },
+    encounter: {
+      bossId: 'midboss_5',
+      bossSlot: 3,
+      nested: [{ bossSlot: 7, publicHint: 'visible' }]
+    }
+  };
+  let executionCount = 0;
+  const runtime = createForgeAgentRuntime({
+    getObservation: () => bridgeState,
+    getAvailableActions: () => [
+      {
+        action: 'attack',
+        enabled: true,
+        metadata: { nested: { priority: 1 } }
+      },
+      { action: 'repair', enabled: false, reason: '수리할 균열이 없습니다.' },
+      { action: 'wait', enabled: true }
+    ],
+    executeAction: envelope => {
+      executionCount += 1;
+      if (envelope.action === 'attack') {
+        bridgeState = {
+          ...bridgeState,
+          revision: bridgeState.revision + 1,
+          profile: { gold: bridgeState.profile.gold + 1 }
+        };
+        return {
+          ok: true,
+          revision: bridgeState.revision,
+          message: '공격을 실행했습니다.'
+        };
+      }
+      return {
+        ok: false,
+        revision: bridgeState.revision,
+        message: '도메인 규칙이 행동을 거부했습니다.'
+      };
+    }
+  }, { now: () => 1_000 });
+
+  const expectedDescription = {
+    schemaVersion: 1,
+    protocol: 'webgames-agent',
+    protocolVersion: '1.0.0',
+    gameId: 'forge',
+    transport: {
+      kind: 'browser-window',
+      global: 'window.webgamesAgent',
+      readyEvent: 'webgames:agent-ready'
+    },
+    methods: ['describe', 'observe', 'actions', 'act', 'exportTrace'],
+    actions: [...FORGE_AGENT_ACTION_ALLOWLIST],
+    persistence: {
+      kind: 'browser-local',
+      storage: 'localStorage',
+      agentHumanSeparated: true,
+      serverAuthoritative: false,
+      officialRanking: false
+    },
+    limits: {
+      maxTraceEvents: 120,
+      maxRationaleLength: 180,
+      concurrentActions: 1
+    }
+  };
+  const description = runtime.describe();
+  same(description, expectedDescription);
+  same(JSON.parse(JSON.stringify(description)), expectedDescription);
+  const mutableDescription = description as unknown as {
+    transport: { global: string };
+    methods: string[];
+    actions: string[];
+    persistence: { storage: string };
+    limits: { maxTraceEvents: number };
+  };
+  mutableDescription.transport.global = 'window.changed';
+  mutableDescription.methods.splice(0, mutableDescription.methods.length, 'changed');
+  mutableDescription.actions[0] = 'changed';
+  mutableDescription.persistence.storage = 'changed';
+  mutableDescription.limits.maxTraceEvents = 1;
+  same(runtime.describe(), expectedDescription);
+
+  const manifest = JSON.parse(await readFile(
+    resolve(process.cwd(), 'public/.well-known/webgames-agent.json'),
+    'utf8'
+  )) as Record<string, unknown>;
+  same({
+    schemaVersion: manifest.schemaVersion,
+    protocol: manifest.protocol,
+    protocolVersion: manifest.protocolVersion,
+    gameId: manifest.gameId,
+    transport: manifest.transport,
+    methods: manifest.methods,
+    actions: manifest.actions,
+    persistence: manifest.persistence,
+    limits: manifest.limits
+  }, expectedDescription);
+  same(manifest.entryPath, '/games/forge/');
+  same(manifest.limitations, {
+    browserControlRequired: true,
+    remoteMcp: false,
+    remoteRest: false,
+    builtInExternalModel: false,
+    accounts: false
+  });
+
+  const publicObservation = runtime.observe();
+  truthy(!JSON.stringify(publicObservation).includes('"bossSlot"'));
+  same(
+    (publicObservation.encounter as { nested: Array<{ publicHint: string }> }).nested[0].publicHint,
+    'visible'
+  );
+  (publicObservation.profile as { gold: number }).gold = 999;
+  same((runtime.observe().profile as { gold: number }).gold, 10);
+  const publicActions = runtime.actions();
+  ((publicActions[0].metadata as { nested: { priority: number } }).nested).priority = 99;
+  same(
+    (runtime.actions()[0].metadata as { nested: { priority: number } }).nested.priority,
+    1
+  );
+
+  const success = await runtime.act({
+    actionId: 'contract-success-1',
+    expectedRevision: 0,
+    action: 'attack',
+    rationale: '공개 상태를 바탕으로 공격합니다.'
+  });
+  same(
+    [success.ok, success.error ?? null, success.revision, executionCount],
+    [true, null, 1, 1]
+  );
+  same(
+    [runtime.observe().revision, (runtime.observe().profile as { gold: number }).gold],
+    [1, 11]
+  );
+
+  const beforeStale = runtime.observe();
+  const stale = await runtime.act({
+    actionId: 'contract-stale-1',
+    expectedRevision: 0,
+    action: 'attack',
+    rationale: '오래된 관찰로 공격합니다.'
+  });
+  same([stale.ok, stale.error, executionCount], [false, 'stale_revision', 1]);
+  same(runtime.observe(), beforeStale);
+
+  const beforeDuplicate = runtime.observe();
+  const duplicate = await runtime.act({
+    actionId: 'contract-success-1',
+    expectedRevision: 1,
+    action: 'attack',
+    rationale: '처리된 ID를 재사용합니다.'
+  });
+  same([duplicate.ok, duplicate.error, executionCount], [false, 'duplicate_action_id', 1]);
+  same(runtime.observe(), beforeDuplicate);
+
+  const beforeUnknown = runtime.observe();
+  const unknown = await runtime.act({
+    actionId: 'contract-unknown-1',
+    expectedRevision: 1,
+    action: 'teleport',
+    rationale: '허용되지 않은 행동입니다.'
+  } as unknown as ForgeAgentActionEnvelope);
+  same([unknown.ok, unknown.error, executionCount], [false, 'action_not_allowed', 1]);
+  same(runtime.observe(), beforeUnknown);
+
+  const beforeUnavailable = runtime.observe();
+  const unavailable = await runtime.act({
+    actionId: 'contract-unavailable-1',
+    expectedRevision: 1,
+    action: 'repair',
+    rationale: '비활성 행동을 요청합니다.'
+  });
+  same([unavailable.ok, unavailable.error, executionCount], [false, 'action_unavailable', 1]);
+  same(runtime.observe(), beforeUnavailable);
+
+  const beforeDomainReject = runtime.observe();
+  const domainRejected = await runtime.act({
+    actionId: 'contract-domain-1',
+    expectedRevision: 1,
+    action: 'wait',
+    rationale: '도메인 거부를 확인합니다.'
+  });
+  same([domainRejected.ok, domainRejected.error, executionCount], [false, 'domain_rejected', 2]);
+  same(runtime.observe(), beforeDomainReject);
+  runtime.dispose();
+}
+
+// 처리 중인 action이 있으면 두 번째 action은 실행기에 도달하지 않고 상태 불변으로 거부된다.
+{
+  let busyState = { revision: 0, marker: 'unchanged' };
+  let releaseBusy: ((result: { ok: boolean; revision: number; message: string }) => void) | null = null;
+  let busyExecutionCount = 0;
+  const busyRuntime = createForgeAgentRuntime({
+    getObservation: () => busyState,
+    getAvailableActions: () => [{ action: 'attack', enabled: true }],
+    executeAction: () => {
+      busyExecutionCount += 1;
+      return new Promise(resolvePromise => {
+        releaseBusy = resolvePromise;
+      });
+    }
+  }, { now: () => 2_000 });
+
+  const pending = busyRuntime.act({
+    actionId: 'contract-busy-primary',
+    expectedRevision: 0,
+    action: 'attack',
+    rationale: '첫 행동을 실행합니다.'
+  });
+  await Promise.resolve();
+  const beforeBusyReject = busyRuntime.observe();
+  const busyRejected = await busyRuntime.act({
+    actionId: 'contract-busy-secondary',
+    expectedRevision: 0,
+    action: 'attack',
+    rationale: '동시 행동을 요청합니다.'
+  });
+  same([busyRejected.ok, busyRejected.error, busyExecutionCount], [false, 'busy', 1]);
+  same(busyRuntime.observe(), beforeBusyReject);
+
+  busyState = { ...busyState, revision: 1 };
+  truthy(releaseBusy);
+  releaseBusy({ ok: true, revision: 1, message: '첫 행동을 완료했습니다.' });
+  const completed = await pending;
+  same([completed.ok, completed.revision, busyExecutionCount], [true, 1, 1]);
+  busyRuntime.dispose();
 }
 
 console.log(`Contract verification complete: ${assertionCount} assertions`);
