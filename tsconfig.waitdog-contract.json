@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "rootDir": ".",
+    "outDir": ".waitdog-contract-dist",
+    "incremental": true,
+    "tsBuildInfoFile": ".waitdog-contract-dist/package.json"
+  },
+  "include": [
+    "src/waitdog/types.ts",
+    "src/waitdog/constants/balance.ts",
+    "src/waitdog/core/rng.ts",
+    "src/waitdog/services/**/*.ts",
+    "scripts/waitdog-contract.ts"
+  ]
+}
