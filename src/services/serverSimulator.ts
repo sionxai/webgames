@@ -9,6 +9,9 @@ import type {
   CurrentWeaponState,
   EnhanceAttemptResult,
   FailResultType,
+  ForgeBestRecords,
+  ForgeController,
+  ForgeRunRecord,
   HuntResolution,
   ProgressChargeMap,
   ProgressChargeRewardResult,
@@ -24,7 +27,9 @@ import {
   PERMANENT_UPGRADES,
   SWORD_SERIES_LIST,
   SWORD_STAGES,
+  calculateEssenceExtraction,
   calculateEnhancePreview,
+  calculateRepairCost,
   calculateSwordSellValue,
   createEmptyCatalystCountMap,
   getBossBagSizeForLevel,
@@ -33,8 +38,11 @@ import {
 } from '../constants/gameBalance';
 
 const LOCAL_STORAGE_KEY = 'project_forge_user_profile_v1';
-const LOCAL_STORAGE_BACKUP_KEY = 'project_forge_user_profile_v1_backup_before_schema_v2';
-const SCHEMA_VERSION = 2 as const;
+const LOCAL_STORAGE_BACKUP_KEY = 'project_forge_user_profile_v1_backup_before_schema_v3';
+const AGENT_STORAGE_KEY = 'project_forge_agent_profile_v1';
+const AGENT_STORAGE_BACKUP_KEY = 'project_forge_agent_profile_v1_backup_before_schema_v3';
+const SCHEMA_VERSION = 3 as const;
+const MAX_ENHANCE_LEVEL = 20;
 const PROGRESS_CHARGE_CAPS: ProgressChargeMap = { tempered: 4, awakened: 3 };
 const TRANSCENDENCE_THRESHOLDS: Record<TranscendenceRelicId, number> = {
   godblood: 40,
@@ -48,6 +56,13 @@ const DEFAULT_UPGRADES: UserGameProfile['upgrades'] = {
   repair_tech: 0,
   ancient_blueprint: 0
 };
+
+export interface ServerSimulatorOptions {
+  storageKey?: string;
+  backupKey?: string;
+  controller?: ForgeController;
+  nickname?: string;
+}
 
 let fallbackIdSequence = 0;
 
@@ -70,6 +85,74 @@ function readNonNegativeInteger(value: unknown, fallback: number, maximum = Numb
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback;
+}
+
+function createEmptyFailCountsByTargetLevel(): number[] {
+  return Array.from({ length: MAX_ENHANCE_LEVEL + 1 }, () => 0);
+}
+
+function readFailCountsByTargetLevel(
+  value: unknown,
+  legacyConsecutiveFailCount: unknown,
+  currentLevel: number
+): number[] {
+  const counts = createEmptyFailCountsByTargetLevel();
+  if (Array.isArray(value)) {
+    for (let targetLevel = 0; targetLevel <= MAX_ENHANCE_LEVEL; targetLevel += 1) {
+      counts[targetLevel] = readNonNegativeInteger(value[targetLevel], 0);
+    }
+    return counts;
+  }
+
+  const legacyCount = readNonNegativeInteger(legacyConsecutiveFailCount, 0);
+  const targetLevel = Math.min(MAX_ENHANCE_LEVEL, currentLevel + 1);
+  if (targetLevel >= 1) counts[targetLevel] = legacyCount;
+  return counts;
+}
+
+function createEmptyBestRecords(): ForgeBestRecords {
+  return { human: null, agent: null };
+}
+
+function readForgeRunRecord(value: unknown, controller: ForgeController): ForgeRunRecord | null {
+  if (!isRecord(value)) return null;
+  const seriesId = value.seriesId;
+  if (
+    typeof value.weaponId !== 'string'
+    || value.weaponId.length === 0
+    || typeof seriesId !== 'string'
+    || !SWORD_SERIES_LIST.some(series => series.id === seriesId)
+    || typeof value.level !== 'number'
+    || !Number.isFinite(value.level)
+    || typeof value.achievedAt !== 'number'
+    || !Number.isFinite(value.achievedAt)
+  ) {
+    return null;
+  }
+
+  return {
+    weaponId: value.weaponId,
+    seriesId: seriesId as SwordSeriesId,
+    level: readNonNegativeInteger(value.level, 0, MAX_ENHANCE_LEVEL),
+    weaponAttempts: readNonNegativeInteger(value.weaponAttempts, 0),
+    repairCount: readNonNegativeInteger(value.repairCount, 0),
+    adRestoreCount: readNonNegativeInteger(value.adRestoreCount, 0),
+    controller,
+    achievedAt: value.achievedAt,
+    isPure: readBoolean(value.isPure, false)
+  };
+}
+
+function readBestRecords(value: unknown): ForgeBestRecords {
+  const records = createEmptyBestRecords();
+  if (!isRecord(value)) return records;
+  records.human = readForgeRunRecord(value.human, 'human');
+  records.agent = readForgeRunRecord(value.agent, 'agent');
+  return records;
+}
+
+function cloneForgeRunRecord(record: ForgeRunRecord | null): ForgeRunRecord | null {
+  return record ? { ...record } : null;
 }
 
 function createEmptyProgressChargeMap(): ProgressChargeMap {
@@ -193,6 +276,10 @@ function cloneEncounter(encounter: BossEncounterState | null): BossEncounterStat
 function cloneProfile(profile: UserGameProfile): UserGameProfile {
   return {
     ...profile,
+    bestRecords: {
+      human: cloneForgeRunRecord(profile.bestRecords.human),
+      agent: cloneForgeRunRecord(profile.bestRecords.agent)
+    },
     upgrades: { ...profile.upgrades },
     unlockedSwords: [...profile.unlockedSwords],
     unlockedAchievements: [...profile.unlockedAchievements],
@@ -203,6 +290,7 @@ function cloneProfile(profile: UserGameProfile): UserGameProfile {
     activeCatalystCharges: { ...profile.activeCatalystCharges },
     currentWeapon: {
       ...profile.currentWeapon,
+      failCountsByTargetLevel: [...profile.currentWeapon.failCountsByTargetLevel],
       progressCharges: { ...profile.currentWeapon.progressCharges },
       bossEncounter: cloneEncounter(profile.currentWeapon.bossEncounter),
       claimedRareBossStages: [...profile.currentWeapon.claimedRareBossStages]
@@ -217,9 +305,34 @@ function cloneProfile(profile: UserGameProfile): UserGameProfile {
 export class ServerSimulator {
   private profile: UserGameProfile;
   private readonly random: () => number;
+  private readonly storageKey: string;
+  private readonly backupKey: string;
+  private readonly controller: ForgeController;
+  private readonly initialNickname: string | undefined;
 
-  constructor(random: () => number = Math.random) {
+  constructor(random: () => number = Math.random, options: ServerSimulatorOptions = {}) {
+    const controller = options.controller ?? 'human';
+    if (controller !== 'human' && controller !== 'agent') {
+      throw new TypeError('controller는 human 또는 agent여야 합니다.');
+    }
+    const defaultStorageKey = controller === 'human' ? LOCAL_STORAGE_KEY : AGENT_STORAGE_KEY;
+    const defaultBackupKey = controller === 'human' ? LOCAL_STORAGE_BACKUP_KEY : AGENT_STORAGE_BACKUP_KEY;
+    const storageKey = options.storageKey ?? defaultStorageKey;
+    const backupKey = options.backupKey ?? (options.storageKey
+      ? `${options.storageKey}_backup_before_schema_v3`
+      : defaultBackupKey);
+    if (!storageKey || !backupKey || storageKey === backupKey) {
+      throw new TypeError('프로필 저장 키와 백업 키는 서로 다른 비어 있지 않은 문자열이어야 합니다.');
+    }
+    if (options.nickname !== undefined && options.nickname.length === 0) {
+      throw new TypeError('nickname은 비어 있지 않은 문자열이어야 합니다.');
+    }
+
     this.random = random;
+    this.storageKey = storageKey;
+    this.backupKey = backupKey;
+    this.controller = controller;
+    this.initialNickname = options.nickname;
     this.profile = this.loadOrCreateProfile();
   }
 
@@ -231,6 +344,10 @@ export class ServerSimulator {
     return {
       weaponId: createUniqueId('weapon'),
       ordinal: Math.max(1, Math.floor(ordinal)),
+      enhanceAttempts: 0,
+      repairCount: 0,
+      adRestoreCount: 0,
+      failCountsByTargetLevel: createEmptyFailCountsByTargetLevel(),
       progressCharges: createEmptyProgressChargeMap(),
       bossEncounter: null,
       claimedRareBossStages: [],
@@ -242,7 +359,10 @@ export class ServerSimulator {
     return {
       schemaVersion: SCHEMA_VERSION,
       userId: createUniqueId('usr'),
-      nickname: '대장장이_' + Math.floor(1000 + Math.random() * 9000),
+      nickname: this.initialNickname
+        ?? `${this.controller === 'agent' ? 'AI_대장장이' : '대장장이'}_${Math.floor(1000 + Math.random() * 9000)}`,
+      controller: this.controller,
+      bestRecords: createEmptyBestRecords(),
       gold: 500,
       essences: 0,
       currentSeriesId: 'kingdom',
@@ -272,7 +392,7 @@ export class ServerSimulator {
     if (!isRecord(value) || value.weaponId !== weaponId) return null;
 
     const bagSize = readNonNegativeInteger(value.bagSize, 0);
-    if (![6, 8, 12, 20, 30].includes(bagSize)) return null;
+    if (![1, 6, 8, 12, 20, 30].includes(bagSize)) return null;
     const bossSlot = readNonNegativeInteger(value.bossSlot, 0, bagSize);
     if (bossSlot < 1) return null;
     const cursor = readNonNegativeInteger(value.cursor, 0, bagSize);
@@ -288,7 +408,7 @@ export class ServerSimulator {
         && value.active.weaponId === weaponId
         && boss
         && levelSnapshot >= 5
-        && levelSnapshot <= 19
+        && levelSnapshot <= 20
       ) {
         active = {
           encounterId,
@@ -299,6 +419,11 @@ export class ServerSimulator {
         };
       }
     }
+
+    if (
+      (bagSize === 1 && active?.levelSnapshot !== 20)
+      || (active?.levelSnapshot === 20 && bagSize !== 1)
+    ) return null;
 
     return {
       weaponId,
@@ -324,9 +449,18 @@ export class ServerSimulator {
     const savedWeapon = isRecord(savedProfile.currentWeapon) ? savedProfile.currentWeapon : null;
     const weaponId = savedWeapon ? readString(savedWeapon.weaponId, createUniqueId('weapon')) : createUniqueId('weapon');
     const ordinal = savedWeapon ? Math.max(1, readNonNegativeInteger(savedWeapon.ordinal, 1)) : 1;
+    const failCountsByTargetLevel = readFailCountsByTargetLevel(
+      savedWeapon?.failCountsByTargetLevel ?? savedWeapon?.targetFailCounts ?? savedProfile.failCountsByTargetLevel,
+      savedProfile.consecutiveFailCount,
+      currentLevel
+    );
     const currentWeapon: CurrentWeaponState = {
       weaponId,
       ordinal,
+      enhanceAttempts: readNonNegativeInteger(savedWeapon?.enhanceAttempts, 0),
+      repairCount: readNonNegativeInteger(savedWeapon?.repairCount, 0),
+      adRestoreCount: readNonNegativeInteger(savedWeapon?.adRestoreCount, 0),
+      failCountsByTargetLevel,
       progressCharges: readProgressCharges(savedWeapon?.progressCharges),
       bossEncounter: this.readEncounter(savedWeapon?.bossEncounter, weaponId),
       claimedRareBossStages: readRareBossStages(savedWeapon?.claimedRareBossStages),
@@ -341,12 +475,16 @@ export class ServerSimulator {
       schemaVersion: SCHEMA_VERSION,
       userId: readString(savedProfile.userId, defaults.userId),
       nickname: readString(savedProfile.nickname, defaults.nickname),
+      controller: this.controller,
+      bestRecords: readBestRecords(savedProfile.bestRecords),
       gold: readFiniteNumber(savedProfile.gold, defaults.gold),
       essences: readFiniteNumber(savedProfile.essences, defaults.essences),
       currentSeriesId,
       currentLevel,
       currentCrackCount: readNonNegativeInteger(savedProfile.currentCrackCount, defaults.currentCrackCount, 3),
-      consecutiveFailCount: readNonNegativeInteger(savedProfile.consecutiveFailCount, defaults.consecutiveFailCount),
+      consecutiveFailCount: currentLevel < MAX_ENHANCE_LEVEL
+        ? failCountsByTargetLevel[currentLevel + 1]
+        : 0,
       maxLevelReached: readNonNegativeInteger(savedProfile.maxLevelReached, defaults.maxLevelReached, SWORD_STAGES.length - 1),
       totalEnhanceAttempts: readNonNegativeInteger(savedProfile.totalEnhanceAttempts, defaults.totalEnhanceAttempts),
       totalDestroyedCount: readNonNegativeInteger(savedProfile.totalDestroyedCount, defaults.totalDestroyedCount),
@@ -367,22 +505,27 @@ export class ServerSimulator {
   }
 
   private persistProfile(profile: UserGameProfile): void {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
+    localStorage.setItem(this.storageKey, JSON.stringify(profile));
   }
 
   private backupRawProfile(rawProfile: string): void {
-    localStorage.setItem(LOCAL_STORAGE_BACKUP_KEY, rawProfile);
+    if (localStorage.getItem(this.backupKey) !== null) {
+      throw new Error('v3 백업이 이미 존재하여 현재 프로필을 안전하게 교체할 수 없습니다.');
+    }
+    localStorage.setItem(this.backupKey, rawProfile);
   }
 
   private commitProfile(profile: UserGameProfile): void {
     const committedProfile = cloneProfile(profile);
+    committedProfile.schemaVersion = SCHEMA_VERSION;
+    committedProfile.controller = this.controller;
     this.persistProfile(committedProfile);
     this.profile = committedProfile;
   }
 
   private loadOrCreateProfile(): UserGameProfile {
     const defaults = this.createDefaultProfile();
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+    const saved = localStorage.getItem(this.storageKey);
 
     if (saved !== null) {
       let parsedProfile: unknown;
@@ -446,6 +589,68 @@ export class ServerSimulator {
       cycle,
       active: null
     };
+  }
+
+  private createFinalBossEncounterState(weaponId: string): BossEncounterState {
+    const boss = getBossDefinitionForMilestone(20);
+    if (!boss) throw new Error('+20 최종 보스 정의가 없습니다.');
+    return {
+      weaponId,
+      bagSize: 1,
+      cursor: 1,
+      bossSlot: 1,
+      cycle: 1,
+      active: {
+        encounterId: `${weaponId}:final:20`,
+        weaponId,
+        levelSnapshot: 20,
+        bossId: boss.id,
+        revealedAt: Date.now()
+      }
+    };
+  }
+
+  private syncConsecutiveFailCount(profile: UserGameProfile): void {
+    profile.consecutiveFailCount = profile.currentLevel < MAX_ENHANCE_LEVEL
+      ? profile.currentWeapon.failCountsByTargetLevel[profile.currentLevel + 1]
+      : 0;
+  }
+
+  private updateBestRecord(profile: UserGameProfile): void {
+    const candidate: ForgeRunRecord = {
+      weaponId: profile.currentWeapon.weaponId,
+      seriesId: profile.currentSeriesId,
+      level: profile.currentLevel,
+      weaponAttempts: profile.currentWeapon.enhanceAttempts,
+      repairCount: profile.currentWeapon.repairCount,
+      adRestoreCount: profile.currentWeapon.adRestoreCount,
+      controller: profile.controller,
+      achievedAt: Date.now(),
+      isPure: profile.isPureRun
+        && profile.currentWeapon.repairCount === 0
+        && profile.currentWeapon.adRestoreCount === 0
+    };
+    const previous = profile.bestRecords[profile.controller];
+    if (
+      !previous
+      || candidate.level > previous.level
+      || (candidate.level === previous.level && candidate.weaponAttempts < previous.weaponAttempts)
+    ) {
+      profile.bestRecords[profile.controller] = candidate;
+    }
+  }
+
+  private resetForNewRun(profile: UserGameProfile): void {
+    const masterCapitalLevel = profile.upgrades.master_capital || 0;
+    profile.gold = 500 + masterCapitalLevel * 1000;
+    profile.currentLevel = 0;
+    profile.currentCrackCount = 0;
+    profile.consecutiveFailCount = 0;
+    profile.adRestoredCountThisRun = 0;
+    profile.isPureRun = true;
+    profile.runStartTime = Date.now();
+    profile.claimedBossMilestonesThisRun = [];
+    profile.currentWeapon = this.createFreshWeaponState(profile.currentWeapon.ordinal + 1);
   }
 
   private isBossProgressPaused(profile: UserGameProfile): boolean {
@@ -635,7 +840,7 @@ export class ServerSimulator {
     }
 
     const boss = getBossDefinitionForMilestone(activeEncounter.levelSnapshot);
-    if (!boss || activeEncounter.levelSnapshot > 19 || boss.id !== activeEncounter.bossId) {
+    if (!boss || activeEncounter.levelSnapshot > 20 || boss.id !== activeEncounter.bossId) {
       throw new Error('저장된 보스 조우 정의가 유효하지 않습니다.');
     }
 
@@ -653,15 +858,19 @@ export class ServerSimulator {
 
     const progressReward = this.grantProgressCharges(nextProfile, activeEncounter.levelSnapshot);
     const transcendenceReward = this.resolveBossTranscendence(nextProfile, activeEncounter.levelSnapshot);
-    const previousCycle = nextProfile.currentWeapon.bossEncounter?.cycle || 1;
-    const nextEncounterLevel = getBossBagSizeForLevel(nextProfile.currentLevel) !== null
-      ? nextProfile.currentLevel
-      : activeEncounter.levelSnapshot;
-    nextProfile.currentWeapon.bossEncounter = this.createBossEncounterState(
-      nextProfile.currentWeapon.weaponId,
-      nextEncounterLevel,
-      previousCycle + 1
-    );
+    if (activeEncounter.levelSnapshot === 20) {
+      nextProfile.currentWeapon.bossEncounter = null;
+    } else {
+      const previousCycle = nextProfile.currentWeapon.bossEncounter?.cycle || 1;
+      const nextEncounterLevel = getBossBagSizeForLevel(nextProfile.currentLevel) !== null
+        ? nextProfile.currentLevel
+        : activeEncounter.levelSnapshot;
+      nextProfile.currentWeapon.bossEncounter = this.createBossEncounterState(
+        nextProfile.currentWeapon.weaponId,
+        nextEncounterLevel,
+        previousCycle + 1
+      );
+    }
 
     this.commitProfile(nextProfile);
     return {
@@ -710,11 +919,13 @@ export class ServerSimulator {
     }
 
     const nextProfile = this.getProfile();
+    const targetLevel = currentLevel + 1;
     if (requiredCharge) {
       nextProfile.currentWeapon.progressCharges[requiredCharge] -= 1;
     }
     nextProfile.gold -= preview.cost;
     nextProfile.totalEnhanceAttempts += 1;
+    nextProfile.currentWeapon.enhanceAttempts += 1;
 
     const transcendenceRewards: TranscendenceRewardResult[] = [];
     if (currentLevel === 19 && !nextProfile.currentWeapon.endShardFirstAttemptGranted) {
@@ -740,7 +951,7 @@ export class ServerSimulator {
       resultType = 'SUCCESS';
       newLevel = currentLevel + 1;
       nextProfile.currentLevel = newLevel;
-      nextProfile.consecutiveFailCount = 0;
+      nextProfile.currentWeapon.failCountsByTargetLevel[targetLevel] = 0;
       if (newLevel > nextProfile.maxLevelReached) {
         nextProfile.maxLevelReached = newLevel;
       }
@@ -754,6 +965,10 @@ export class ServerSimulator {
           newLevel,
           1
         );
+      } else if (newLevel === 20) {
+        nextProfile.currentWeapon.bossEncounter = this.createFinalBossEncounterState(
+          nextProfile.currentWeapon.weaponId
+        );
       }
       if (currentLevel === 19) {
         transcendenceRewards.push(this.grantTranscendence(
@@ -764,9 +979,11 @@ export class ServerSimulator {
           2
         ));
       }
+      this.syncConsecutiveFailCount(nextProfile);
+      this.updateBestRecord(nextProfile);
       message = `🎉 강화 성공! +${newLevel} [${SWORD_STAGES[newLevel].name}] (성공률 ${preview.successRate.toFixed(1)}%)`;
     } else {
-      nextProfile.consecutiveFailCount += 1;
+      nextProfile.currentWeapon.failCountsByTargetLevel[targetLevel] += 1;
       if (roll < keepBoundary) {
         resultType = 'KEEP';
         message = `강화 실패! 단계 유지 (+${newLevel})`;
@@ -786,6 +1003,7 @@ export class ServerSimulator {
         nextProfile.currentLevel = newLevel;
         message = `📉 강화 실패! 단계 하락 (+${newLevel})`;
       }
+      this.syncConsecutiveFailCount(nextProfile);
     }
 
     this.commitProfile(nextProfile);
@@ -812,15 +1030,23 @@ export class ServerSimulator {
     };
   }
 
-  /** 현재 검 매각. 계정 영구/레거시 자원은 보존하고 무기 귀속 상태만 새로 만든다. */
+  /** 현재 검 매각. 런은 유지하며 골드만 지급하고 새 검을 만든다. */
   public sellCurrentSword(): number {
+    if (this.profile.currentLevel <= 0) {
+      throw new Error('+1 이상 검만 매각할 수 있습니다.');
+    }
+    if (this.profile.currentCrackCount >= 3) {
+      throw new Error('파괴된 검은 매각할 수 없습니다. 파괴 정산을 사용하세요.');
+    }
+
     const nextProfile = this.getProfile();
     const currentLevel = nextProfile.currentLevel;
     const rawValue = calculateSwordSellValue(currentLevel, nextProfile.currentSeriesId, nextProfile.currentCrackCount);
     const forgeTemperatureLevel = nextProfile.upgrades.forge_temp || 0;
-    const goldGained = Math.round(rawValue * (1 + forgeTemperatureLevel * 0.15));
+    const masterCapitalLevel = nextProfile.upgrades.master_capital || 0;
+    const goldGained = Math.round(rawValue * (1 + forgeTemperatureLevel * 0.15))
+      + masterCapitalLevel * 1000;
 
-    nextProfile.essences += Math.floor(Math.pow(currentLevel, 1.2));
     nextProfile.gold += goldGained;
     nextProfile.currentLevel = 0;
     nextProfile.currentCrackCount = 0;
@@ -833,43 +1059,51 @@ export class ServerSimulator {
 
   public repairCrack(): boolean {
     if (this.profile.currentCrackCount <= 0) return false;
-
-    const nextProfile = this.getProfile();
-    const stageInfo = SWORD_STAGES[nextProfile.currentLevel];
-    const repairTechLevel = nextProfile.upgrades.repair_tech || 0;
-    const discount = Math.min(0.8, repairTechLevel * 0.08);
-    let repairCost = Math.round(stageInfo.enhanceCost * 4 * (1 - discount));
-    if (nextProfile.totalEnhanceAttempts <= 10 && nextProfile.totalDestroyedCount === 0) {
-      repairCost = 0;
+    if (this.profile.currentCrackCount >= 3) {
+      throw new Error('파괴된 검은 수리할 수 없습니다. 광고 복구 또는 파괴 정산을 사용하세요.');
     }
-    if (nextProfile.gold < repairCost) {
+
+    const repairCost = calculateRepairCost(this.profile);
+    if (this.profile.gold < repairCost) {
       throw new Error('수리 비용 골드가 부족합니다.');
     }
 
+    const nextProfile = this.getProfile();
     nextProfile.gold -= repairCost;
     nextProfile.currentCrackCount = Math.max(0, nextProfile.currentCrackCount - 1);
+    nextProfile.currentWeapon.repairCount += 1;
+    nextProfile.isPureRun = false;
     this.commitProfile(nextProfile);
     return true;
   }
 
-  /** 파괴 정산 및 런 리셋. */
-  public finishRunAndClaimEssences(): number {
+  /** +5 이상 비파괴 검을 자발적으로 추출하고 새 런을 시작한다. */
+  public extractCurrentSword(): number {
+    if (this.profile.currentLevel < 5) {
+      throw new Error('+5 이상 검만 정수로 추출할 수 있습니다.');
+    }
+    if (this.profile.currentCrackCount >= 3) {
+      throw new Error('파괴된 검은 자발적으로 추출할 수 없습니다. 파괴 정산을 사용하세요.');
+    }
+
     const nextProfile = this.getProfile();
-    const maxLevel = nextProfile.currentLevel;
-    const totalGained = Math.floor(Math.pow(maxLevel, 1.5)) + (maxLevel >= 10 ? 10 : 0);
+    const totalGained = calculateEssenceExtraction(nextProfile.currentLevel);
     nextProfile.essences += totalGained;
+    this.resetForNewRun(nextProfile);
+    this.commitProfile(nextProfile);
+    return totalGained;
+  }
 
-    const masterCapitalLevel = nextProfile.upgrades.master_capital || 0;
-    nextProfile.gold = 500 + masterCapitalLevel * 1000;
-    nextProfile.currentLevel = 0;
-    nextProfile.currentCrackCount = 0;
-    nextProfile.consecutiveFailCount = 0;
-    nextProfile.adRestoredCountThisRun = 0;
-    nextProfile.isPureRun = true;
-    nextProfile.runStartTime = Date.now();
-    nextProfile.claimedBossMilestonesThisRun = [];
-    nextProfile.currentWeapon = this.createFreshWeaponState(nextProfile.currentWeapon.ordinal + 1);
+  /** 파괴된 검의 잔해 정산 및 런 리셋. */
+  public finishRunAndClaimEssences(): number {
+    if (this.profile.currentCrackCount < 3) {
+      throw new Error('파괴된 검만 잔해 정산할 수 있습니다.');
+    }
 
+    const nextProfile = this.getProfile();
+    const totalGained = Math.floor(calculateEssenceExtraction(nextProfile.currentLevel) * 0.25);
+    nextProfile.essences += totalGained;
+    this.resetForNewRun(nextProfile);
     this.commitProfile(nextProfile);
     return totalGained;
   }
@@ -887,7 +1121,38 @@ export class ServerSimulator {
     nextProfile.currentLevel = Math.max(0, nextProfile.currentLevel - 2);
     nextProfile.currentCrackCount = 1;
     nextProfile.adRestoredCountThisRun += 1;
+    nextProfile.currentWeapon.adRestoreCount += 1;
     nextProfile.isPureRun = false;
+    this.syncConsecutiveFailCount(nextProfile);
+    this.commitProfile(nextProfile);
+    return true;
+  }
+
+  /** 시도 전 +0 새 검의 해금된 계열을 선택한다. */
+  public selectSwordSeries(seriesId: SwordSeriesId): boolean {
+    const series = SWORD_SERIES_LIST.find(item => item.id === seriesId);
+    if (!series) {
+      throw new Error('존재하지 않는 검 계열입니다.');
+    }
+    if (
+      this.profile.currentLevel !== 0
+      || this.profile.currentCrackCount !== 0
+      || this.profile.currentWeapon.enhanceAttempts !== 0
+    ) {
+      throw new Error('+0 새 검은 강화 시도와 균열이 없을 때만 계열을 선택할 수 있습니다.');
+    }
+    const blueprintLevel = this.profile.upgrades.ancient_blueprint || 0;
+    if (blueprintLevel < series.requiredBlueprintLevel) {
+      throw new Error(`${series.name} 계열에 필요한 고대 설계도 레벨이 부족합니다.`);
+    }
+    if (this.profile.currentSeriesId === series.id) return true;
+
+    const nextProfile = this.getProfile();
+    nextProfile.currentSeriesId = series.id;
+    const swordKey = `${series.id}_0`;
+    if (!nextProfile.unlockedSwords.includes(swordKey)) {
+      nextProfile.unlockedSwords.push(swordKey);
+    }
     this.commitProfile(nextProfile);
     return true;
   }

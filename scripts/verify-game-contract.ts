@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 
 const STORAGE_KEY = 'project_forge_user_profile_v1';
-const BACKUP_STORAGE_KEY = 'project_forge_user_profile_v1_backup_before_schema_v2';
+const V2_BACKUP_STORAGE_KEY = 'project_forge_user_profile_v1_backup_before_schema_v2';
+const V3_BACKUP_STORAGE_KEY = 'project_forge_user_profile_v1_backup_before_schema_v3';
+const AGENT_STORAGE_KEY = 'project_forge_agent_profile_v1';
+const AGENT_BACKUP_STORAGE_KEY = 'project_forge_agent_profile_v1_backup_before_schema_v3';
 
 class MemoryStorage {
   private readonly values = new Map<string, string>();
@@ -48,7 +51,10 @@ Object.defineProperty(globalThis, 'localStorage', {
 const { ServerSimulator } = await import('../src/services/serverSimulator');
 const {
   SWORD_SERIES_LIST,
+  calculateEssenceExtraction,
   calculateEnhancePreview,
+  calculateRepairCost,
+  calculateSwordSellValue,
   createEmptyCatalystCountMap,
   getBossBagSizeForLevel,
   getBossDefinitionForMilestone
@@ -331,6 +337,7 @@ same(observedRngCalls, [1, 1, 1, 1]);
 
   saveAtLevel(simulator, 10, profile => {
     profile.currentWeapon.progressCharges.tempered = 3;
+    profile.currentCrackCount = 3;
   });
   const beforeFinishId = simulator.getProfile().currentWeapon.weaponId;
   simulator.finishRunAndClaimEssences();
@@ -364,18 +371,308 @@ same(observedRngCalls, [1, 1, 1, 1]);
   same(
     [firstProfile.schemaVersion, firstProfile.catalystInventory.molten_core, firstProfile.catalystPity.molten_core,
       firstProfile.activeCatalystCharges.molten_core, firstProfile.discoveredCatalysts, firstProfile.currentWeapon.progressCharges],
-    [2, 12, 9, 7, ['molten_core'], { tempered: 0, awakened: 0 }]
+    [3, 12, 9, 7, ['molten_core'], { tempered: 0, awakened: 0 }]
   );
-  same([migrateRng.calls, storage.getItem(BACKUP_STORAGE_KEY), storage.writeCount], [1, legacyRaw, 2]);
+  same([migrateRng.calls, storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount], [1, legacyRaw, 2]);
   const firstSerialized = storage.getItem(STORAGE_KEY);
   storage.resetWriteTracking();
   const reloadRng = controlledRandom([], true);
   const migratedAgain = new ServerSimulator(reloadRng.random);
   same(
-    [reloadRng.calls, migratedAgain.getProfile().currentWeapon.weaponId, storage.getItem(BACKUP_STORAGE_KEY), storage.writeCount],
+    [reloadRng.calls, migratedAgain.getProfile().currentWeapon.weaponId, storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
     [0, firstProfile.currentWeapon.weaponId, legacyRaw, 1]
   );
   same(storage.getItem(STORAGE_KEY), firstSerialized);
+}
+
+// v2 -> v3는 기존 실패 보정을 현재 목표 칸으로 옮기고 신규 무기/기록 필드를 안전하게 채운다.
+{
+  storage.clear();
+  const v2Raw = JSON.stringify({
+    schemaVersion: 2,
+    userId: 'v2-user',
+    nickname: 'v2-smith',
+    currentLevel: 4,
+    maxLevelReached: 8,
+    consecutiveFailCount: 7,
+    currentWeapon: {
+      weaponId: 'v2-weapon', ordinal: 3, progressCharges: { tempered: 2, awakened: 1 },
+      bossEncounter: null, claimedRareBossStages: [], endShardFirstAttemptGranted: false
+    }
+  });
+  storage.setItem(STORAGE_KEY, v2Raw);
+  storage.setItem(V2_BACKUP_STORAGE_KEY, 'original-v1-backup');
+  storage.resetWriteTracking();
+  const simulator = new ServerSimulator(controlledRandom([], true).random);
+  const profile = simulator.getProfile();
+  same(
+    [profile.schemaVersion, profile.controller, profile.currentWeapon.weaponId,
+      profile.currentWeapon.enhanceAttempts, profile.currentWeapon.repairCount,
+      profile.currentWeapon.adRestoreCount, profile.currentWeapon.failCountsByTargetLevel.length,
+      profile.currentWeapon.failCountsByTargetLevel[5], profile.consecutiveFailCount, profile.bestRecords],
+    [3, 'human', 'v2-weapon', 0, 0, 0, 21, 7, 7, { human: null, agent: null }]
+  );
+  same(
+    [storage.getItem(V2_BACKUP_STORAGE_KEY), storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
+    ['original-v1-backup', v2Raw, 2]
+  );
+
+  profile.currentWeapon.failCountsByTargetLevel[5] = 99;
+  same(simulator.getProfile().currentWeapon.failCountsByTargetLevel[5], 7, 'profile clones must be deep');
+}
+
+// 사람/agent v3 마이그레이션 백업은 서로 다른 키에 각자의 raw만 보존한다.
+{
+  storage.clear();
+  const humanV2Raw = JSON.stringify({ schemaVersion: 2, userId: 'human-v2', currentLevel: 0 });
+  const agentV2Raw = JSON.stringify({ schemaVersion: 2, userId: 'agent-v2', currentLevel: 0 });
+  storage.setItem(STORAGE_KEY, humanV2Raw);
+  storage.setItem(AGENT_STORAGE_KEY, agentV2Raw);
+  storage.resetWriteTracking();
+  const human = new ServerSimulator(controlledRandom([], true).random);
+  const agent = new ServerSimulator(controlledRandom([], true).random, { controller: 'agent' });
+  same(
+    [human.getProfile().controller, agent.getProfile().controller,
+      storage.getItem(V3_BACKUP_STORAGE_KEY), storage.getItem(AGENT_BACKUP_STORAGE_KEY),
+      storage.getItem(V2_BACKUP_STORAGE_KEY), storage.writeCount],
+    ['human', 'agent', humanV2Raw, agentV2Raw, null, 4]
+  );
+}
+
+// 기본 human/agent 키와 프로필은 물리적으로 분리되며 nickname/controller 주입을 보존한다.
+{
+  storage.clear();
+  const human = new ServerSimulator(controlledRandom().random, { nickname: 'human-smith' });
+  const humanProfile = human.getProfile();
+  humanProfile.gold = 1111;
+  human.saveProfile(humanProfile);
+
+  const agent = new ServerSimulator(controlledRandom().random, { controller: 'agent', nickname: 'agent-smith' });
+  const agentProfile = agent.getProfile();
+  agentProfile.gold = 2222;
+  agent.saveProfile(agentProfile);
+
+  const reloadedHuman = new ServerSimulator(controlledRandom([], true).random);
+  const reloadedAgent = new ServerSimulator(controlledRandom([], true).random, { controller: 'agent' });
+  same(
+    [reloadedHuman.getProfile().controller, reloadedHuman.getProfile().nickname, reloadedHuman.getProfile().gold,
+      reloadedAgent.getProfile().controller, reloadedAgent.getProfile().nickname, reloadedAgent.getProfile().gold],
+    ['human', 'human-smith', 1111, 'agent', 'agent-smith', 2222]
+  );
+  truthy(storage.getItem(STORAGE_KEY) && storage.getItem(AGENT_STORAGE_KEY));
+  same([storage.getItem(V3_BACKUP_STORAGE_KEY), storage.getItem(AGENT_BACKUP_STORAGE_KEY)], [null, null]);
+}
+
+// 매각은 골드만 지급하고 런 메타데이터를 유지하며 +1 추출 exploit을 허용하지 않는다.
+{
+  const { simulator } = freshSimulator();
+  saveAtLevel(simulator, 1, profile => {
+    profile.gold = 1000;
+    profile.essences = 9;
+    profile.upgrades.master_capital = 2;
+    profile.claimedBossMilestonesThisRun = [5];
+    profile.adRestoredCountThisRun = 1;
+    profile.isPureRun = false;
+    profile.runStartTime = 123;
+  });
+  const before = simulator.getProfile();
+  const expectedGold = calculateSwordSellValue(1, before.currentSeriesId, 0) + 2000;
+  same(simulator.sellCurrentSword(), expectedGold);
+  const after = simulator.getProfile();
+  same(
+    [after.gold, after.essences, after.currentLevel, after.claimedBossMilestonesThisRun,
+      after.adRestoredCountThisRun, after.isPureRun, after.runStartTime],
+    [1000 + expectedGold, 9, 0, [5], 1, false, 123]
+  );
+  truthy(after.currentWeapon.weaponId !== before.currentWeapon.weaponId);
+  const beforeRejectedExtraction = simulator.getProfile();
+  rejects(() => simulator.extractCurrentSword(), /\+5 이상/);
+  same(simulator.getProfile(), beforeRejectedExtraction);
+}
+
+// +0 검 매각은 반복 호출해도 메모리와 저장 프로필을 전혀 바꾸지 않는다.
+{
+  const { simulator } = freshSimulator();
+  const before = simulator.getProfile();
+  const serializedBefore = storage.getItem(STORAGE_KEY);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    rejects(() => simulator.sellCurrentSword(), /\+1 이상/);
+  }
+  same(simulator.getProfile(), before);
+  same(storage.getItem(STORAGE_KEY), serializedBefore);
+}
+
+// 파괴된 검은 매각할 수 없고 거부 전후 상태가 동일하다.
+{
+  const { simulator } = freshSimulator();
+  saveAtLevel(simulator, 10, profile => {
+    profile.currentCrackCount = 3;
+    profile.gold = 1234;
+  });
+  const before = simulator.getProfile();
+  const serializedBefore = storage.getItem(STORAGE_KEY);
+  rejects(() => simulator.sellCurrentSword(), /파괴된 검.*매각/);
+  same(simulator.getProfile(), before);
+  same(storage.getItem(STORAGE_KEY), serializedBefore);
+}
+
+// 자발 추출과 파괴 잔해는 같은 정수 공식의 100%/25%를 지급하고 새 런을 초기화한다.
+{
+  const { simulator } = freshSimulator();
+  saveAtLevel(simulator, 5, profile => {
+    profile.gold = 9999;
+    profile.essences = 2;
+    profile.upgrades.master_capital = 3;
+    profile.claimedBossMilestonesThisRun = [5];
+    profile.adRestoredCountThisRun = 1;
+    profile.isPureRun = false;
+    profile.runStartTime = 1;
+  });
+  const beforeWeaponId = simulator.getProfile().currentWeapon.weaponId;
+  const extraction = calculateEssenceExtraction(5);
+  same(simulator.extractCurrentSword(), extraction);
+  const extracted = simulator.getProfile();
+  same(
+    [extracted.essences, extracted.gold, extracted.currentLevel, extracted.currentCrackCount,
+      extracted.adRestoredCountThisRun, extracted.isPureRun, extracted.claimedBossMilestonesThisRun],
+    [2 + extraction, 3500, 0, 0, 0, true, []]
+  );
+  truthy(extracted.currentWeapon.weaponId !== beforeWeaponId && extracted.runStartTime > 1);
+
+  saveAtLevel(simulator, 10, profile => {
+    profile.essences = 4;
+    profile.upgrades.master_capital = 1;
+    profile.currentCrackCount = 2;
+  });
+  const beforeInvalidFinish = simulator.getProfile();
+  rejects(() => simulator.finishRunAndClaimEssences(), /파괴된 검만/);
+  same(simulator.getProfile(), beforeInvalidFinish);
+  const destroyed = simulator.getProfile();
+  destroyed.currentCrackCount = 3;
+  simulator.saveProfile(destroyed);
+  const salvage = Math.floor(calculateEssenceExtraction(10) * 0.25);
+  same(simulator.finishRunAndClaimEssences(), salvage);
+  same([simulator.getProfile().essences, simulator.getProfile().gold], [4 + salvage, 1500]);
+}
+
+// 수리비는 현재 검 수리 횟수에 따라 누적되고 수리/광고 복구는 순수성을 해제한다.
+{
+  const { simulator } = freshSimulator();
+  saveAtLevel(simulator, 4, profile => {
+    profile.currentCrackCount = 2;
+    profile.gold = 10_000;
+    profile.totalEnhanceAttempts = 0;
+    profile.upgrades.repair_tech = 1;
+  });
+  same(calculateRepairCost(simulator.getProfile()), 1150);
+  truthy(simulator.repairCrack());
+  const repaired = simulator.getProfile();
+  same(
+    [repaired.gold, repaired.currentCrackCount, repaired.currentWeapon.repairCount,
+      repaired.isPureRun, calculateRepairCost(repaired)],
+    [8850, 1, 1, false, 2300]
+  );
+  const destroyed = simulator.getProfile();
+  destroyed.currentCrackCount = 3;
+  destroyed.currentWeapon.failCountsByTargetLevel[3] = 4;
+  destroyed.consecutiveFailCount = 9;
+  simulator.saveProfile(destroyed);
+  const beforeRejectedRepair = simulator.getProfile();
+  const serializedBeforeRejectedRepair = storage.getItem(STORAGE_KEY);
+  rejects(() => simulator.repairCrack(), /파괴된 검.*수리/);
+  same(simulator.getProfile(), beforeRejectedRepair);
+  same(storage.getItem(STORAGE_KEY), serializedBeforeRejectedRepair);
+  truthy(simulator.adRestoreSword());
+  same(
+    [simulator.getProfile().currentWeapon.adRestoreCount, simulator.getProfile().adRestoredCountThisRun,
+      simulator.getProfile().isPureRun, simulator.getProfile().consecutiveFailCount],
+    [1, 1, false, 4]
+  );
+}
+
+// 목표별 pity는 하락 후에도 높은 목표 값을 보존하고 각 목표 성공 때만 해당 칸을 지운다.
+{
+  const dropPreview = calculateEnhancePreview({
+    currentSeriesId: 'kingdom', currentLevel: 9, consecutiveFailCount: 0,
+    failCountsByTargetLevel: Array(21).fill(0), totalEnhanceAttempts: 20, upgrades: {}
+  });
+  const dropRoll = dropPreview.successRate + dropPreview.keepRate + dropPreview.crackRate + dropPreview.dropRate / 2;
+  const { simulator } = freshSimulator([dropRoll / 100, 0, 0]);
+  saveAtLevel(simulator, 9, profile => {
+    profile.totalEnhanceAttempts = 20;
+  });
+  same(simulator.attemptEnhance().resultType, 'DROP');
+  same(
+    [simulator.getProfile().currentLevel, simulator.getProfile().currentWeapon.failCountsByTargetLevel[10],
+      simulator.getProfile().consecutiveFailCount],
+    [8, 1, 0]
+  );
+  same(simulator.attemptEnhance().newLevel, 9);
+  same(
+    [simulator.getProfile().currentWeapon.failCountsByTargetLevel[9],
+      simulator.getProfile().currentWeapon.failCountsByTargetLevel[10], simulator.getProfile().consecutiveFailCount],
+    [0, 1, 1]
+  );
+  same(calculateEnhancePreview(simulator.getProfile()).failBonus, 0.5);
+  same(simulator.attemptEnhance().newLevel, 10);
+  same([simulator.getProfile().currentWeapon.failCountsByTargetLevel[10], simulator.getProfile().consecutiveFailCount], [0, 0]);
+}
+
+// 기록은 달성 순간 스냅샷이고 후속 수리/매각에 불변이며 동률은 더 적은 무기 시도가 우선한다.
+{
+  const { simulator } = freshSimulator([0, 0]);
+  saveAtLevel(simulator, 0, profile => {
+    profile.totalEnhanceAttempts = 20;
+    profile.currentWeapon.enhanceAttempts = 4;
+  });
+  simulator.attemptEnhance();
+  const firstRecord = simulator.getProfile().bestRecords.human;
+  truthy(firstRecord);
+  same(
+    [firstRecord.level, firstRecord.weaponAttempts, firstRecord.repairCount,
+      firstRecord.adRestoreCount, firstRecord.controller, firstRecord.isPure],
+    [1, 5, 0, 0, 'human', true]
+  );
+
+  const cracked = simulator.getProfile();
+  cracked.currentCrackCount = 1;
+  cracked.gold = 100_000;
+  simulator.saveProfile(cracked);
+  simulator.repairCrack();
+  same(simulator.getProfile().bestRecords.human, firstRecord);
+  simulator.sellCurrentSword();
+  same(simulator.getProfile().bestRecords.human, firstRecord);
+
+  const secondWeaponId = simulator.getProfile().currentWeapon.weaponId;
+  simulator.attemptEnhance();
+  const tieWinner = simulator.getProfile().bestRecords.human;
+  truthy(tieWinner);
+  same([tieWinner.weaponId, tieWinner.level, tieWinner.weaponAttempts], [secondWeaponId, 1, 1]);
+  const externalClone = simulator.getProfile();
+  (externalClone.bestRecords.human as { level: number }).level = 20;
+  same(simulator.getProfile().bestRecords.human?.level, 1);
+}
+
+// 계열은 설계도 조건을 충족한 무시도 +0 새 검에서만 바뀌며 거부 시 상태가 불변이다.
+{
+  const { simulator } = freshSimulator([0]);
+  const initial = simulator.getProfile();
+  rejects(() => simulator.selectSwordSeries('guardian'), /설계도/);
+  same(simulator.getProfile(), initial);
+  const unlocked = simulator.getProfile();
+  unlocked.upgrades.ancient_blueprint = 2;
+  simulator.saveProfile(unlocked);
+  truthy(simulator.selectSwordSeries('guardian'));
+  same(
+    [simulator.getProfile().currentSeriesId, simulator.getProfile().currentWeapon.weaponId],
+    ['guardian', initial.currentWeapon.weaponId]
+  );
+  simulator.attemptEnhance();
+  const attempted = simulator.getProfile();
+  rejects(() => simulator.selectSwordSeries('flame'), /강화 시도/);
+  same(simulator.getProfile(), attempted);
+  rejects(() => simulator.selectSwordSeries('unknown' as 'kingdom'), /존재하지 않는/);
+  same(simulator.getProfile(), attempted);
 }
 
 // 손상/legacy 로드 교체는 raw 백업 성공 뒤에만 수행하며 읽기/쓰기 실패는 fail-closed다.
@@ -398,8 +695,8 @@ same(observedRngCalls, [1, 1, 1, 1]);
   new ServerSimulator();
   const replacement = JSON.parse(storage.getItem(STORAGE_KEY) as string) as { schemaVersion: number };
   same(
-    [storage.getItem(BACKUP_STORAGE_KEY), replacement.schemaVersion, storage.writeCount],
-    [malformedRaw, 2, 2]
+    [storage.getItem(V3_BACKUP_STORAGE_KEY), replacement.schemaVersion, storage.writeCount],
+    [malformedRaw, 3, 2]
   );
 }
 
@@ -411,8 +708,8 @@ same(observedRngCalls, [1, 1, 1, 1]);
   new ServerSimulator();
   const replacement = JSON.parse(storage.getItem(STORAGE_KEY) as string) as { schemaVersion: number };
   same(
-    [storage.getItem(BACKUP_STORAGE_KEY), replacement.schemaVersion, storage.writeCount],
-    [nonObjectRaw, 2, 2]
+    [storage.getItem(V3_BACKUP_STORAGE_KEY), replacement.schemaVersion, storage.writeCount],
+    [nonObjectRaw, 3, 2]
   );
 }
 
@@ -425,7 +722,7 @@ same(observedRngCalls, [1, 1, 1, 1]);
   rejects(() => new ServerSimulator(), /injected storage failure/);
   storage.failWriteAt = null;
   same(
-    [storage.getItem(STORAGE_KEY), storage.getItem(BACKUP_STORAGE_KEY), storage.writeCount],
+    [storage.getItem(STORAGE_KEY), storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
     [malformedRaw, null, 1]
   );
 }
@@ -439,7 +736,7 @@ same(observedRngCalls, [1, 1, 1, 1]);
   rejects(() => new ServerSimulator(), /injected storage failure/);
   storage.failWriteAt = null;
   same(
-    [storage.getItem(STORAGE_KEY), storage.getItem(BACKUP_STORAGE_KEY), storage.writeCount],
+    [storage.getItem(STORAGE_KEY), storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
     [malformedRaw, malformedRaw, 2]
   );
 }
@@ -453,8 +750,25 @@ same(observedRngCalls, [1, 1, 1, 1]);
   rejects(() => new ServerSimulator(), /injected storage failure/);
   storage.failWriteAt = null;
   same(
-    [storage.getItem(STORAGE_KEY), storage.getItem(BACKUP_STORAGE_KEY), storage.writeCount],
+    [storage.getItem(STORAGE_KEY), storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
     [legacyRaw, legacyRaw, 2]
+  );
+}
+
+// 이미 존재하는 v3 백업은 손상 raw로 덮지 않고 main 교체도 중단한다.
+{
+  storage.clear();
+  const malformedRaw = '{preserve-main-until-backup';
+  const existingV3Backup = JSON.stringify({ schemaVersion: 2, userId: 'first-v3-backup' });
+  storage.setItem(STORAGE_KEY, malformedRaw);
+  storage.setItem(V2_BACKUP_STORAGE_KEY, 'original-v1-backup');
+  storage.setItem(V3_BACKUP_STORAGE_KEY, existingV3Backup);
+  storage.resetWriteTracking();
+  rejects(() => new ServerSimulator(), /v3 백업.*이미 존재/);
+  same(
+    [storage.getItem(STORAGE_KEY), storage.getItem(V2_BACKUP_STORAGE_KEY),
+      storage.getItem(V3_BACKUP_STORAGE_KEY), storage.writeCount],
+    [malformedRaw, 'original-v1-backup', existingV3Backup, 0]
   );
 }
 
@@ -539,6 +853,22 @@ same(observedRngCalls, [1, 1, 1, 1]);
     [simulator.getProfile().transcendence.end, simulator.getProfile().currentWeapon.endShardFirstAttemptGranted, rng.calls],
     [{ relics: 1, shards: 0 }, true, 1]
   );
+  const finalEncounter = simulator.getProfile().currentWeapon.bossEncounter;
+  same(
+    [finalEncounter?.bagSize, finalEncounter?.cursor, finalEncounter?.bossSlot,
+      finalEncounter?.active?.levelSnapshot, finalEncounter?.active?.bossId],
+    [1, 1, 1, 20, 'boss_20']
+  );
+  const reloadRng = controlledRandom([], true);
+  const reloaded = new ServerSimulator(reloadRng.random);
+  same([reloaded.getProfile().currentWeapon.bossEncounter, reloadRng.calls], [finalEncounter, 0]);
+  const finalResult = reloaded.defeatBoss(finalEncounter?.active?.encounterId as string);
+  same(
+    [finalResult.levelSnapshot, finalResult.firstRewardGranted, finalResult.essencesGained,
+      reloaded.getProfile().currentWeapon.bossEncounter],
+    [20, true, 600, null]
+  );
+  rejects(() => reloaded.defeatBoss(finalEncounter?.active?.encounterId as string), /활성 보스/);
 }
 
 // 38-39. 저장 실패는 예외를 보존하고 메모리 profile을 진행시키지 않는다.

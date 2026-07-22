@@ -11,6 +11,8 @@ export interface GameEntry {
   /** public 기준 절대 경로. 없으면 placeholder 썸네일을 그린다. */
   thumbnail: string | null;
   status: GameStatus;
+  /** 로컬 AI 관전·플레이 브리지를 제공하는 게임인지 여부. */
+  agentSupport?: boolean;
 }
 
 /**
@@ -27,7 +29,8 @@ export const GAMES: GameEntry[] = [
       '탭 사냥으로 골드를 모아 검을 강화하세요. 파괴돼도 남는 영구 성장, 단계별 보스와 재료 파밍, +20 초월 도전과 랭킹까지.',
     path: '/games/forge/',
     thumbnail: '/assets/images/forge-arena-v1.webp',
-    status: 'live'
+    status: 'live',
+    agentSupport: true
   },
   {
     id: 'coming-soon-1',

@@ -1,29 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  calculateEssenceExtraction,
   calculateEnhancePreview,
+  calculateRepairCost,
   calculateSwordSellValue,
   getRequiredProgressChargeId,
   SWORD_SERIES_LIST,
   SWORD_STAGES
 } from '../../constants/gameBalance';
-import { EnhanceAttemptResult, EnhancePreview, UserGameProfile } from '../../types/game';
+import { EnhanceAttemptResult, EnhancePreview, SwordSeriesId, UserGameProfile } from '../../types/game';
 import { SwordSprite } from '../common/SwordSprite';
 import confetti from 'canvas-confetti';
-import { AlertTriangle, ArrowRight, Coins, RotateCcw, ShieldCheck, Tv, Wrench, Zap } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Coins, Gem, RotateCcw, ShieldCheck, Tv, Wrench, Zap } from 'lucide-react';
 
 interface EnhancePanelProps {
   profile: UserGameProfile;
+  readOnly?: boolean;
   onAttemptEnhance: () => EnhanceAttemptResult | null;
   onRepairCrack: () => void;
   onAdRestore: () => void;
   onFinishRun: () => void;
   onSellSword: () => void;
+  onExtractSword: () => void;
+  onSelectSeries: (seriesId: SwordSeriesId) => void;
 }
 
 interface PanelNotice {
   tone: 'success' | 'error' | 'info';
   message: string;
 }
+
+type ConfirmationKind = 'sell' | 'extract' | 'debris' | 'ad';
 
 function getErrorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -49,23 +56,34 @@ function getDisplayedRates(preview: EnhancePreview) {
 
 export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   profile,
+  readOnly = false,
   onAttemptEnhance,
   onRepairCrack,
   onAdRestore,
   onFinishRun,
-  onSellSword
+  onSellSword,
+  onExtractSword,
+  onSelectSeries
 }) => {
   const [lastResult, setLastResult] = useState<EnhanceAttemptResult | null>(null);
   const [notice, setNotice] = useState<PanelNotice | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
-  const [showAdModal, setShowAdModal] = useState(false);
+  const [confirmation, setConfirmation] = useState<ConfirmationKind | null>(null);
   const enhanceTimerRef = useRef<number | null>(null);
+  const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => () => {
     if (enhanceTimerRef.current !== null) {
       window.clearTimeout(enhanceTimerRef.current);
     }
   }, []);
+
+  useEffect(() => {
+    if (!confirmation) return;
+    const frame = window.requestAnimationFrame(() => confirmButtonRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [confirmation]);
 
   const currentStage = SWORD_STAGES[profile.currentLevel] || SWORD_STAGES[0];
   const nextStage = SWORD_STAGES[profile.currentLevel + 1] || null;
@@ -77,8 +95,12 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
     profile.currentCrackCount
   );
   const forgeTemperatureLevel = profile.upgrades.forge_temp || 0;
-  const estimatedSellValue = Math.round(rawSellValue * (1 + forgeTemperatureLevel * 0.15));
-  const estimatedEssences = Math.floor(Math.pow(profile.currentLevel, 1.2));
+  const masterCapitalLevel = profile.upgrades.master_capital || 0;
+  const estimatedSellValue = Math.round(rawSellValue * (1 + forgeTemperatureLevel * 0.15))
+    + masterCapitalLevel * 1000;
+  const estimatedEssences = calculateEssenceExtraction(profile.currentLevel);
+  const estimatedDebrisEssences = Math.floor(estimatedEssences * 0.25);
+  const repairCost = calculateRepairCost(profile);
   const isDestroyed = profile.currentCrackCount >= 3;
   const isMaxLevel = profile.currentLevel >= SWORD_STAGES.length - 1;
   const requiredChargeId = getRequiredProgressChargeId(profile.currentLevel);
@@ -88,9 +110,16 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   const displayedRates = getDisplayedRates(preview);
   const lacksGold = profile.gold < preview.cost;
   const canSell = profile.currentLevel > 0;
+  const canExtract = profile.currentLevel >= 5 && !isDestroyed;
+  const canRepair = profile.currentCrackCount > 0 && !isDestroyed && profile.gold >= repairCost;
+  const canSelectSeries = profile.currentLevel === 0
+    && profile.currentCrackCount === 0
+    && profile.currentWeapon.enhanceAttempts === 0;
+  const blueprintLevel = profile.upgrades.ancient_blueprint || 0;
 
   let enhanceDisabledReason: string | null = null;
-  if (isDestroyed) enhanceDisabledReason = '검이 파괴되어 복구 또는 런 정산이 필요합니다.';
+  if (readOnly) enhanceDisabledReason = 'AI 관전 전용 화면에서는 직접 강화할 수 없습니다.';
+  else if (isDestroyed) enhanceDisabledReason = '검이 파괴되어 복구 또는 런 정산이 필요합니다.';
   else if (isMaxLevel) enhanceDisabledReason = '최고 +20 단계에 도달했습니다.';
   else if (requiredChargeId && requiredChargeCount <= 0) {
     enhanceDisabledReason = `${requiredChargeName} 충전이 필요합니다. 일반 적을 처치해 보스 징조를 진행하세요.`;
@@ -99,6 +128,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   else if (isEnhancing) enhanceDisabledReason = '망치질 결과를 확인하는 중입니다.';
 
   const handleEnhanceClick = () => {
+    if (readOnly) return;
     if (enhanceDisabledReason) {
       setNotice({ tone: 'info', message: enhanceDisabledReason });
       return;
@@ -132,6 +162,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   };
 
   const handleRepairClick = () => {
+    if (readOnly) return;
     try {
       onRepairCrack();
       setLastResult(null);
@@ -141,36 +172,90 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
     }
   };
 
-  const handleSimulateAdComplete = () => {
+  const openConfirmation = (kind: ConfirmationKind) => {
+    if (readOnly) return;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setConfirmation(kind);
+  };
+
+  const closeConfirmation = () => {
+    setConfirmation(null);
+    window.requestAnimationFrame(() => previousFocusRef.current?.focus());
+  };
+
+  const handleConfirmedAction = () => {
+    if (!confirmation || readOnly) return;
     try {
-      onAdRestore();
-      setShowAdModal(false);
+      if (confirmation === 'sell') {
+        onSellSword();
+        setNotice({ tone: 'success', message: `검을 매각해 ${estimatedSellValue.toLocaleString()} G를 획득했습니다.` });
+      } else if (confirmation === 'extract') {
+        onExtractSword();
+        setNotice({ tone: 'success', message: `정수 ${estimatedEssences.toLocaleString()}개를 추출하고 새 런을 시작했습니다.` });
+      } else if (confirmation === 'debris') {
+        onFinishRun();
+        setNotice({ tone: 'success', message: `파괴 잔해에서 정수 ${estimatedDebrisEssences.toLocaleString()}개를 회수했습니다.` });
+      } else {
+        onAdRestore();
+        setNotice({ tone: 'success', message: '1회 복구 완료 · 검 단계가 2 낮아지고 균열 1개로 복구되었습니다.' });
+      }
       setLastResult(null);
-      setNotice({ tone: 'success', message: '1회 복구 완료 · 검 단계가 2 낮아지고 균열 1개로 복구되었습니다.' });
+      closeConfirmation();
     } catch (error: unknown) {
-      setShowAdModal(false);
-      setNotice({ tone: 'error', message: getErrorMessage(error, '광고 복구에 실패했습니다.') });
+      const fallback = confirmation === 'sell'
+        ? '검 매각에 실패했습니다.'
+        : confirmation === 'extract'
+          ? '정수 추출에 실패했습니다.'
+          : confirmation === 'debris'
+            ? '파괴 잔해 정산에 실패했습니다.'
+            : '광고 복구에 실패했습니다.';
+      setNotice({ tone: 'error', message: getErrorMessage(error, fallback) });
+      closeConfirmation();
     }
   };
 
-  const handleFinishRun = () => {
-    setLastResult(null);
-    setNotice(null);
-    onFinishRun();
+  const handleSelectSeries = (seriesId: SwordSeriesId) => {
+    if (readOnly) return;
+    try {
+      onSelectSeries(seriesId);
+      setLastResult(null);
+      const selected = SWORD_SERIES_LIST.find(item => item.id === seriesId);
+      setNotice({ tone: 'success', message: `${selected?.name ?? '검'} 계열을 선택했습니다.` });
+    } catch (error: unknown) {
+      setNotice({ tone: 'error', message: getErrorMessage(error, '검 계열을 선택하지 못했습니다.') });
+    }
   };
 
-  const handleSellSword = () => {
-    if (!canSell) {
-      setNotice({ tone: 'info', message: '+0 녹슨 철검은 매각할 수 없습니다.' });
+  const handleConfirmationKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      closeConfirmation();
       return;
     }
-    setLastResult(null);
-    setNotice(null);
-    onSellSword();
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled)')
+    );
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   };
 
   return (
-    <section className="enhance-panel" aria-labelledby="forge-workbench-title">
+    <section
+      className="enhance-panel"
+      aria-labelledby="forge-workbench-title"
+      aria-describedby={readOnly ? 'forge-workbench-readonly' : undefined}
+    >
       <div className="enhance-panel__heading">
         <div>
           <span className="section-kicker">FORGE WORKBENCH</span>
@@ -178,6 +263,12 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         </div>
         <span className="series-badge">{series.name}</span>
       </div>
+
+      {readOnly && (
+        <p id="forge-workbench-readonly" className="cta-reason" role="note">
+          AI 관전 전용 · 강화, 수리, 정산, 복구, 계열 선택은 공개 에이전트 행동으로만 진행됩니다.
+        </p>
+      )}
 
       <div className="sword-comparison">
         <div className="sword-comparison__icon" style={{ '--sword-accent': currentStage.color } as React.CSSProperties}>
@@ -205,6 +296,40 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         </div>
       </div>
 
+      {canSelectSeries && (
+        <div className="series-selector" aria-labelledby="series-selector-title">
+          <div className="series-selector__heading">
+            <div>
+              <small>NEW SWORD BLUEPRINT</small>
+              <strong id="series-selector-title">새 검 계열 선택</strong>
+            </div>
+            <span>설계도 Lv.{blueprintLevel}</span>
+          </div>
+          <div className="series-selector__grid">
+            {SWORD_SERIES_LIST.map(option => {
+              const unlocked = blueprintLevel >= option.requiredBlueprintLevel;
+              const selected = profile.currentSeriesId === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  className={selected ? 'series-option is-selected' : 'series-option'}
+                  aria-pressed={selected}
+                  disabled={readOnly || !unlocked}
+                  onClick={() => handleSelectSeries(option.id)}
+                  title={unlocked ? option.description : `고대 설계도 Lv.${option.requiredBlueprintLevel} 필요`}
+                >
+                  <span aria-hidden="true">{option.icon}</span>
+                  <strong>{option.name}</strong>
+                  <small>{unlocked ? selected ? '선택됨' : '선택' : `Lv.${option.requiredBlueprintLevel} 필요`}</small>
+                </button>
+              );
+            })}
+          </div>
+          <p>강화 시도 전 +0 새 검에서만 변경할 수 있습니다.</p>
+        </div>
+      )}
+
       <div className={profile.currentCrackCount > 0 ? 'crack-status has-cracks' : 'crack-status'}>
         <div>
           <small>검의 균열</small>
@@ -216,12 +341,26 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
           ))}
         </div>
         {profile.currentCrackCount > 0 && !isDestroyed && (
-          <button type="button" className="repair-button" onClick={handleRepairClick}>
+          <button
+            type="button"
+            className="repair-button"
+            onClick={handleRepairClick}
+            disabled={readOnly || !canRepair}
+            title={readOnly
+              ? 'AI 관전 전용 화면에서는 직접 수리할 수 없습니다.'
+              : !canRepair ? `${(repairCost - profile.gold).toLocaleString()} G 부족` : undefined}
+          >
             <Wrench size={15} aria-hidden="true" />
-            1칸 수리
+            1칸 수리 · {repairCost.toLocaleString()} G
           </button>
         )}
       </div>
+
+      {profile.currentCrackCount > 0 && !isDestroyed && !canRepair && (
+        <p className="repair-shortage" role="status">
+          수리비가 {(repairCost - profile.gold).toLocaleString()} G 부족합니다.
+        </p>
+      )}
 
       {(profile.currentLevel >= 5 || progressCharges.tempered > 0 || progressCharges.awakened > 0) && (
         <div className="progress-charge-card">
@@ -287,15 +426,20 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
             <button
               type="button"
               className="secondary-cta secondary-cta--essence"
-              onClick={() => setShowAdModal(true)}
-              disabled={profile.adRestoredCountThisRun >= 1}
+              onClick={() => openConfirmation('ad')}
+              disabled={readOnly || profile.adRestoredCountThisRun >= 1}
             >
               <Tv size={17} aria-hidden="true" />
               {profile.adRestoredCountThisRun >= 1 ? '이번 런 복구 사용 완료' : `1회 복구 · +${Math.max(0, profile.currentLevel - 2)}`}
             </button>
-            <button type="button" className="secondary-cta" onClick={handleFinishRun}>
+            <button
+              type="button"
+              className="secondary-cta"
+              onClick={() => openConfirmation('debris')}
+              disabled={readOnly}
+            >
               <RotateCcw size={17} aria-hidden="true" />
-              정수 정산 · 다음 런
+              잔해 25% 정산 · 정수 +{estimatedDebrisEssences.toLocaleString()}
             </button>
           </div>
         </div>
@@ -347,40 +491,93 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
               <p className="cta-reason" role="status">{enhanceDisabledReason}</p>
             )}
 
-            <div className="sale-preview">
-              <div>
-                <small>지금 매각하면</small>
-                <strong>{estimatedSellValue.toLocaleString()} G</strong>
+            <div className="economy-choices" aria-label="검 가치 회수 방법">
+              <div className="economy-choice economy-choice--sell">
+                <div className="economy-choice__icon" aria-hidden="true"><Coins size={18} /></div>
+                <div>
+                  <small>GOLD SALE · 런 계속</small>
+                  <strong>{estimatedSellValue.toLocaleString()} G</strong>
+                  <span>골드만 받고 새 검으로 교체합니다.</span>
+                </div>
+                <button
+                  type="button"
+                  className="sell-cta"
+                  onClick={() => openConfirmation('sell')}
+                  disabled={readOnly || !canSell}
+                >
+                  {canSell ? '매각 확인' : '+0 매각 불가'}
+                </button>
               </div>
-              <div>
-                <small>예상 정수</small>
-                <strong>+{estimatedEssences.toLocaleString()}</strong>
+              <div className="economy-choice economy-choice--extract">
+                <div className="economy-choice__icon" aria-hidden="true"><Gem size={18} /></div>
+                <div>
+                  <small>ESSENCE EXTRACTION · 새 런</small>
+                  <strong>정수 +{estimatedEssences.toLocaleString()}</strong>
+                  <span>+5 이상에서 영구 정수를 얻고 런을 초기화합니다.</span>
+                </div>
+                <button
+                  type="button"
+                  className="extract-cta"
+                  onClick={() => openConfirmation('extract')}
+                  disabled={readOnly || !canExtract}
+                >
+                  {canExtract ? '추출 확인' : '+5부터 추출'}
+                </button>
               </div>
-              <button
-                type="button"
-                className="sell-cta"
-                onClick={handleSellSword}
-                disabled={!canSell}
-              >
-                <Coins size={17} aria-hidden="true" />
-                {canSell ? '검 매각' : '+0 매각 불가'}
-              </button>
             </div>
           </div>
         </>
       )}
 
-      {showAdModal && (
+      {confirmation && (
         <div className="modal-backdrop modal-backdrop--top" role="presentation">
-          <div className="ad-reward-modal" role="dialog" aria-modal="true" aria-labelledby="ad-reward-title">
-            <span className="section-kicker">ONE-TIME RECOVERY</span>
-            <h3 id="ad-reward-title">보상형 복구 확인</h3>
-            <div className="ad-reward-modal__icon" aria-hidden="true">▶</div>
-            <p>모의 광고 시청 보상으로 검을 2단계 낮추고 균열 1개 상태로 복구합니다.</p>
-            <button type="button" className="secondary-cta secondary-cta--essence" onClick={handleSimulateAdComplete}>
-              보상 수령 및 복구
+          <div
+            className="ad-reward-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="forge-confirm-title"
+            aria-describedby="forge-confirm-description"
+            onKeyDown={handleConfirmationKeyDown}
+          >
+            <span className="section-kicker">
+              {confirmation === 'ad' ? 'ONE-TIME RECOVERY' : 'IRREVERSIBLE CHOICE'}
+            </span>
+            <h3 id="forge-confirm-title">
+              {confirmation === 'sell'
+                ? '현재 검을 매각할까요?'
+                : confirmation === 'extract'
+                  ? '현재 검에서 정수를 추출할까요?'
+                  : confirmation === 'debris'
+                    ? '파괴 잔해를 정산할까요?'
+                    : '보상형 복구를 사용할까요?'}
+            </h3>
+            <div className="ad-reward-modal__icon" aria-hidden="true">
+              {confirmation === 'sell' ? '◆' : confirmation === 'ad' ? '▶' : '✦'}
+            </div>
+            <p id="forge-confirm-description">
+              {confirmation === 'sell'
+                ? `+${profile.currentLevel} ${currentStage.name}을 없애고 ${estimatedSellValue.toLocaleString()} G를 받습니다. 정수는 지급되지 않고 현재 런은 계속됩니다.`
+                : confirmation === 'extract'
+                  ? `+${profile.currentLevel} ${currentStage.name}을 영구 정수 ${estimatedEssences.toLocaleString()}개로 바꾸고 새 런을 시작합니다.${profile.currentLevel >= 20 ? ' 전설 검도 되돌릴 수 없습니다.' : ''}`
+                  : confirmation === 'debris'
+                    ? `자발 추출량의 25%인 정수 ${estimatedDebrisEssences.toLocaleString()}개만 회수하고 새 런을 시작합니다.`
+                    : '모의 광고 보상으로 검을 2단계 낮추고 균열 1개 상태로 복구합니다. 이 기록은 순수 기록이 아닙니다.'}
+            </p>
+            <button
+              ref={confirmButtonRef}
+              type="button"
+              className="secondary-cta secondary-cta--essence"
+              onClick={handleConfirmedAction}
+            >
+              {confirmation === 'sell'
+                ? '매각 확정'
+                : confirmation === 'extract'
+                  ? '정수 추출 확정'
+                  : confirmation === 'debris'
+                    ? '25% 잔해 정산'
+                    : '보상 수령 및 복구'}
             </button>
-            <button type="button" className="text-button" onClick={() => setShowAdModal(false)}>
+            <button type="button" className="text-button" onClick={closeConfirmation}>
               취소
             </button>
           </div>

@@ -1,5 +1,21 @@
 export type SwordSeriesId = 'kingdom' | 'flame' | 'guardian' | 'berserk' | 'dragon';
 
+export type ForgeController = 'human' | 'agent';
+
+export interface ForgeRunRecord {
+  readonly weaponId: string;
+  readonly seriesId: SwordSeriesId;
+  readonly level: number;
+  readonly weaponAttempts: number;
+  readonly repairCount: number;
+  readonly adRestoreCount: number;
+  readonly controller: ForgeController;
+  readonly achievedAt: number;
+  readonly isPure: boolean;
+}
+
+export type ForgeBestRecords = Record<ForgeController, ForgeRunRecord | null>;
+
 export interface SwordSeries {
   id: SwordSeriesId;
   name: string;
@@ -55,6 +71,10 @@ export interface BossEncounterState {
 export interface CurrentWeaponState {
   weaponId: string;
   ordinal: number;
+  enhanceAttempts: number;
+  repairCount: number;
+  adRestoreCount: number;
+  failCountsByTargetLevel: number[];
   progressCharges: ProgressChargeMap;
   bossEncounter: BossEncounterState | null;
   claimedRareBossStages: Array<18 | 19>;
@@ -163,6 +183,7 @@ export interface EnhancePreviewInput {
   currentSeriesId: SwordSeriesId;
   currentLevel: number;
   consecutiveFailCount: number;
+  failCountsByTargetLevel?: readonly number[];
   totalEnhanceAttempts: number;
   upgrades: Readonly<Record<string, number>>;
 }
@@ -236,9 +257,11 @@ export interface PermanentUpgrade {
 }
 
 export interface UserGameProfile {
-  schemaVersion: 2;
+  schemaVersion: 3;
   userId: string;
   nickname: string;
+  controller: ForgeController;
+  bestRecords: ForgeBestRecords;
   gold: number;
   essences: number;
   currentSeriesId: SwordSeriesId;

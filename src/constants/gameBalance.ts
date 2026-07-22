@@ -323,7 +323,16 @@ export function calculateEnhancePreview(profile: EnhancePreviewInput): EnhancePr
   const seriesInfo = SWORD_SERIES_LIST.find(series => series.id === profile.currentSeriesId) || SWORD_SERIES_LIST[0];
   const precisionLevel = profile.upgrades.precision_hammer || 0;
   const failBonusPerFail = 0.5 + precisionLevel * 0.2;
-  const failBonus = profile.consecutiveFailCount * failBonusPerFail;
+  const targetLevel = Math.max(0, Math.min(20, Math.floor(profile.currentLevel) + 1));
+  const savedTargetFailures = profile.failCountsByTargetLevel?.[targetLevel];
+  const targetFailures = profile.failCountsByTargetLevel
+    ? (typeof savedTargetFailures === 'number' && Number.isFinite(savedTargetFailures)
+      ? Math.max(0, Math.floor(savedTargetFailures))
+      : 0)
+    : (Number.isFinite(profile.consecutiveFailCount)
+      ? Math.max(0, Math.floor(profile.consecutiveFailCount))
+      : 0);
+  const failBonus = targetFailures * failBonusPerFail;
 
   let successRate = stageInfo.baseSuccessRate + seriesInfo.baseSuccessBonus + failBonus;
   const maxAllowedSuccess = Math.min(stageInfo.baseSuccessRate * 2, stageInfo.baseSuccessRate + 5);
@@ -379,4 +388,29 @@ export function calculateSwordSellValue(level: number, seriesId: string, crackCo
   }
 
   return Math.round(finalVal);
+}
+
+/** +5 이상 검을 자발적으로 추출할 때 받는 정수. */
+export function calculateEssenceExtraction(level: number): number {
+  if (!Number.isFinite(level) || level < 5) return 0;
+  return Math.floor(Math.pow(level, 1.5) * 0.7);
+}
+
+/** 현재 검의 누적 수리 횟수와 영구 할인을 반영한 실제 수리 비용. */
+export function calculateRepairCost(profile: UserGameProfile): number {
+  const stageInfo = SWORD_STAGES[profile.currentLevel];
+  if (!stageInfo) {
+    throw new RangeError(`지원하지 않는 강화 단계입니다: ${profile.currentLevel}`);
+  }
+
+  const repairCount = Number.isFinite(profile.currentWeapon.repairCount)
+    ? Math.max(0, Math.floor(profile.currentWeapon.repairCount))
+    : 0;
+  const repairMultiplier = 0.5 + repairCount * 0.5;
+  const savedRepairTechLevel = profile.upgrades.repair_tech || 0;
+  const repairTechLevel = Number.isFinite(savedRepairTechLevel)
+    ? Math.max(0, Math.floor(savedRepairTechLevel))
+    : 0;
+  const discount = Math.min(0.8, repairTechLevel * 0.08);
+  return Math.round(stageInfo.enhanceCost * repairMultiplier * (1 - discount));
 }

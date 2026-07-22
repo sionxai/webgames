@@ -19,10 +19,19 @@ declare global {
   }
 }
 
+export interface CombatAttackResult {
+  ok: boolean;
+  message: string;
+}
+
 interface CombatCanvasProps {
   profile: UserGameProfile;
   onNormalEnemyDefeated: (baseGold: number) => HuntResolution;
   onBossDefeated: (encounterId: string) => BossDefeatResult;
+  mode?: 'human' | 'agent';
+  autoAttackEnabled?: boolean;
+  onAgentAttackReady?: (requestAttack: (() => CombatAttackResult) | null) => void;
+  onRenderStateReady?: (renderState: (() => string) | null) => void;
 }
 
 interface CombatConfig {
@@ -497,18 +506,36 @@ function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '보상 처리 오류';
 }
 
-export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEnemyDefeated, onBossDefeated }) => {
+export const CombatCanvas: React.FC<CombatCanvasProps> = ({
+  profile,
+  onNormalEnemyDefeated,
+  onBossDefeated,
+  mode = 'human',
+  autoAttackEnabled = true,
+  onAgentAttackReady,
+  onRenderStateReady
+}) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imagesRef = useRef<Partial<Record<'arena' | 'imp' | 'swords' | 'bosses' | 'midbosses' | 'transcendence', HTMLImageElement>>>({});
   const callbacksRef = useRef({ onNormalEnemyDefeated, onBossDefeated });
   const profileRef = useRef(profile);
+  const autoAttackEnabledRef = useRef(autoAttackEnabled);
   const configRef = useRef<CombatConfig | null>(null);
   const hpRef = useRef(1);
   const rewardRef = useRef('아직 획득한 전투 보상이 없습니다.');
   const lastBossResultRef = useRef<BossDefeatResult | null>(null);
   const lastManualBossHitAtRef = useRef(Number.NEGATIVE_INFINITY);
   const reducedMotionRef = useRef(false);
-  const performHitRef = useRef<(damage: number, x: number, y: number, isTap: boolean) => void>(() => undefined);
+  const performHitRef = useRef<(
+    damage: number,
+    x: number,
+    y: number,
+    isTap: boolean
+  ) => CombatAttackResult>(() => ({ ok: false, message: '전투가 준비되지 않았습니다.' }));
+  const performAgentAttackRef = useRef<() => CombatAttackResult>(() => ({
+    ok: false,
+    message: 'AI 공격 입력이 준비되지 않았습니다.'
+  }));
   const visualRef = useRef<VisualState>({
     autoElapsed: 0,
     swingPhase: 0,
@@ -525,6 +552,7 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
 
   callbacksRef.current = { onNormalEnemyDefeated, onBossDefeated };
   profileRef.current = profile;
+  autoAttackEnabledRef.current = autoAttackEnabled;
 
   const currentStage = SWORD_STAGES[profile.currentLevel] || SWORD_STAGES[0];
   const series = SWORD_SERIES_LIST.find(item => item.id === profile.currentSeriesId) || SWORD_SERIES_LIST[0];
@@ -643,7 +671,8 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
 
   performHitRef.current = (damage, x, y, isTap) => {
     const activeConfig = configRef.current;
-    if (!activeConfig || activeConfig.destroyed) return;
+    if (!activeConfig) return { ok: false, message: '전투 상태를 읽을 수 없습니다.' };
+    if (activeConfig.destroyed) return { ok: false, message: '파괴된 검으로는 공격할 수 없습니다.' };
 
     const visual = visualRef.current;
     const reducedMotion = reducedMotionRef.current;
@@ -690,7 +719,9 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
     hpRef.current = nextHp;
     setMonsterHp(nextHp);
 
-    if (nextHp > 0) return;
+    if (nextHp > 0) {
+      return { ok: true, message: `${activeConfig.targetName}에게 ${damage.toLocaleString()} 피해를 입혔습니다.` };
+    }
 
     if (activeConfig.isBoss && activeConfig.encounterId !== null) {
       try {
@@ -787,6 +818,7 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
         };
         hpRef.current = activeConfig.normalMaxHp;
         setMonsterHp(activeConfig.normalMaxHp);
+        return { ok: true, message: `${activeConfig.targetName}을 처치하고 보상을 정산했습니다.` };
       } catch (error: unknown) {
         const rewardText = errorMessage(error);
         rewardRef.current = rewardText;
@@ -801,10 +833,11 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
         });
         hpRef.current = activeConfig.maxHp;
         setMonsterHp(activeConfig.maxHp);
+        return { ok: false, message: rewardText };
       }
-      return;
     }
 
+    let attackResult: CombatAttackResult;
     try {
       const hunt = callbacksRef.current.onNormalEnemyDefeated(activeConfig.baseGoldReward);
       const rewardText = hunt.bossRevealed
@@ -820,14 +853,20 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
         life: reducedMotion ? 560 : 1050,
         maxLife: reducedMotion ? 560 : 1050
       });
+      attackResult = {
+        ok: true,
+        message: hunt.bossRevealed ? '일반 적을 처치하고 보스 조우를 공개했습니다.' : '일반 적을 처치했습니다.'
+      };
     } catch (error: unknown) {
       const rewardText = errorMessage(error);
       rewardRef.current = rewardText;
       setLastReward(rewardText);
+      attackResult = { ok: false, message: rewardText };
     }
 
     hpRef.current = activeConfig.maxHp;
     setMonsterHp(activeConfig.maxHp);
+    return attackResult;
   };
 
   useEffect(() => {
@@ -868,11 +907,15 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
           visual.autoElapsed = 0;
           visual.swingPhase = 0;
         } else {
-          visual.autoElapsed += elapsedMs;
           visual.swingPhase += elapsedSeconds * 2.2;
-          if (visual.autoElapsed >= AUTO_ATTACK_INTERVAL) {
-            visual.autoElapsed %= AUTO_ATTACK_INTERVAL;
-            performHitRef.current(activeConfig.attackPower, TARGET_X, TARGET_Y, false);
+          if (autoAttackEnabledRef.current) {
+            visual.autoElapsed += elapsedMs;
+            if (visual.autoElapsed >= AUTO_ATTACK_INTERVAL) {
+              visual.autoElapsed %= AUTO_ATTACK_INTERVAL;
+              performHitRef.current(activeConfig.attackPower, TARGET_X, TARGET_Y, false);
+            }
+          } else {
+            visual.autoElapsed = 0;
           }
         }
 
@@ -1070,7 +1113,6 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
             atlasSource: activeConfig.bossAtlasSource
           } : null,
           bagSize: activeConfig?.encounterBagSize ?? null,
-          bossSlot: activeConfig?.encounterBossSlot ?? null,
           draws: activeConfig?.encounterCursor ?? 0,
           cycle: activeConfig?.encounterCycle ?? null,
           maxCardsRemaining: activeConfig?.encounterBagSize === null || activeConfig?.encounterBagSize === undefined
@@ -1117,29 +1159,41 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
     };
 
     window.render_game_to_text = renderGameToText;
+    onRenderStateReady?.(renderGameToText);
     return () => {
       if (window.render_game_to_text === renderGameToText) {
         delete window.render_game_to_text;
       }
+      onRenderStateReady?.(null);
     };
-  }, []);
+  }, [onRenderStateReady]);
 
-  const performManualHit = (x: number, y: number) => {
+  const performManualHit = (x: number, y: number): CombatAttackResult => {
     const activeConfig = configRef.current;
-    if (!activeConfig || activeConfig.destroyed) return;
+    if (!activeConfig) return { ok: false, message: '전투 상태를 읽을 수 없습니다.' };
+    if (activeConfig.destroyed) return { ok: false, message: '파괴된 검으로는 공격할 수 없습니다.' };
 
     const now = performance.now();
     if (
       activeConfig.isBoss
       && now - lastManualBossHitAtRef.current < BOSS_MANUAL_ATTACK_COOLDOWN
-    ) return;
+    ) return { ok: false, message: '보스 강타 재사용 대기 중입니다.' };
 
     if (activeConfig.isBoss) lastManualBossHitAtRef.current = now;
-    performHitRef.current(Math.round(activeConfig.attackPower * 1.5), x, y, true);
+    return performHitRef.current(Math.round(activeConfig.attackPower * 1.5), x, y, true);
   };
 
+  performAgentAttackRef.current = () => performManualHit(TARGET_X, TARGET_Y);
+
+  useEffect(() => {
+    if (mode !== 'agent' || !onAgentAttackReady) return;
+    const requestAttack = () => performAgentAttackRef.current();
+    onAgentAttackReady(requestAttack);
+    return () => onAgentAttackReady(null);
+  }, [mode, onAgentAttackReady]);
+
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    if (isDestroyed) return;
+    if (isDestroyed || mode === 'agent') return;
     const rectangle = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rectangle.left) * (CANVAS_WIDTH / rectangle.width);
     const y = (event.clientY - rectangle.top) * (CANVAS_HEIGHT / rectangle.height);
@@ -1149,7 +1203,7 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
   const handleKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     event.preventDefault();
-    if (!isDestroyed) {
+    if (!isDestroyed && mode !== 'agent') {
       performManualHit(TARGET_X, TARGET_Y);
     }
   };
@@ -1176,6 +1230,16 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
     : lastBossResult && (lastBossResult.levelSnapshot === 18 || lastBossResult.levelSnapshot === 19)
       ? '이 검·단계의 희귀 판정은 이미 완료됐습니다.'
       : '해당 단계에는 초월 희귀 판정이 없습니다.';
+  const userAttackDisabled = isDestroyed || mode === 'agent';
+  const combatHint = isDestroyed
+    ? '자동·탭 공격 및 보상 지급 중단'
+    : mode === 'agent'
+      ? autoAttackEnabled
+        ? 'AI 실행 중 · 자동 사냥 진행 · 관전자 직접 입력 차단'
+        : 'AI 관전 전용 · 시작 또는 계속 전까지 자동 사냥 중단'
+      : isBoss
+        ? '자동 공격 중 · 보스 강타는 0.9초마다 사용 가능'
+        : '자동 공격 중 · 화면을 탭하면 강타';
 
   return (
     <section className={`combat-card${isDestroyed ? ' is-destroyed' : ''}`} aria-labelledby="combat-title">
@@ -1254,22 +1318,20 @@ export const CombatCanvas: React.FC<CombatCanvasProps> = ({ profile, onNormalEne
           onPointerDown={handlePointerDown}
           onKeyDown={handleKeyDown}
           role="button"
-          tabIndex={isDestroyed ? -1 : 0}
-          aria-disabled={isDestroyed}
-          aria-label={isDestroyed ? '검이 파괴되어 전투가 중단되었습니다' : `${targetName} 공격하기`}
+          tabIndex={userAttackDisabled ? -1 : 0}
+          aria-disabled={userAttackDisabled}
+          aria-label={isDestroyed
+            ? '검이 파괴되어 전투가 중단되었습니다'
+            : mode === 'agent'
+              ? `${targetName} AI 관전 전용 전투 화면, 직접 공격 불가`
+              : `${targetName} 공격하기`}
         />
       </div>
 
       <div className="combat-feedback" role="status" aria-live="polite">
         <span className="combat-feedback__spark" aria-hidden="true">✦</span>
         <span>{lastReward}</span>
-        <small>
-          {isDestroyed
-            ? '자동·탭 공격 및 보상 지급 중단'
-            : isBoss
-              ? '자동 공격 중 · 보스 강타는 0.9초마다 사용 가능'
-              : '자동 공격 중 · 화면을 탭하면 강타'}
-        </small>
+        <small>{combatHint}</small>
       </div>
     </section>
   );

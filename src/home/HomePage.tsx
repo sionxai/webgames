@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GAMES, GameEntry } from './games';
 import { LegalDocsModal } from '../components/portal/LegalDocsModal';
-import { Gamepad2, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
+import { Bot, Gamepad2, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
 
 function GameCard({ game }: { game: GameEntry }) {
   if (game.status === 'coming-soon') {
@@ -27,7 +27,10 @@ function GameCard({ game }: { game: GameEntry }) {
         aria-hidden="true"
       />
       <div className="game-card__body">
-        <span className="genre-chip">{game.genre}</span>
+        <div className="game-card__chips">
+          <span className="genre-chip">{game.genre}</span>
+          {game.agentSupport && <span className="agent-support-chip"><Bot size={12} aria-hidden="true" /> AI PLAYABLE</span>}
+        </div>
         <h3>{game.title}</h3>
         <p>{game.description}</p>
         <span className="play-cta play-cta--small">
@@ -69,7 +72,14 @@ export function HomePage() {
             >
               <div className="hero-card__shade" aria-hidden="true" />
               <div className="hero-card__body">
-                <span className="genre-chip genre-chip--hero">{featured.genre}</span>
+                <div className="hero-card__chips">
+                  <span className="genre-chip genre-chip--hero">{featured.genre}</span>
+                  {featured.agentSupport && (
+                    <span className="agent-support-chip agent-support-chip--hero">
+                      <Bot size={13} aria-hidden="true" /> AI 관전 지원
+                    </span>
+                  )}
+                </div>
                 <h2 id="hero-title">{featured.title}</h2>
                 <p>{featured.tagline}</p>
                 <span className="play-cta">
