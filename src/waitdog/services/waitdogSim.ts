@@ -37,6 +37,29 @@ interface LastBehavior {
   room: RoomId;
 }
 
+export interface WaitdogUiEvent {
+  t: number;
+  type: string;
+  room: RoomId | null;
+  visibility: Exclude<Visibility, "hidden">;
+  detail: Record<string, unknown>;
+}
+
+export interface WaitdogUiView extends DogView {
+  day: number;
+  minuteOfDay: number;
+  owner: Pick<Required<OwnerState>, "room" | "focusLocked">;
+  roomVisibility: Record<RoomId, Visibility>;
+  blocked: boolean;
+  activePoop: Pick<ActivePoop, "room" | "location"> | null;
+  recentEvents: WaitdogUiEvent[];
+  poopRevision: number;
+}
+
+export interface WaitdogUiSim extends WaitdogSim {
+  getDogView(): WaitdogUiView;
+}
+
 const clamp = (value: number): number => {
   if (!Number.isFinite(value)) {
     return BALANCE.NUMBER.ZERO;
@@ -66,7 +89,7 @@ const requirePositiveVolume = (value: number, label: string): number => {
   return Math.min(BALANCE.NUMBER.ONE_HUNDRED, value);
 };
 
-class WaitdogSimulation implements WaitdogSim {
+class WaitdogSimulation implements WaitdogUiSim {
   private readonly rng: WaitdogRng;
   private day: number = BALANCE.NUMBER.ONE;
   private minuteOfDay: number = BALANCE.TIME.DAY_START;
@@ -97,6 +120,7 @@ class WaitdogSimulation implements WaitdogSim {
   private lastDigestedFeedAt: number | null = null;
   private readonly poopDelayHistory: number[] = [];
   private readonly log: EventLog[] = [];
+  private poopRevision = 0;
 
   constructor(seed: number, opts: WaitdogSimOptions = {}) {
     if (!Number.isFinite(seed)) {
@@ -350,15 +374,59 @@ class WaitdogSimulation implements WaitdogSim {
     return { kind, interrupted, success, attributedTo };
   }
 
-  getDogView(): DogView {
+  getDogView(): WaitdogUiView {
     const visibility = this.visibilityFor(this.dogRoom);
     const seen = visibility === "seen";
+    const roomVisibility: Record<RoomId, Visibility> = {
+      living: this.visibilityFor("living"),
+      kitchen: this.visibilityFor("kitchen"),
+      toilet: this.visibilityFor("toilet"),
+    };
+    const activePoop =
+      this.activePoop !== null &&
+        roomVisibility[this.activePoop.room] === "seen"
+        ? { room: this.activePoop.room, location: this.activePoop.location }
+        : null;
+    const recentEvents = this.log
+      .filter((event) => event.visibility !== "hidden")
+      .slice(-12)
+      .map<WaitdogUiEvent>((event) =>
+        event.visibility === "heard"
+          ? {
+            t: event.t,
+            type: "sound",
+            room: null,
+            visibility: "heard",
+            detail: {},
+          }
+          : {
+            t: event.t,
+            type: event.type,
+            room: event.room,
+            visibility: "seen",
+            detail: event.type === "action" &&
+                typeof event.detail.action === "string"
+              ? { action: event.detail.action }
+              : {},
+          }
+      );
     return {
       t: this.absoluteMinute,
       visibility,
       room: seen ? this.dogRoom : null,
       action: seen ? this.currentAction : null,
       observableStats: seen ? clone(this.stats) : {},
+      day: this.day,
+      minuteOfDay: this.minuteOfDay,
+      owner: {
+        room: this.owner.room,
+        focusLocked: this.owner.focusLocked,
+      },
+      roomVisibility,
+      blocked: this.blocked,
+      activePoop,
+      recentEvents,
+      poopRevision: this.poopRevision,
     };
   }
 
@@ -555,6 +623,7 @@ class WaitdogSimulation implements WaitdogSim {
       createdAt: this.absoluteMinute,
       location: onPad ? "pad" : "corner",
     };
+    this.poopRevision += 1;
     this.stats.bowelPressure = BALANCE.DIGESTION.PRESSURE_AFTER_POOP;
     this.resetPoopCycle();
     if (this.lastDigestedFeedAt !== null) {
@@ -878,6 +947,6 @@ class WaitdogSimulation implements WaitdogSim {
   }
 }
 
-export function createSim(seed: number, opts?: WaitdogSimOptions): WaitdogSim {
+export function createSim(seed: number, opts?: WaitdogSimOptions): WaitdogUiSim {
   return new WaitdogSimulation(seed, opts);
 }

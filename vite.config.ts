@@ -11,6 +11,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         home: 'index.html',
+        waitdog: 'games/waitdog/index.html',
         forge: 'games/forge/index.html'
       }
     }

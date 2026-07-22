@@ -96,3 +96,42 @@ npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts
 
 ## 완료 보고 형식 (30줄 이내)
 변경 파일 목록 / 계약 검사 실행 결과(마지막 10줄) / 구현 중 내린 해석·가정 / 미해결 사항.
+
+---
+
+# W2 스펙 — 메인 플레이 화면 (라이브 시뮬 UI)
+
+## 1. 목표
+W1 엔진을 구동하는 메인 플레이 화면 1개를 구현한다. `npm run dev` 후 `/games/waitdog/`에서 하루(07:00~23:00)를 배속 조절하며 플레이하고, 개입 8종을 실행할 수 있다.
+
+## 2. 변경 파일 (목록 밖 수정 금지)
+- 신규: `games/waitdog/index.html`(ko, 제목 "기다려, 멍! — WEBGAMES", forge 엔트리 참고), `src/waitdog/main.tsx`, `src/waitdog/App.tsx`, `src/waitdog/waitdog.css`, `src/waitdog/components/**`
+- 수정: `vite.config.ts` — input에 `waitdog: 'games/waitdog/index.html'` 1줄만
+- `src/waitdog/services/waitdogSim.ts` — **읽기 전용 view API 추가만 허용**(판정·학습 로직 수정 금지, 계약검사 계속 통과)
+
+## 3. 화면 계약 (기획 §25 레이아웃)
+- 상단바: Day n · 시계 · 배속(⏸/1x/2x/4x) · 보호자 위치와 focusLock 표시.
+- 중앙 하우스 뷰(Canvas): 방 3개(living 크게, kitchen·toilet 작게), 개·보호자·배설물(비사실적 단순 아이콘)·매트·펜스 렌더.
+- **정보 비대칭 계약(핵심)**: UI는 `getDogView()`만 사용한다(`getFullState` 사용 금지). `hidden` 상태의 방은 어둡게 가리고 개를 그리지 않는다(마지막 목격 위치에 '?' 마커). `heard`는 소리 아이콘만. focusLocked 중에는 하우스 뷰 전체를 반투명 가림 처리.
+- 우측/하단 관찰 패널: 최근 이벤트를 관찰 문장으로 표시(가시성 필터 적용, 예: "바닥 냄새를 자주 확인합니다"). 숫자 수치 노출 금지(기획 §25.2 — 행동카드는 문장 우선).
+- 개입 패널 8버튼: 부르기/매트/칭찬/간식/장난감/차단토글/큰소리/청소 — 각 버튼은 intervene() 호출, interrupted 반환 시 "집중 업무 중" 안내. 결과는 토스트가 아닌 관찰 패널 문장으로.
+- 보호자 컨트롤: 방 이동(방 클릭), 업무 시작/종료(focusLock 토글), 산책(30분)·급식·급수 버튼.
+- 틱 드라이버: 실시간 1초=게임 2분(1x). 2x/4x 배가, 일시정지. 배변 이벤트 발생 시 자동 1x 전환. `prefers-reduced-motion` 시 캔버스 애니메이션 최소화.
+- 반응형: 900px+ 가로형(캔버스 좌·패널 우), 미만 세로 1열. 가로 오버플로 금지.
+
+## 4. 제약
+- 새 의존성 금지. forge·home 파일 불수정. 다크 테마 대신 밝은 톤(기획 §6: 밝고 유머러스) — 팔레트는 waitdog.css에 CSS 변수로.
+- 하루 종료(23:00) 시 임시 오버레이("Day n 종료 — 하루 평가는 다음 단계") 표시 후 newDay() 진행 가능하면 충분(하루 평가 화면은 W3).
+
+## 5. 수용 기준
+```
+npm run build   # dist/games/waitdog/index.html 산출 포함 exit 0
+npx tsc -p tsconfig.waitdog-contract.json && node .waitdog-contract-dist/scripts/waitdog-contract.js
+```
+브라우저 수동 검증은 Claude가 수행한다(Codex는 빌드·타입·계약검사까지만).
+
+## 6. 금지사항
+- getFullState를 UI에서 호출, 시뮬 판정 로직·밸런스 상수 변경, 스펙 밖 파일 수정, git 커밋, dev 서버 백그라운드 상주 실행.
+
+## 완료 보고 형식 (30줄 이내)
+변경 파일 / 수용 커맨드 결과 마지막 5줄 / view API 추가 내역 / 해석·가정 / 미해결.
