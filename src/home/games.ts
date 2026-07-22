@@ -30,14 +30,15 @@ export const GAMES: GameEntry[] = [
     status: 'live'
   },
   {
-    id: 'coming-soon-1',
-    title: '두 번째 게임',
-    genre: '준비 중',
-    tagline: '순차 공개 예정',
-    description: '새로운 웹게임을 준비하고 있습니다. 곧 이 자리에서 만나요.',
-    path: '',
-    thumbnail: null,
-    status: 'coming-soon'
+    id: 'waitdog',
+    title: '기다려, 멍!',
+    genre: '반려견 행동교정 시뮬',
+    tagline: '내가 없을 때도 스스로 기다리는 강아지',
+    description:
+      '배변 신호를 관찰하고 올바른 타이밍에 보상하세요. 잘못 가르치면 나쁜 습관이, 잘 가르치면 자율 습관이 남는 7일 캠페인.',
+    path: '/games/waitdog/',
+    thumbnail: '/assets/images/waitdog-key-v1.webp',
+    status: 'live'
   },
   {
     id: 'coming-soon-2',
