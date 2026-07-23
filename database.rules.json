@@ -128,8 +128,9 @@
       "saves": {
         "$uid": {
           "$gameId": {
-            ".read": "auth != null && auth.uid === $uid",
-            ".write": "auth != null && auth.uid === $uid"
+            ".read": "auth != null && auth.uid === $uid && ($gameId === 'forge' || $gameId === 'waitdog')",
+            ".write": "auth != null && auth.uid === $uid && ($gameId === 'forge' || $gameId === 'waitdog')",
+            ".validate": "newData.hasChildren(['payload', 'updatedAt', 'schema']) && newData.child('payload').isString() && newData.child('payload').val().length < 200000 && newData.child('updatedAt').isNumber() && newData.child('schema').isNumber()"
           }
         }
       }

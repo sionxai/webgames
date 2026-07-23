@@ -18,6 +18,7 @@ import {
   recommendedTrainingGoal,
   saveProfile,
   updateOwnerResources,
+  WAITDOG_PROFILE_KEY,
   type CampaignPhase,
   type CampaignScheduleItem,
   type CampaignSettings,
@@ -37,6 +38,12 @@ import {
   type WaitdogUiView,
 } from "./services/waitdogSim";
 import type { InterventionKind, InterventionResult, RoomId } from "./types";
+import {
+  createCloudSave,
+  type CloudSaveRecord,
+  type CloudSaveState,
+} from "../lib/cloudSave";
+import { initPortalAuth, subscribePortalAuth } from "../lib/portalAuth";
 
 declare global {
   interface Window {
@@ -53,6 +60,11 @@ const STORAGE_LOAD_MESSAGE =
   "저장 기능에 문제가 있어 이번 진행을 안전하게 새로 시작했습니다.";
 const STORAGE_SAVE_MESSAGE =
   "저장 공간에 기록하지 못했습니다. 현재 화면의 진행은 계속됩니다.";
+const WAITDOG_LOCAL_SAVED_AT_KEY = "portal_cloud_save_local_updated_at_waitdog";
+const waitdogCloudSave = createCloudSave("waitdog", 2);
+const waitdogLocalExistedAtStartup =
+  typeof window !== "undefined" &&
+  window.localStorage.getItem(WAITDOG_PROFILE_KEY) !== null;
 
 interface InterventionMessage {
   id: number;
@@ -85,10 +97,11 @@ const freshBootstrap = (storageMessage: string | null): BootstrapState => {
   };
 };
 
-const bootstrap = (): BootstrapState => {
-  if (typeof window === "undefined") return freshBootstrap(null);
+const bootstrapFromStorage = (
+  storage: Pick<Storage, "getItem" | "setItem">,
+): BootstrapState => {
   try {
-    const loaded = loadProfile(window.localStorage);
+    const loaded = loadProfile(storage);
     if (!loaded.ok) return freshBootstrap(STORAGE_LOAD_MESSAGE);
     if (loaded.profile === null) return freshBootstrap(null);
     const sim = createSim(loaded.profile.settings.seed);
@@ -129,6 +142,65 @@ const bootstrap = (): BootstrapState => {
   } catch {
     return freshBootstrap(STORAGE_LOAD_MESSAGE);
   }
+};
+
+const bootstrap = (): BootstrapState => {
+  if (typeof window === "undefined") return freshBootstrap(null);
+  return bootstrapFromStorage(window.localStorage);
+};
+
+const bootstrapFromPayload = (payload: string): BootstrapState =>
+  bootstrapFromStorage({
+    getItem: (key) => key === WAITDOG_PROFILE_KEY ? payload : null,
+    setItem: () => undefined,
+  });
+
+const readLocalSavedAt = (): number | null => {
+  const value = Number(window.localStorage.getItem(WAITDOG_LOCAL_SAVED_AT_KEY));
+  return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const formatSavedAt = (value: number | null): string =>
+  value === null
+    ? "시각 정보 없음"
+    : new Intl.DateTimeFormat("ko-KR", {
+      dateStyle: "short",
+      timeStyle: "short",
+    }).format(value);
+
+const summarizeWaitdogPayload = (payload: string): string => {
+  try {
+    const parsed = JSON.parse(payload) as {
+      day?: unknown;
+      settings?: { infinite?: unknown };
+    };
+    const day = typeof parsed.day === "number"
+      ? Math.max(1, Math.floor(parsed.day))
+      : 1;
+    return `Day ${day} · ${parsed.settings?.infinite === true ? "무한" : "캠페인"}`;
+  } catch {
+    return "진행도 정보를 읽을 수 없음";
+  }
+};
+
+const cloudBadgeLabel = (state: CloudSaveState): string => {
+  if (state === "synced") return "☁ 저장됨";
+  if (state === "loading") return "동기화 중";
+  if (state === "offline" || state === "error") return "로컬 저장 중";
+  if (state === "conflict") return "기록 선택 필요";
+  return "게스트 — 이 기기에만 저장";
+};
+
+const cloudBadgeTitle = (state: CloudSaveState): string => {
+  if (state === "offline") {
+    return "네트워크 연결을 확인해 주세요. 진행도는 이 기기에 계속 저장됩니다.";
+  }
+  if (state === "error") {
+    return "클라우드 저장을 사용할 수 없습니다. 진행도는 이 기기에 계속 저장됩니다.";
+  }
+  if (state === "idle") return "게스트 기록은 이 기기에만 저장됩니다.";
+  if (state === "conflict") return "사용할 진행 기록을 선택해 주세요.";
+  return "계정 진행도를 클라우드와 동기화합니다.";
 };
 
 const activeScheduleAt = (
@@ -215,6 +287,13 @@ export default function App() {
     ? [{ id: 1, text: initial.storageMessage }]
     : []);
   const [skipping, setSkipping] = useState(false);
+  const [cloudState, setCloudState] = useState<CloudSaveState>(
+    () => waitdogCloudSave.getState(),
+  );
+  const [cloudConflict, setCloudConflict] = useState<CloudSaveRecord | null>(null);
+  const [localSavedAt, setLocalSavedAt] = useState<number | null>(
+    () => readLocalSavedAt(),
+  );
 
   const phaseRef = useRef(phase);
   const viewRef = useRef(view);
@@ -227,6 +306,12 @@ export default function App() {
   const automationRemainderRef = useRef(0);
   const messageIdRef = useRef(initial.storageMessage ? 1 : 0);
   const storageNoticeRef = useRef(initial.storageMessage !== null);
+  const hasMeaningfulLocalRef = useRef(waitdogLocalExistedAtStartup);
+  const initialPersistencePendingRef = useRef(true);
+  const skipNextSaveEffectRef = useRef(false);
+  const syncSequenceRef = useRef(0);
+  const syncedUidRef = useRef<string | null>(null);
+  const retryCloudSyncRef = useRef<() => void>(() => undefined);
   phaseRef.current = phase;
   viewRef.current = view;
   speedRef.current = speed;
@@ -310,6 +395,129 @@ export default function App() {
     setSpeed(next);
     commitSettings({ ...settingsRef.current, speed: next });
   };
+
+  const applyCloudPayload = (payload: string): boolean => {
+    const next = bootstrapFromPayload(payload);
+    if (next.storageMessage !== null) return false;
+
+    const nextView = next.sim.getDogView();
+    try {
+      window.localStorage.setItem(WAITDOG_PROFILE_KEY, payload);
+    } catch {
+      notifyStorageOnce(STORAGE_SAVE_MESSAGE);
+      return false;
+    }
+
+    skipNextSaveEffectRef.current = true;
+    hasMeaningfulLocalRef.current = true;
+    simRef.current = next.sim;
+    phaseRef.current = next.phase;
+    viewRef.current = nextView;
+    speedRef.current = next.settings.speed;
+    settingsRef.current = next.settings;
+    resourcesRef.current = next.resources;
+    ownerAwayRef.current = next.sim.serialize().owner.away;
+    skippingRef.current = false;
+    externalClockRef.current = false;
+    automationRemainderRef.current = 0;
+    setPhase(next.phase);
+    setView(nextView);
+    setSpeed(next.settings.speed);
+    setSettings(next.settings);
+    setResources(next.resources);
+    setHypotheses(next.hypotheses);
+    setOwnerAway(ownerAwayRef.current);
+    setLastSeenRoom(nextView.visibility === "seen" ? nextView.room : null);
+    setInterventionMessages([]);
+    setSkipping(false);
+    storageNoticeRef.current = false;
+    messageIdRef.current = 0;
+    return true;
+  };
+
+  useEffect(() => {
+    const unsubscribeCloud = waitdogCloudSave.subscribe(setCloudState);
+    const syncAccount = (uid: string): void => {
+      const sequence = ++syncSequenceRef.current;
+      void (async () => {
+        const cloudRecord = await waitdogCloudSave.pull();
+        if (
+          sequence !== syncSequenceRef.current ||
+          syncedUidRef.current !== uid
+        ) return;
+
+        const localPayload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
+        if (!cloudRecord) {
+          if (
+            localPayload !== null &&
+            waitdogCloudSave.getState() === "loading"
+          ) {
+            waitdogCloudSave.push(localPayload);
+            await waitdogCloudSave.flush();
+          }
+          return;
+        }
+
+        if (localPayload === null || !hasMeaningfulLocalRef.current) {
+          if (applyCloudPayload(cloudRecord.payload)) {
+            try {
+              window.localStorage.setItem(
+                WAITDOG_LOCAL_SAVED_AT_KEY,
+                String(cloudRecord.updatedAt),
+              );
+              setLocalSavedAt(cloudRecord.updatedAt);
+            } catch {
+              // Companion metadata failure must not block profile application.
+            }
+          } else {
+            setCloudConflict(cloudRecord);
+          }
+        }
+
+        const currentPayload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
+        setCloudConflict(
+          currentPayload === cloudRecord.payload ? null : cloudRecord,
+        );
+        if (currentPayload !== null) waitdogCloudSave.push(currentPayload);
+      })();
+    };
+
+    retryCloudSyncRef.current = () => {
+      const uid = syncedUidRef.current;
+      if (uid) syncAccount(uid);
+    };
+    const handleOnline = (): void => {
+      if (
+        waitdogCloudSave.getState() === "offline" ||
+        waitdogCloudSave.getState() === "error"
+      ) {
+        retryCloudSyncRef.current();
+      }
+    };
+    window.addEventListener("online", handleOnline);
+
+    initPortalAuth();
+    const unsubscribeAuth = subscribePortalAuth((authState) => {
+      if (authState.status !== "google") {
+        syncedUidRef.current = null;
+        setCloudConflict(null);
+        return;
+      }
+      if (syncedUidRef.current === authState.user.uid) return;
+
+      syncedUidRef.current = authState.user.uid;
+      syncAccount(authState.user.uid);
+    });
+
+    return () => {
+      ++syncSequenceRef.current;
+      syncedUidRef.current = null;
+      retryCloudSyncRef.current = () => undefined;
+      window.removeEventListener("online", handleOnline);
+      unsubscribeAuth();
+      unsubscribeCloud();
+    };
+  }, []);
 
   const expireTrainingAt = (absoluteMinute: number) => {
     const progress = settingsRef.current.training;
@@ -557,6 +765,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (skipNextSaveEffectRef.current) {
+      skipNextSaveEffectRef.current = false;
+      initialPersistencePendingRef.current = false;
+      return;
+    }
+
+    const wasInitialPersistence = initialPersistencePendingRef.current;
+    initialPersistencePendingRef.current = false;
+    const previousPayload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
     try {
       const result = saveProfile(window.localStorage, {
         day: view.day,
@@ -566,7 +783,30 @@ export default function App() {
         hypotheses,
         settings,
       });
-      if (!result.ok) notifyStorageOnce(STORAGE_SAVE_MESSAGE);
+      if (!result.ok) {
+        notifyStorageOnce(STORAGE_SAVE_MESSAGE);
+        return;
+      }
+
+      const payload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
+      if (
+        wasInitialPersistence ||
+        payload === null ||
+        payload === previousPayload
+      ) return;
+
+      hasMeaningfulLocalRef.current = true;
+      const savedAt = Date.now();
+      try {
+        window.localStorage.setItem(
+          WAITDOG_LOCAL_SAVED_AT_KEY,
+          String(savedAt),
+        );
+        setLocalSavedAt(savedAt);
+      } catch {
+        // Companion metadata failure must not interrupt the existing local save.
+      }
+      waitdogCloudSave.push(payload);
     } catch {
       notifyStorageOnce(STORAGE_SAVE_MESSAGE);
     }
@@ -955,18 +1195,93 @@ export default function App() {
     commitPhase("morning");
   };
 
+  const handleUseLocalSave = () => {
+    waitdogCloudSave.resolveConflict("local");
+    setCloudConflict(null);
+  };
+
+  const handleUseCloudSave = () => {
+    if (cloudConflict === null || !applyCloudPayload(cloudConflict.payload)) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(
+        WAITDOG_LOCAL_SAVED_AT_KEY,
+        String(cloudConflict.updatedAt),
+      );
+      setLocalSavedAt(cloudConflict.updatedAt);
+    } catch {
+      // Companion metadata failure must not block profile application.
+    }
+    waitdogCloudSave.resolveConflict("cloud");
+    setCloudConflict(null);
+  };
+
+  const cloudSaveUi = (
+    <aside className="waitdog-cloud-save" aria-label="클라우드 저장 상태">
+      {cloudState === "offline" || cloudState === "error" ? (
+        <button
+          type="button"
+          className={`waitdog-cloud-badge waitdog-cloud-badge--${cloudState}`}
+          title={`${cloudBadgeTitle(cloudState)} 눌러서 다시 시도할 수 있습니다.`}
+          onClick={() => retryCloudSyncRef.current()}
+        >
+          {cloudBadgeLabel(cloudState)}
+        </button>
+      ) : (
+        <span
+          className={`waitdog-cloud-badge waitdog-cloud-badge--${cloudState}`}
+          title={cloudBadgeTitle(cloudState)}
+          role="status"
+        >
+          {cloudBadgeLabel(cloudState)}
+        </span>
+      )}
+      {cloudState === "conflict" && cloudConflict && (
+        <section className="waitdog-cloud-conflict">
+          <p>어느 보호자 기록을 이어갈까요?</p>
+          <div className="waitdog-cloud-conflict__options">
+            <div>
+              <strong>이 기기</strong>
+              <span>{formatSavedAt(localSavedAt)}</span>
+              <small>
+                Day {view.day} · {settings.infinite ? "무한" : "캠페인"}
+              </small>
+            </div>
+            <div>
+              <strong>클라우드</strong>
+              <span>{formatSavedAt(cloudConflict.updatedAt)}</span>
+              <small>{summarizeWaitdogPayload(cloudConflict.payload)}</small>
+            </div>
+          </div>
+          <div className="waitdog-cloud-conflict__actions">
+            <button type="button" onClick={handleUseLocalSave}>
+              이 기기 기록 사용
+            </button>
+            <button type="button" onClick={handleUseCloudSave}>
+              클라우드 기록 사용
+            </button>
+          </div>
+        </section>
+      )}
+    </aside>
+  );
+
   if (phase === "morning") {
     return (
-      <MorningPlan
-        day={view.day}
-        schedule={proposedSchedule}
-        prediction={morningPrediction}
-        tip={curriculumTip(view.day, settings.infinite)}
-        selectedGoal={morningTraining.goal}
-        recommendedGoal={recommendedGoal}
-        onGoalChange={handleGoalChange}
-        onStart={handleStartDay}
-      />
+      <>
+        {cloudSaveUi}
+        <MorningPlan
+          day={view.day}
+          schedule={proposedSchedule}
+          prediction={morningPrediction}
+          tip={curriculumTip(view.day, settings.infinite)}
+          selectedGoal={morningTraining.goal}
+          recommendedGoal={recommendedGoal}
+          onGoalChange={handleGoalChange}
+          onStart={handleStartDay}
+        />
+      </>
     );
   }
 
@@ -974,28 +1289,35 @@ export default function App() {
   const narrative = buildDayNarrative(morning, sim.serialize());
   if (phase === "review") {
     return (
-      <DayReview
-        day={view.day}
-        narrative={narrative}
-        selectedHypothesis={view.day === 5 ? hypotheses[0] ?? null : null}
-        onHypothesis={handleHypothesis}
-        onContinue={handleReviewContinue}
-      />
+      <>
+        {cloudSaveUi}
+        <DayReview
+          day={view.day}
+          narrative={narrative}
+          selectedHypothesis={view.day === 5 ? hypotheses[0] ?? null : null}
+          onHypothesis={handleHypothesis}
+          onContinue={handleReviewContinue}
+        />
+      </>
     );
   }
 
   if (phase === "campaignEnd") {
     return (
-      <CampaignEnd
-        outcomes={buildCampaignOutcomes(settings.daySummaries)}
-        onInfinite={handleInfinite}
-        onNewCampaign={handleNewCampaign}
-      />
+      <>
+        {cloudSaveUi}
+        <CampaignEnd
+          outcomes={buildCampaignOutcomes(settings.daySummaries)}
+          onInfinite={handleInfinite}
+          onNewCampaign={handleNewCampaign}
+        />
+      </>
     );
   }
 
   return (
     <main className="waitdog-page">
+      {cloudSaveUi}
       <TopBar
         day={view.day}
         minuteOfDay={view.minuteOfDay}

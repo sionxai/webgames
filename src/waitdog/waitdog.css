@@ -60,6 +60,124 @@ canvas:focus-visible {
   overflow-x: hidden;
 }
 
+.waitdog-cloud-save {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  width: min(1440px, 100%);
+  margin: 0 auto -10px;
+  padding: 12px clamp(14px, 3vw, 42px) 0;
+}
+
+.waitdog-page > .waitdog-cloud-save {
+  width: 100%;
+  margin: -10px 0 10px;
+  padding: 0;
+}
+
+.waitdog-cloud-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 9px;
+  color: var(--wd-muted);
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(47, 98, 88, 0.24);
+  border-radius: 999px;
+  box-shadow: 0 5px 14px rgba(49, 87, 76, 0.1);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.waitdog-cloud-badge--synced {
+  color: var(--wd-mint-dark);
+  border-color: rgba(47, 98, 88, 0.4);
+}
+
+.waitdog-cloud-badge--loading {
+  color: var(--wd-blue);
+}
+
+.waitdog-cloud-badge--offline,
+.waitdog-cloud-badge--error,
+.waitdog-cloud-badge--conflict {
+  color: var(--wd-coral-dark);
+  border-color: rgba(181, 72, 60, 0.38);
+}
+
+.waitdog-cloud-conflict {
+  display: grid;
+  gap: 10px;
+  width: min(440px, 100%);
+  padding: 13px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 2px solid rgba(181, 72, 60, 0.3);
+  border-radius: 16px;
+  box-shadow: var(--wd-shadow);
+}
+
+.waitdog-cloud-conflict > p {
+  margin: 0;
+  color: var(--wd-ink);
+  font-size: 0.86rem;
+  font-weight: 900;
+}
+
+.waitdog-cloud-conflict__options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.waitdog-cloud-conflict__options > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  background: #f4f9f5;
+  border: 1px solid rgba(47, 98, 88, 0.16);
+  border-radius: 11px;
+}
+
+.waitdog-cloud-conflict__options strong {
+  font-size: 0.76rem;
+}
+
+.waitdog-cloud-conflict__options span,
+.waitdog-cloud-conflict__options small {
+  color: var(--wd-muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.waitdog-cloud-conflict__options small {
+  color: var(--wd-coral-dark);
+  font-weight: 800;
+}
+
+.waitdog-cloud-conflict__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.waitdog-cloud-conflict__actions button {
+  flex: 1;
+  min-height: 38px;
+  padding: 7px;
+  color: white;
+  background: var(--wd-mint-dark);
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.waitdog-cloud-conflict__actions button:last-child {
+  background: var(--wd-coral-dark);
+}
+
 .top-bar,
 .house-card,
 .panel-card {
