@@ -201,8 +201,8 @@ const AUTO_STOP_REASON_LABELS = {
   other: '중지'
 };
 const AUTO_SESSION_STORAGE_PREFIX = 'gacha:autoSession:';
-const FIRST_BOSS_INTRO_VIDEO_URL = 'https://firebasestorage.googleapis.com/v0/b/gacha-870fa.firebasestorage.app/o/kling_20250920_Image_to_Video__3595_0.mp4?alt=media&token=6ab78f59-2753-4c22-bfd0-14d21739b6f0';
-const TIGER_KILL_GIF_URL = 'https://firebasestorage.googleapis.com/v0/b/gacha-870fa.firebasestorage.app/o/new4.gif?alt=media&token=3d395ec5-a922-45e0-9486-524b0a3f07aa';
+const FIRST_BOSS_INTRO_VIDEO_URL = './assets/motion/boss-intro.mp4';
+const TIGER_KILL_GIF_URL = './assets/motion/kill-burst.gif';
 const ULTIMATE_TEXT_DURATION_MS = 1000;
 const PLAYER_ULTIMATE_DEFAULT_CHANCE = 0.05;
 const BOSS_IDS = ['boss150', 'boss300', 'boss450', 'boss550', 'boss800'];
