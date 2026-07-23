@@ -177,6 +177,67 @@ export const BALANCE = {
     TOY_BOREDOM_FACTOR: 0.006,
     TOY_FOOD_DRIVE_FACTOR: 0.003,
   },
+  SPATIAL: {
+    MIN_COORDINATE: 0,
+    MAX_COORDINATE: 1,
+    RANDOM_TARGET_MIN: 0.14,
+    RANDOM_TARGET_MAX: 0.86,
+    SPEED_PER_MINUTE: 0.18,
+    AMBIENT_MIN_INTERVAL_MINUTES: 12,
+    AMBIENT_MAX_INTERVAL_MINUTES: 24,
+    NEED_THRESHOLD: {
+      HUNGER: 68,
+      THIRST: 68,
+      FATIGUE: 70,
+      BOREDOM: 62,
+    },
+    INITIAL: {
+      living: { x: 0.48, y: 0.56 },
+      kitchen: { x: 0.5, y: 0.55 },
+      toilet: { x: 0.5, y: 0.55 },
+    },
+    TARGET: {
+      MAT: {
+        living: { x: 0.24, y: 0.72 },
+        kitchen: { x: 0.22, y: 0.72 },
+        toilet: { x: 0.22, y: 0.72 },
+      },
+      FOOD: { room: "kitchen", x: 0.3, y: 0.25 },
+      WATER: { room: "kitchen", x: 0.72, y: 0.28 },
+      REST: { room: "living", x: 0.22, y: 0.78 },
+      PLAY: { room: "living", x: 0.7, y: 0.7 },
+      POOP_PAD: { room: "toilet", x: 0.72, y: 0.7 },
+      CORNER: {
+        living: { x: 0.82, y: 0.82 },
+        kitchen: { x: 0.82, y: 0.82 },
+        toilet: { x: 0.82, y: 0.82 },
+      },
+    },
+    TRANSITION: {
+      living: {
+        kitchen: {
+          exit: { x: 0.97, y: 0.25 },
+          entry: { x: 0.03, y: 0.72 },
+        },
+        toilet: {
+          exit: { x: 0.97, y: 0.75 },
+          entry: { x: 0.03, y: 0.28 },
+        },
+      },
+      kitchen: {
+        living: {
+          exit: { x: 0.03, y: 0.72 },
+          entry: { x: 0.97, y: 0.25 },
+        },
+      },
+      toilet: {
+        living: {
+          exit: { x: 0.03, y: 0.28 },
+          entry: { x: 0.97, y: 0.75 },
+        },
+      },
+    },
+  },
   PREDICTION: {
     BASE_CONFIDENCE: 20,
     QUEUE_CONFIDENCE: 30,

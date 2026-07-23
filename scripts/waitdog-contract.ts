@@ -17,6 +17,7 @@ import {
 import {
   createSim,
   type WaitdogSnapshot,
+  type WaitdogSnapshotV1,
 } from "../src/waitdog/services/waitdogSim";
 import type {
   DecisionTrace,
@@ -514,6 +515,20 @@ assert(
   visibility.getDogView().visibility === "hidden",
   "non-adjacent room was not hidden",
 );
+assert(
+  Object.values(visibility.getDogView().spatial).every((value) =>
+    value === null
+  ),
+  "hidden dog view leaked spatial state",
+);
+visibility.setOwner({ room: "living", focusLocked: false });
+assert(
+  visibility.getDogView().visibility === "heard" &&
+    Object.values(visibility.getDogView().spatial).every((value) =>
+      value === null
+    ),
+  "heard dog view leaked spatial state",
+);
 visibility.setOwner({ room: "kitchen", focusLocked: true });
 assert(
   visibility.intervene("block").interrupted,
@@ -528,9 +543,139 @@ try {
 }
 assert(invalidInputRejected, "NaN minutes were accepted");
 
+const initialSpatialView = createSim(7100);
+const initialSpatialFull = initialSpatialView.getFullState().spatial;
+const initialSpatialPublic = initialSpatialView.getDogView().spatial;
+assert(
+  initialSpatialPublic.room === initialSpatialFull.room &&
+    initialSpatialPublic.x === initialSpatialFull.x &&
+    initialSpatialPublic.y === initialSpatialFull.y &&
+    initialSpatialPublic.targetRoom === initialSpatialFull.targetRoom &&
+    initialSpatialPublic.targetX === initialSpatialFull.targetX &&
+    initialSpatialPublic.targetY === initialSpatialFull.targetY &&
+    initialSpatialPublic.activity === initialSpatialFull.activity &&
+    initialSpatialPublic.moving === initialSpatialFull.moving,
+  "seen UI spatial state differed from full state",
+);
+
+const spatialTrace = (seed: number) => {
+  const sim = createSim(seed);
+  const positions = [];
+  for (let minute = 0; minute < 180; minute += 1) {
+    sim.advanceMinutes(1);
+    positions.push(sim.getFullState().spatial);
+  }
+  return {
+    positions,
+    ambient: sim.getLog().filter((event) => event.type === "ambientAction"),
+    snapshot: sim.serialize(),
+  };
+};
+
+const spatialA = spatialTrace(7101);
+const spatialB = spatialTrace(7101);
+assert(
+  JSON.stringify(spatialA) === JSON.stringify(spatialB),
+  "same seed spatial trace differs",
+);
+assert(
+  spatialA.ambient.length > 0 &&
+    spatialA.ambient[0].t - BALANCE.TIME.DAY_START <= 45,
+  "ambient action did not occur within 45 minutes",
+);
+assert(
+  spatialA.ambient.slice(1).every((event, index) =>
+    event.t - spatialA.ambient[index].t >=
+      BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES
+  ),
+  "ambient actions violated the minimum interval",
+);
+const ambientDestinations = new Set(
+  spatialA.ambient.map((event) =>
+    `${String(event.detail.targetRoom)}:${String(event.detail.targetX)}:${
+      String(event.detail.targetY)
+    }`
+  ),
+);
+assert(
+  ambientDestinations.size >= 2,
+  "180-minute ambient trace lacked distinct destinations",
+);
+assert(
+  spatialA.positions.every((spatial) =>
+    [spatial.x, spatial.y, spatial.targetX, spatial.targetY].every((value) =>
+      value >= BALANCE.SPATIAL.MIN_COORDINATE &&
+      value <= BALANCE.SPATIAL.MAX_COORDINATE
+    )
+  ),
+  "spatial coordinate escaped the normalized room bounds",
+);
+assert(
+  spatialA.positions.some((spatial, index) =>
+    index > 0 &&
+    (spatial.x !== spatialA.positions[index - 1].x ||
+      spatial.y !== spatialA.positions[index - 1].y ||
+      spatial.room !== spatialA.positions[index - 1].room)
+  ),
+  "dog position did not move during the 180-minute trace",
+);
+assert(
+  spatialA.positions.every((spatial) =>
+    !(
+      (spatial.room === "kitchen" && spatial.targetRoom === "toilet") ||
+      (spatial.room === "toilet" && spatial.targetRoom === "kitchen")
+    )
+  ),
+  "spatial route attempted a direct kitchen-toilet transition",
+);
+assert(
+  spatialA.ambient.every((event) =>
+    event.detail.source === "ambient" &&
+    event.type !== "wander"
+  ),
+  "ambient wander was indistinguishable from a poop signal",
+);
+assert(
+  spatialA.ambient.some((event) =>
+    event.detail.activity === "seekFood" &&
+    event.detail.targetRoom === BALANCE.SPATIAL.TARGET.FOOD.room &&
+    event.detail.targetX === BALANCE.SPATIAL.TARGET.FOOD.x &&
+    event.detail.targetY === BALANCE.SPATIAL.TARGET.FOOD.y
+  ),
+  "rising hunger did not select the food destination",
+);
+
+const routedSpatial = createSim(7102, { dogRoom: "toilet" });
+const routedSnapshot = routedSpatial.serialize();
+routedSnapshot.stats.hunger = 100;
+routedSnapshot.spatial.nextActivityAt = routedSnapshot.absoluteMinute + 1;
+routedSpatial.restore(routedSnapshot);
+routedSpatial.advanceMinutes(1);
+const routedStart = routedSpatial.getFullState().spatial;
+assert(
+  routedStart.activity === "seekFood" &&
+    routedStart.targetRoom === "living" &&
+    routedStart.route.length === 1 &&
+    routedStart.route[0].room === "kitchen",
+  "toilet-to-kitchen goal did not route through living",
+);
+let routedThroughLiving = false;
+for (let minute = 0; minute < 30; minute += 1) {
+  routedSpatial.advanceMinutes(1);
+  if (routedSpatial.getFullState().spatial.room === "living") {
+    routedThroughLiving = true;
+  }
+}
+assert(routedThroughLiving, "routed movement never entered living");
+assert(
+  routedSpatial.getFullState().spatial.room === "kitchen",
+  "routed movement did not reach the kitchen destination",
+);
+
 const roundtripSource = createSim(8101);
 roundtripSource.feed(70);
 roundtripSource.advanceMinutes(210);
+assert(roundtripSource.serialize().version === 2, "serialize did not emit v2");
 const detachedSnapshot = roundtripSource.serialize();
 detachedSnapshot.log.push({
   t: 0,
@@ -567,6 +712,56 @@ assert(
     JSON.stringify(roundtripRestored.serialize()),
   "W3 serialize restore state or RNG continuation differs",
 );
+assert(
+  JSON.stringify(roundtripSource.getFullState().spatial) ===
+    JSON.stringify(roundtripRestored.getFullState().spatial),
+  "v2 roundtrip lost spatial continuation",
+);
+
+const v2ForMigration = createSim(8104).serialize();
+const {
+  version: _v2Version,
+  spatial: _v2Spatial,
+  opportunityRevision: _v2OpportunityRevision,
+  visibleOpportunityRevision: _v2VisibleOpportunityRevision,
+  ...legacyFields
+} = v2ForMigration;
+const legacySnapshot: WaitdogSnapshotV1 = {
+  version: 1,
+  ...legacyFields,
+};
+const migratedV1 = createSim(0);
+migratedV1.restore(legacySnapshot);
+const migratedSnapshot = migratedV1.serialize();
+assert(migratedSnapshot.version === 2, "v1 snapshot did not migrate to v2");
+assert(
+  migratedSnapshot.spatial.room === legacySnapshot.dogRoom &&
+    migratedSnapshot.spatial.x ===
+      BALANCE.SPATIAL.INITIAL[legacySnapshot.dogRoom].x &&
+    migratedSnapshot.spatial.y ===
+      BALANCE.SPATIAL.INITIAL[legacySnapshot.dogRoom].y,
+  "v1 migration did not create the safe default spatial state",
+);
+const {
+  version: _migratedVersion,
+  spatial: _migratedSpatial,
+  opportunityRevision: _migratedOpportunityRevision,
+  visibleOpportunityRevision: _migratedVisibleOpportunityRevision,
+  ...migratedLegacyFields
+} = migratedSnapshot;
+assert(
+  JSON.stringify(migratedLegacyFields) === JSON.stringify(legacyFields),
+  "v1 migration changed legacy simulation data",
+);
+const migratedContinuation = createSim(1);
+migratedContinuation.restore(legacySnapshot);
+migratedV1.advanceMinutes(90);
+migratedContinuation.advanceMinutes(90);
+assert(
+  JSON.stringify(migratedV1.serialize()) ===
+    JSON.stringify(migratedContinuation.serialize()),
+  "v1 migration continuation was not deterministic",
+);
 
 const largeMealSource = createSim(8103);
 largeMealSource.feed(150);
@@ -601,6 +796,135 @@ assert(malformedRejected, "W3 malformed snapshot was accepted");
 assert(
   JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
   "W3 malformed restore partially polluted live state",
+);
+const malformedSpatial = {
+  ...beforeInvalidRestore,
+  spatial: {
+    ...beforeInvalidRestore.spatial,
+    targetX: BALANCE.SPATIAL.MAX_COORDINATE + 1,
+  },
+};
+let malformedSpatialRejected = false;
+try {
+  atomicRestore.restore(malformedSpatial);
+} catch {
+  malformedSpatialRejected = true;
+}
+assert(malformedSpatialRejected, "malformed v2 spatial state was accepted");
+assert(
+  JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
+  "malformed spatial restore partially polluted live state",
+);
+let extraV2Rejected = false;
+try {
+  atomicRestore.restore({ ...beforeInvalidRestore, unexpected: true });
+} catch {
+  extraV2Rejected = true;
+}
+assert(extraV2Rejected, "v2 snapshot with an extra key was accepted");
+assert(
+  JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
+  "extra-key v2 restore partially polluted live state",
+);
+let extraV1Rejected = false;
+try {
+  atomicRestore.restore({ ...legacySnapshot, unexpected: true });
+} catch {
+  extraV1Rejected = true;
+}
+assert(extraV1Rejected, "v1 snapshot with an extra key was accepted");
+assert(
+  JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
+  "extra-key v1 restore partially polluted live state",
+);
+
+const seenOpportunity = createSim(8106);
+const seenOpportunitySnapshot = seenOpportunity.serialize();
+seenOpportunitySnapshot.spatial.nextActivityAt = BALANCE.TIME.DAY_END;
+seenOpportunity.restore(seenOpportunitySnapshot);
+seenOpportunity.feed(100);
+poopEvent(seenOpportunity, 360);
+const seenImportantEvents = seenOpportunity.getLog().filter((event) =>
+  ["sniffFloor", "circle", "wander", "poop"].includes(event.type) &&
+  event.visibility === "seen"
+);
+assert(
+  seenOpportunity.getDogView().opportunityRevision ===
+    seenImportantEvents.length &&
+    seenOpportunity.getDogView().opportunityRevision >= 3,
+  "seen opportunities did not advance the UI revision",
+);
+
+const heardOpportunity = createSim(8108, { dogRoom: "toilet" });
+heardOpportunity.setOwner({ room: "living", focusLocked: false });
+const heardOpportunitySnapshot = heardOpportunity.serialize();
+heardOpportunitySnapshot.spatial.nextActivityAt = BALANCE.TIME.DAY_END;
+heardOpportunity.restore(heardOpportunitySnapshot);
+heardOpportunity.feed(100);
+poopEvent(heardOpportunity, 360);
+const heardImportantEvents = heardOpportunity.getLog().filter((event) =>
+  ["sniffFloor", "circle", "wander", "poop"].includes(event.type)
+);
+assert(
+  heardImportantEvents.length >= 4 &&
+    heardImportantEvents.every((event) => event.visibility === "heard"),
+  "heard opportunity scenario did not stay heard",
+);
+assert(
+  heardOpportunity.getDogView().opportunityRevision ===
+      heardImportantEvents.length &&
+    heardOpportunity.getDogView().opportunityRevision >= 4,
+  "heard opportunities did not advance the observable UI revision",
+);
+
+const matSpatial = createSim(8107);
+let matSpatialSuccess = false;
+for (let attempt = 0; attempt < 12 && !matSpatialSuccess; attempt += 1) {
+  matSpatialSuccess = matSpatial.intervene("matCommand").success;
+}
+const matSpatialState = matSpatial.getFullState().spatial;
+assert(matSpatialSuccess, "spatial mat command never succeeded");
+assert(
+  matSpatialState.activity === "moveToMat" &&
+    matSpatialState.targetRoom === matSpatialState.room &&
+    matSpatialState.targetX ===
+      BALANCE.SPATIAL.TARGET.MAT[matSpatialState.room].x &&
+    matSpatialState.targetY ===
+      BALANCE.SPATIAL.TARGET.MAT[matSpatialState.room].y,
+  "mat command did not target the room mat",
+);
+
+const hiddenOpportunity = createSim(8105);
+hiddenOpportunity.setOwner({
+  room: "living",
+  focusLocked: false,
+  away: true,
+});
+hiddenOpportunity.feed(100);
+poopEvent(hiddenOpportunity, 360);
+const hiddenOpportunityState = hiddenOpportunity.getFullState();
+const hiddenOpportunityView = hiddenOpportunity.getDogView();
+const hiddenImportantEvents = hiddenOpportunity.getLog().filter((event) =>
+  ["sniffFloor", "circle", "wander", "poop"].includes(event.type)
+);
+assert(
+  hiddenOpportunityState.opportunityRevision === hiddenImportantEvents.length &&
+    hiddenOpportunityState.opportunityRevision >= 4,
+  "important signals did not increment the full opportunity revision",
+);
+assert(
+  hiddenOpportunityView.opportunityRevision === 0,
+  "hidden opportunity changed the observable UI revision",
+);
+assert(
+  hiddenImportantEvents.every((event) => event.visibility === "hidden"),
+  "away-owner opportunity unexpectedly became observable",
+);
+assert(
+  hiddenImportantEvents
+    .filter((event) => event.type === "wander")
+    .every((event) => event.detail.source === "poopSignal"),
+  "poop-signal wander lacked a distinguishing source",
 );
 
 const curriculumPrediction = {

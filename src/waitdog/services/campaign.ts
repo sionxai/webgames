@@ -5,6 +5,20 @@ export const WAITDOG_PROFILE_KEY = "waitdog_profile_v1";
 
 export type CampaignPhase = "morning" | "live" | "review" | "campaignEnd";
 export type Hypothesis = "배고픔" | "관심" | "불안";
+export type TrainingGoalId = "mat" | "recall" | "calm";
+export type TrainingStage = "watch" | "cue" | "reward" | "complete";
+
+export interface TrainingProgress {
+  day: number;
+  goal: TrainingGoalId;
+  stage: TrainingStage;
+  completed: number;
+  target: number;
+  attempts: number;
+  streak: number;
+  lastCueAt: number | null;
+  feedback: string;
+}
 
 export interface OwnerResources {
   energy: number;
@@ -28,7 +42,7 @@ export interface QualitativeDaySummary {
   trustDirection: "up" | "steady" | "down";
 }
 
-export interface CampaignSettings {
+interface CampaignSettingsV1 {
   version: 1;
   seed: number;
   speed: 0 | 1 | 2 | 4;
@@ -38,6 +52,19 @@ export interface CampaignSettings {
   morningSnapshot: WaitdogSnapshot | null;
   filteredObservations: Array<{ time: string; sentence: string }>;
   daySummaries: QualitativeDaySummary[];
+}
+
+export interface CampaignSettings {
+  version: 2;
+  seed: number;
+  speed: 0 | 1 | 2 | 4;
+  infinite: boolean;
+  interruptedScheduleIds: string[];
+  daySchedule: CampaignScheduleItem[];
+  morningSnapshot: WaitdogSnapshot | null;
+  filteredObservations: Array<{ time: string; sentence: string }>;
+  daySummaries: QualitativeDaySummary[];
+  training: TrainingProgress | null;
 }
 
 export interface WaitdogProfile {
@@ -63,6 +90,13 @@ export type SaveProfileResult =
   | { ok: false; error: string };
 
 const HYPOTHESES: readonly Hypothesis[] = ["배고픔", "관심", "불안"];
+const TRAINING_GOALS: readonly TrainingGoalId[] = ["mat", "recall", "calm"];
+const TRAINING_STAGES: readonly TrainingStage[] = [
+  "watch",
+  "cue",
+  "reward",
+  "complete",
+];
 const PHASES: readonly CampaignPhase[] = [
   "morning",
   "live",
@@ -103,7 +137,7 @@ export const updateOwnerResources = (
 });
 
 export const createCampaignSettings = (seed: number): CampaignSettings => ({
-  version: 1,
+  version: 2,
   seed,
   speed: 1,
   infinite: false,
@@ -112,6 +146,25 @@ export const createCampaignSettings = (seed: number): CampaignSettings => ({
   morningSnapshot: null,
   filteredObservations: [],
   daySummaries: [],
+  training: null,
+});
+
+export const recommendedTrainingGoal = (day: number): TrainingGoalId =>
+  TRAINING_GOALS[(Math.max(1, Math.floor(day)) - 1) % TRAINING_GOALS.length];
+
+export const createTrainingProgress = (
+  day: number,
+  goal: TrainingGoalId,
+): TrainingProgress => ({
+  day,
+  goal,
+  stage: "watch",
+  completed: 0,
+  target: 3,
+  attempts: 0,
+  streak: 0,
+  lastCueAt: null,
+  feedback: "몸짓 신호가 나타날 때까지 관찰해 보세요.",
 });
 
 const deterministicOffset = (seed: number, day: number): number => {
@@ -205,20 +258,54 @@ const isOwnerResources = (value: unknown): value is OwnerResources =>
     entry >= BALANCE.W3.RESOURCE_MIN && entry <= BALANCE.W3.RESOURCE_MAX
   );
 
-const isSettings = (value: unknown): value is CampaignSettings =>
+const SETTINGS_V1_KEYS = [
+  "version",
+  "seed",
+  "speed",
+  "infinite",
+  "interruptedScheduleIds",
+  "daySchedule",
+  "morningSnapshot",
+  "filteredObservations",
+  "daySummaries",
+] as const;
+
+const SETTINGS_V2_KEYS = [...SETTINGS_V1_KEYS, "training"] as const;
+
+const isTrainingProgress = (value: unknown): value is TrainingProgress =>
   isRecord(value) &&
   hasExactKeys(value, [
-    "version",
-    "seed",
-    "speed",
-    "infinite",
-    "interruptedScheduleIds",
-    "daySchedule",
-    "morningSnapshot",
-    "filteredObservations",
-    "daySummaries",
+    "day",
+    "goal",
+    "stage",
+    "completed",
+    "target",
+    "attempts",
+    "streak",
+    "lastCueAt",
+    "feedback",
   ]) &&
-  value.version === 1 && typeof value.seed === "number" &&
+  Number.isInteger(value.day) && (value.day as number) >= 1 &&
+  typeof value.goal === "string" &&
+  TRAINING_GOALS.includes(value.goal as TrainingGoalId) &&
+  typeof value.stage === "string" &&
+  TRAINING_STAGES.includes(value.stage as TrainingStage) &&
+  Number.isInteger(value.completed) && (value.completed as number) >= 0 &&
+  Number.isInteger(value.target) && (value.target as number) >= 1 &&
+  (value.completed as number) <= (value.target as number) &&
+  Number.isInteger(value.attempts) && (value.attempts as number) >= 0 &&
+  Number.isInteger(value.streak) && (value.streak as number) >= 0 &&
+  (value.streak as number) <= (value.attempts as number) &&
+  (value.lastCueAt === null ||
+    (typeof value.lastCueAt === "number" &&
+      Number.isInteger(value.lastCueAt) && value.lastCueAt >= 0)) &&
+  ((value.stage === "reward") === (value.lastCueAt !== null)) &&
+  ((value.stage === "complete") ===
+    ((value.completed as number) === (value.target as number))) &&
+  typeof value.feedback === "string";
+
+const hasValidSettingsFields = (value: Record<string, unknown>): boolean =>
+  typeof value.seed === "number" &&
   Number.isFinite(value.seed) && [0, 1, 2, 4].includes(value.speed as number) &&
   typeof value.infinite === "boolean" &&
   Array.isArray(value.interruptedScheduleIds) &&
@@ -255,6 +342,30 @@ const isSettings = (value: unknown): value is CampaignSettings =>
     ["up", "steady", "down"].includes(summary.trustDirection as string)
   );
 
+const isSettingsV1 = (value: unknown): value is CampaignSettingsV1 =>
+  isRecord(value) &&
+  hasExactKeys(value, SETTINGS_V1_KEYS) &&
+  value.version === 1 &&
+  hasValidSettingsFields(value);
+
+const isSettings = (value: unknown): value is CampaignSettings =>
+  isRecord(value) &&
+  hasExactKeys(value, SETTINGS_V2_KEYS) &&
+  value.version === 2 &&
+  hasValidSettingsFields(value) &&
+  (value.training === null || isTrainingProgress(value.training));
+
+const hasValidProfileFields = (value: Record<string, unknown>): boolean =>
+  Number.isInteger(value.day) && (value.day as number) >= 1 &&
+  typeof value.phase === "string" &&
+  PHASES.includes(value.phase as CampaignPhase) &&
+  isRecord(value.simSnapshot) &&
+  isOwnerResources(value.ownerResources) &&
+  Array.isArray(value.hypotheses) &&
+  value.hypotheses.every((item) =>
+    typeof item === "string" && HYPOTHESES.includes(item as Hypothesis)
+  );
+
 const isProfile = (value: unknown): value is WaitdogProfile =>
   isRecord(value) &&
   hasExactKeys(value, [
@@ -265,26 +376,44 @@ const isProfile = (value: unknown): value is WaitdogProfile =>
     "hypotheses",
     "settings",
   ]) &&
-  Number.isInteger(value.day) && (value.day as number) >= 1 &&
-  typeof value.phase === "string" &&
-  PHASES.includes(value.phase as CampaignPhase) &&
-  isRecord(value.simSnapshot) &&
-  isOwnerResources(value.ownerResources) &&
-  Array.isArray(value.hypotheses) &&
-  value.hypotheses.every((item) =>
-    typeof item === "string" && HYPOTHESES.includes(item as Hypothesis)
-  ) &&
+  hasValidProfileFields(value) &&
   isSettings(value.settings);
+
+const isProfileV1 = (
+  value: unknown,
+): value is Omit<WaitdogProfile, "settings"> & { settings: CampaignSettingsV1 } =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "day",
+    "phase",
+    "simSnapshot",
+    "ownerResources",
+    "hypotheses",
+    "settings",
+  ]) &&
+  hasValidProfileFields(value) &&
+  isSettingsV1(value.settings);
 
 export const loadProfile = (storage: StorageAdapter): LoadProfileResult => {
   try {
     const stored = storage.getItem(WAITDOG_PROFILE_KEY);
     if (stored === null) return { ok: true, profile: null };
     const parsed: unknown = JSON.parse(stored);
-    if (!isProfile(parsed)) {
-      return { ok: false, error: "저장된 프로필 형식이 올바르지 않습니다." };
+    if (isProfile(parsed)) return { ok: true, profile: parsed };
+    if (isProfileV1(parsed)) {
+      return {
+        ok: true,
+        profile: {
+          ...parsed,
+          settings: {
+            ...parsed.settings,
+            version: 2,
+            training: null,
+          },
+        },
+      };
     }
-    return { ok: true, profile: parsed };
+    return { ok: false, error: "저장된 프로필 형식이 올바르지 않습니다." };
   } catch {
     return { ok: false, error: "저장된 프로필을 불러오지 못했습니다." };
   }

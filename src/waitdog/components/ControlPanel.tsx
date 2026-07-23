@@ -5,6 +5,8 @@ interface ControlPanelProps {
   focusLocked: boolean;
   away: boolean;
   disabled: boolean;
+  interventionDisabledReason: string | null;
+  walkDisabledReason: string | null;
   onIntervene: (kind: InterventionKind, label: string) => void;
   onInterruptWork: () => void;
   onWalk: () => void;
@@ -28,6 +30,8 @@ export function ControlPanel({
   focusLocked,
   away,
   disabled,
+  interventionDisabledReason,
+  walkDisabledReason,
   onIntervene,
   onInterruptWork,
   onWalk,
@@ -35,6 +39,9 @@ export function ControlPanel({
   onWater,
 }: ControlPanelProps) {
   const unavailable = disabled || away;
+  const interventionsUnavailable = unavailable ||
+    interventionDisabledReason !== null;
+  const walkUnavailable = unavailable || walkDisabledReason !== null;
   return (
     <section className="panel-card control-card" aria-labelledby="control-title">
       <div className="section-heading compact">
@@ -52,7 +59,8 @@ export function ControlPanel({
           <button
             type="button"
             key={kind}
-            disabled={unavailable}
+            disabled={interventionsUnavailable}
+            title={interventionDisabledReason ?? undefined}
             onClick={() => onIntervene(kind, label)}
           >
             {label}
@@ -67,11 +75,25 @@ export function ControlPanel({
             업무 중단
           </button>
         )}
-        <button type="button" disabled={unavailable} onClick={onWalk}>산책 30분</button>
+        <button
+          type="button"
+          disabled={walkUnavailable}
+          title={walkDisabledReason ?? undefined}
+          onClick={onWalk}
+        >
+          산책 30분
+        </button>
         <button type="button" disabled={unavailable} onClick={onFeed}>급식</button>
         <button type="button" disabled={unavailable} onClick={onWater}>급수</button>
       </div>
       {away && <p className="away-notice">보호자 외출 중 · 모든 개입이 잠겼습니다.</p>}
+      {!away && interventionDisabledReason && (
+        <p className="control-reason">{interventionDisabledReason}</p>
+      )}
+      {!away && walkDisabledReason &&
+        walkDisabledReason !== interventionDisabledReason && (
+        <p className="control-reason">{walkDisabledReason}</p>
+      )}
     </section>
   );
 }

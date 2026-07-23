@@ -1,12 +1,40 @@
-import type { CampaignScheduleItem } from "../services/campaign";
+import type {
+  CampaignScheduleItem,
+  TrainingGoalId,
+} from "../services/campaign";
 
 interface MorningPlanProps {
   day: number;
   schedule: readonly CampaignScheduleItem[];
   prediction: { start: number; end: number; confidence: number };
   tip: string | null;
+  selectedGoal: TrainingGoalId;
+  recommendedGoal: TrainingGoalId;
+  onGoalChange: (goal: TrainingGoalId) => void;
   onStart: () => void;
 }
+
+const TRAINING_GOALS: ReadonlyArray<{
+  id: TrainingGoalId;
+  title: string;
+  description: string;
+}> = [
+  {
+    id: "mat",
+    title: "매트 습관",
+    description: "신호 뒤 매트로 이동하면 바로 보상해 좋은 선택을 연결합니다.",
+  },
+  {
+    id: "recall",
+    title: "부르기 신뢰",
+    description: "차분히 불러 돌아온 뒤 1게임분 안에 간식으로 신뢰를 쌓습니다.",
+  },
+  {
+    id: "calm",
+    title: "침착 전환",
+    description: "흥분 신호를 보고 장난감으로 시선을 안전하게 돌립니다.",
+  },
+];
 
 const formatClock = (absoluteMinute: number): string => {
   const minuteOfDay = ((absoluteMinute % 1440) + 1440) % 1440;
@@ -26,6 +54,9 @@ export function MorningPlan({
   schedule,
   prediction,
   tip,
+  selectedGoal,
+  recommendedGoal,
+  onGoalChange,
   onStart,
 }: MorningPlanProps) {
   return (
@@ -34,6 +65,26 @@ export function MorningPlan({
         <span className="section-kicker">MORNING PLAN</span>
         <h1 id="morning-title">Day {day} 아침 계획</h1>
         <p className="phase-lead">시간은 멈춰 있습니다. 오늘의 흐름을 먼저 살펴보세요.</p>
+
+        <fieldset className="training-goal-picker">
+          <legend>오늘의 짧은 훈련 목표</legend>
+          <p>한 번에 한 가지를 연습해 타이밍과 결과를 분명하게 확인하세요.</p>
+          <div>
+            {TRAINING_GOALS.map((goal) => (
+              <button
+                className={selectedGoal === goal.id ? "is-selected" : ""}
+                type="button"
+                key={goal.id}
+                aria-pressed={selectedGoal === goal.id}
+                onClick={() => onGoalChange(goal.id)}
+              >
+                <strong>{goal.title}</strong>
+                {recommendedGoal === goal.id && <span>오늘 추천</span>}
+                <small>{goal.description}</small>
+              </button>
+            ))}
+          </div>
+        </fieldset>
 
         <div className="morning-grid">
           <section aria-labelledby="schedule-title">

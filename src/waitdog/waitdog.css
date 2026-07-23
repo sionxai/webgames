@@ -262,6 +262,130 @@ canvas:focus-visible {
   padding: 20px;
 }
 
+.training-card {
+  border-color: rgba(239, 127, 104, 0.4);
+  background:
+    linear-gradient(145deg, rgba(255, 250, 233, 0.98), rgba(255, 255, 255, 0.96));
+}
+
+.training-count {
+  min-width: 58px;
+  border-radius: 999px;
+  color: #713a22;
+  background: var(--wd-yellow);
+  padding: 7px 11px;
+  text-align: center;
+}
+
+.dog-activity {
+  margin: 0;
+  border-left: 5px solid var(--wd-mint-dark);
+  border-radius: 0 12px 12px 0;
+  color: #27483f;
+  background: #e7f3ef;
+  padding: 11px 12px;
+  font-size: 0.88rem;
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.training-cue {
+  margin: 10px 0 14px;
+  color: var(--wd-muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.training-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.training-steps li {
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  min-width: 0;
+  border-radius: 12px;
+  color: #7a8883;
+  background: #edf1ef;
+  padding: 9px 4px;
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+.training-steps li > span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: #d8e1dd;
+}
+
+.training-steps li.is-current {
+  color: #713a22;
+  background: #fff0b9;
+}
+
+.training-steps li.is-current > span {
+  color: white;
+  background: var(--wd-coral-dark);
+}
+
+.training-steps li.is-done {
+  color: #255b4e;
+  background: #d9f0e1;
+}
+
+.training-steps li.is-done > span {
+  color: white;
+  background: var(--wd-mint-dark);
+}
+
+.training-stats {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--wd-muted);
+  font-size: 0.78rem;
+}
+
+.training-stats strong {
+  color: var(--wd-ink);
+}
+
+.training-feedback {
+  min-height: 2.9em;
+  margin: 10px 0;
+  color: #6f3029;
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.skip-opportunity {
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  border-radius: 13px;
+  color: white;
+  background: var(--wd-mint-dark);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.skip-opportunity:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .visibility-pill,
 .block-pill {
   flex: 0 0 auto;
@@ -814,6 +938,80 @@ canvas:focus-visible {
   font-weight: 850;
 }
 
+.control-reason {
+  margin: 10px 0 0;
+  border-radius: 10px;
+  color: #7d3c32;
+  background: #fff0e8;
+  padding: 8px 10px;
+  font-size: 0.76rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.training-goal-picker {
+  margin: 24px 0 0;
+  border: 2px dashed rgba(47, 98, 88, 0.28);
+  border-radius: 20px;
+  padding: 18px;
+}
+
+.training-goal-picker legend {
+  padding: 0 8px;
+  font-weight: 900;
+}
+
+.training-goal-picker > p {
+  margin-bottom: 14px;
+  color: var(--wd-muted);
+  font-size: 0.86rem;
+}
+
+.training-goal-picker > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.training-goal-picker button {
+  display: grid;
+  position: relative;
+  min-width: 0;
+  min-height: 116px;
+  align-content: start;
+  gap: 7px;
+  border: 2px solid transparent;
+  border-radius: 15px;
+  color: var(--wd-ink);
+  background: #edf7f2;
+  padding: 14px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.training-goal-picker button.is-selected {
+  border-color: var(--wd-mint-dark);
+  background: #d9f0e1;
+  box-shadow: 0 7px 16px rgba(47, 98, 88, 0.14);
+}
+
+.training-goal-picker button > span {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  border-radius: 999px;
+  color: #713a22;
+  background: var(--wd-yellow);
+  padding: 3px 7px;
+  font-size: 0.65rem;
+  font-weight: 900;
+}
+
+.training-goal-picker button > small {
+  color: var(--wd-muted);
+  line-height: 1.45;
+}
+
 @media (max-width: 1100px) and (min-width: 900px) {
   .top-bar {
     grid-template-columns: minmax(145px, 1fr) auto auto minmax(150px, 0.8fr);
@@ -864,6 +1062,14 @@ canvas:focus-visible {
   .review-grid {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .training-goal-picker > div {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .training-goal-picker button {
+    min-height: 0;
+  }
 }
 
 @media (max-width: 520px) {
@@ -900,6 +1106,14 @@ canvas:focus-visible {
 
   .schedule-list li {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .phase-card {
+    padding: 22px 16px;
+  }
+
+  .training-goal-picker {
+    padding: 14px 10px;
   }
 }
 

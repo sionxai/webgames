@@ -6,6 +6,10 @@ import type {
   ActivePoop,
   DecisionTrace,
   DigestionItem,
+  DogActivityId,
+  DogSpatialState,
+  DogSpatialView,
+  DogSpatialWaypoint,
   DogStats,
   DogView,
   EventLog,
@@ -63,7 +67,7 @@ export interface WaitdogUiSim extends WaitdogSim {
 }
 
 export interface WaitdogSnapshot {
-  version: 1;
+  version: 2;
   seed: number;
   rngCursor: number;
   day: number;
@@ -92,7 +96,20 @@ export interface WaitdogSnapshot {
   poopDelayHistory: number[];
   log: EventLog[];
   poopRevision: number;
+  spatial: DogSpatialState;
+  opportunityRevision: number;
+  visibleOpportunityRevision: number;
 }
+
+export type WaitdogSnapshotV1 = Omit<
+  WaitdogSnapshot,
+  | "version"
+  | "spatial"
+  | "opportunityRevision"
+  | "visibleOpportunityRevision"
+> & {
+  version: 1;
+};
 
 const clamp = (value: number): number => {
   if (!Number.isFinite(value)) {
@@ -117,6 +134,26 @@ const ACTIONS: ReadonlyArray<ActionId | "idle"> = [
   "flee",
   "sniffLeave",
   "zoomies",
+];
+
+const ACTIVITIES: readonly DogActivityId[] = [
+  "idle",
+  "rest",
+  "seekFood",
+  "seekWater",
+  "followOwner",
+  "play",
+  "wander",
+  "patrol",
+  "eatPoop",
+  "moveToMat",
+  "watchOwner",
+  "flee",
+  "sniffLeave",
+  "zoomies",
+  "sniffFloor",
+  "circle",
+  "poop",
 ];
 
 const VISIBILITIES: readonly Visibility[] = ["seen", "heard", "hidden"];
@@ -162,7 +199,7 @@ const isJsonValue = (value: unknown): boolean => {
   return isRecord(value) && Object.values(value).every(isJsonValue);
 };
 
-const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
+const SNAPSHOT_V1_KEYS: ReadonlyArray<keyof WaitdogSnapshotV1> = [
   "version",
   "seed",
   "rngCursor",
@@ -192,6 +229,13 @@ const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
   "poopDelayHistory",
   "log",
   "poopRevision",
+];
+
+const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
+  ...SNAPSHOT_V1_KEYS,
+  "spatial",
+  "opportunityRevision",
+  "visibleOpportunityRevision",
 ];
 
 const invalidSnapshot = (): never => {
@@ -246,6 +290,9 @@ class WaitdogSimulation implements WaitdogUiSim {
   private readonly poopDelayHistory: number[] = [];
   private readonly log: EventLog[] = [];
   private poopRevision = 0;
+  private spatial: DogSpatialState;
+  private opportunityRevision = 0;
+  private visibleOpportunityRevision = 0;
 
   constructor(seed: number, opts: WaitdogSimOptions = {}) {
     if (!Number.isFinite(seed)) {
@@ -257,6 +304,20 @@ class WaitdogSimulation implements WaitdogUiSim {
     if (!isRoom(this.dogRoom)) {
       throw new RangeError("dogRoom must be a known room");
     }
+    const initialPosition = BALANCE.SPATIAL.INITIAL[this.dogRoom];
+    this.spatial = {
+      room: this.dogRoom,
+      x: initialPosition.x,
+      y: initialPosition.y,
+      targetRoom: this.dogRoom,
+      targetX: initialPosition.x,
+      targetY: initialPosition.y,
+      route: [],
+      activity: "idle",
+      moving: false,
+      nextActivityAt: this.absoluteMinute +
+        BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES,
+    };
     this.owner = this.normalizeOwner(
       opts.owner ?? { room: "living", focusLocked: false },
     );
@@ -381,6 +442,7 @@ class WaitdogSimulation implements WaitdogUiSim {
         success = this.rng.chance(probability);
         if (success) {
           this.dogRoom = this.owner.room;
+          this.relocateSpatial(this.owner.room);
           this.changeMemory(
             "approachSafety",
             BALANCE.LEARNING.CALM_APPROACH_GAIN,
@@ -452,6 +514,7 @@ class WaitdogSimulation implements WaitdogUiSim {
         if (stopped) {
           this.cancelPendingEat();
           this.currentAction = "idle";
+          this.stopSpatialActivity();
         }
         this.stats.excitement += BALANCE.INTERVENTION.SCOLD_EXCITEMENT_GAIN;
         this.stats.stress += BALANCE.INTERVENTION.SCOLD_STRESS_GAIN;
@@ -478,6 +541,7 @@ class WaitdogSimulation implements WaitdogUiSim {
           this.cancelPendingEat();
           if (this.currentAction === "eatPoop") {
             this.currentAction = "idle";
+            this.stopSpatialActivity();
           }
           this.cleanupUntil = this.absoluteMinute +
             BALANCE.TIME.CLEANUP_MINUTES;
@@ -502,7 +566,7 @@ class WaitdogSimulation implements WaitdogUiSim {
 
   serialize(): WaitdogSnapshot {
     return clone({
-      version: 1,
+      version: 2,
       seed: this.seed,
       rngCursor: this.rngCursor,
       day: this.day,
@@ -531,6 +595,9 @@ class WaitdogSimulation implements WaitdogUiSim {
       poopDelayHistory: this.poopDelayHistory,
       log: this.log,
       poopRevision: this.poopRevision,
+      spatial: this.spatial,
+      opportunityRevision: this.opportunityRevision,
+      visibleOpportunityRevision: this.visibleOpportunityRevision,
     });
   }
 
@@ -543,6 +610,8 @@ class WaitdogSimulation implements WaitdogUiSim {
     }
     const restored = this.isValidSnapshot(candidate)
       ? candidate
+      : this.isValidSnapshotV1(candidate)
+      ? this.migrateSnapshotV1(candidate)
       : invalidSnapshot();
 
     this.seed = restored.seed;
@@ -577,6 +646,9 @@ class WaitdogSimulation implements WaitdogUiSim {
     );
     this.log.splice(BALANCE.NUMBER.ZERO, this.log.length, ...restored.log);
     this.poopRevision = restored.poopRevision;
+    this.spatial = restored.spatial;
+    this.opportunityRevision = restored.opportunityRevision;
+    this.visibleOpportunityRevision = restored.visibleOpportunityRevision;
   }
 
   getDogView(): WaitdogUiView {
@@ -592,6 +664,27 @@ class WaitdogSimulation implements WaitdogUiSim {
         roomVisibility[this.activePoop.room] === "seen"
         ? { room: this.activePoop.room, location: this.activePoop.location }
         : null;
+    const spatial: DogSpatialView = seen
+      ? {
+        room: this.spatial.room,
+        x: this.spatial.x,
+        y: this.spatial.y,
+        targetRoom: this.spatial.targetRoom,
+        targetX: this.spatial.targetX,
+        targetY: this.spatial.targetY,
+        activity: this.spatial.activity,
+        moving: this.spatial.moving,
+      }
+      : {
+        room: null,
+        x: null,
+        y: null,
+        targetRoom: null,
+        targetX: null,
+        targetY: null,
+        activity: null,
+        moving: null,
+      };
     const recentEvents = this.log
       .filter((event) => event.visibility !== "hidden")
       .slice(-12)
@@ -609,10 +702,17 @@ class WaitdogSimulation implements WaitdogUiSim {
             type: event.type,
             room: event.room,
             visibility: "seen",
-            detail: event.type === "action" &&
-                typeof event.detail.action === "string"
-              ? { action: event.detail.action }
-              : {},
+            detail:
+              event.type === "action" &&
+                  typeof event.detail.action === "string"
+                ? { action: event.detail.action }
+                : event.type === "ambientAction" &&
+                    typeof event.detail.activity === "string"
+                ? { activity: event.detail.activity }
+                : this.isImportantOpportunityType(event.type) &&
+                    typeof event.detail.source === "string"
+                ? { source: event.detail.source }
+                : {},
           }
       );
     return {
@@ -620,6 +720,8 @@ class WaitdogSimulation implements WaitdogUiSim {
       visibility,
       room: seen ? this.dogRoom : null,
       action: seen ? this.currentAction : null,
+      spatial,
+      opportunityRevision: this.visibleOpportunityRevision,
       observableStats: seen ? clone(this.stats) : {},
       day: this.day,
       minuteOfDay: this.minuteOfDay,
@@ -649,6 +751,8 @@ class WaitdogSimulation implements WaitdogUiSim {
       matSkillOwnerAway: this.matSkillOwnerAway,
       blocked: this.blocked,
       currentAction: this.currentAction,
+      spatial: this.spatial,
+      opportunityRevision: this.opportunityRevision,
       digestionQueue: this.digestionQueue,
       activePoop: this.activePoop,
     });
@@ -710,6 +814,14 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.lastBehavior = null;
     this.lastCalmSuccessAt = null;
     this.cleanupUntil = null;
+    this.spatial.activity = "idle";
+    this.spatial.moving = false;
+    this.spatial.route = [];
+    this.spatial.targetRoom = this.spatial.room;
+    this.spatial.targetX = this.spatial.x;
+    this.spatial.targetY = this.spatial.y;
+    this.spatial.nextActivityAt = this.absoluteMinute +
+      BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES;
     this.record("dayStart", this.dogRoom, { day: this.day });
   }
 
@@ -724,6 +836,8 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.stats.excitement -= BALANCE.PHYSIOLOGY.EXCITEMENT_RECOVERY_PER_MINUTE;
     this.stats.comfort -= BALANCE.PHYSIOLOGY.COMFORT_DECAY_PER_MINUTE;
 
+    this.advanceSpatialMovement();
+    this.startAmbientActivityIfDue();
     this.advancePendingPressure();
     this.completeDigestion();
     this.emitScheduledSignals();
@@ -803,7 +917,17 @@ class WaitdogSimulation implements WaitdogUiSim {
     for (const signal of this.scheduledSignals) {
       if (!signal.emitted && this.absoluteMinute >= signal.at) {
         signal.emitted = true;
-        this.record(signal.type, this.dogRoom, { poopDueAt: this.poopDueAt });
+        this.markOpportunity(this.dogRoom);
+        this.setSpatialGoal(
+          this.dogRoom,
+          this.randomCoordinate(),
+          this.randomCoordinate(),
+          signal.type,
+        );
+        this.record(signal.type, this.dogRoom, {
+          source: "poopSignal",
+          poopDueAt: this.poopDueAt,
+        });
       }
     }
   }
@@ -811,7 +935,8 @@ class WaitdogSimulation implements WaitdogUiSim {
   private poop(): void {
     const padChance = BALANCE.DIGESTION.PAD_BASE_CHANCE +
       this.matSkill.toilet * BALANCE.DIGESTION.PAD_SKILL_FACTOR;
-    const onPad = this.rng.chance(padChance);
+    const onPad = this.rng.chance(padChance) &&
+      (this.dogRoom === "living" || this.dogRoom === "toilet");
     let room: RoomId = onPad ? "toilet" : this.dogRoom;
     if (
       !onPad &&
@@ -820,15 +945,24 @@ class WaitdogSimulation implements WaitdogUiSim {
         this.memory.hiddenPoopTendency * BALANCE.DIGESTION.HIDDEN_CHANCE_FACTOR,
       )
     ) {
-      room = this.hiddenRoomFromOwner();
+      const hiddenRoom = this.hiddenRoomFromOwner();
+      room = this.adjacent(this.dogRoom, hiddenRoom)
+        ? hiddenRoom
+        : "living";
     }
     this.dogRoom = room;
+    this.relocateSpatial(room);
     this.activePoop = {
       room,
       createdAt: this.absoluteMinute,
       location: onPad ? "pad" : "corner",
     };
     this.poopRevision += 1;
+    this.markOpportunity(room);
+    const poopTarget = onPad
+      ? BALANCE.SPATIAL.TARGET.POOP_PAD
+      : BALANCE.SPATIAL.TARGET.CORNER[room];
+    this.setSpatialGoal(room, poopTarget.x, poopTarget.y, "poop");
     this.stats.bowelPressure = BALANCE.DIGESTION.PRESSURE_AFTER_POOP;
     this.resetPoopCycle();
     if (this.lastDigestedFeedAt !== null) {
@@ -979,6 +1113,7 @@ class WaitdogSimulation implements WaitdogUiSim {
     );
     this.record("eatPoop", this.dogRoom, {});
     this.currentAction = "idle";
+    this.stopSpatialActivity();
   }
 
   private rewardRecentBehavior(): ActionId | undefined {
@@ -1028,6 +1163,313 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.actionStartedAt = this.absoluteMinute;
     this.lastBehavior = { action, at: this.absoluteMinute, room: this.dogRoom };
     this.record("action", this.dogRoom, { action });
+    this.applyBehaviorSpatialGoal(action);
+  }
+
+  private applyBehaviorSpatialGoal(action: ActionId): void {
+    switch (action) {
+      case "eatPoop": {
+        if (this.activePoop === null) {
+          this.stopSpatialActivity();
+          return;
+        }
+        const target = this.activePoop.location === "pad"
+          ? BALANCE.SPATIAL.TARGET.POOP_PAD
+          : BALANCE.SPATIAL.TARGET.CORNER[this.activePoop.room];
+        this.setSpatialGoal(
+          this.activePoop.room,
+          target.x,
+          target.y,
+          action,
+        );
+        return;
+      }
+      case "moveToMat": {
+        const target = BALANCE.SPATIAL.TARGET.MAT[this.dogRoom];
+        this.setSpatialGoal(this.dogRoom, target.x, target.y, action);
+        return;
+      }
+      case "watchOwner": {
+        const target = BALANCE.SPATIAL.INITIAL[this.owner.room];
+        this.setSpatialGoal(this.owner.room, target.x, target.y, action);
+        return;
+      }
+      case "flee": {
+        const room = this.hiddenRoomFromOwner();
+        const target = BALANCE.SPATIAL.TARGET.CORNER[room];
+        this.setSpatialGoal(room, target.x, target.y, action);
+        return;
+      }
+      case "sniffLeave":
+      case "zoomies":
+        this.setSpatialGoal(
+          this.dogRoom,
+          this.randomCoordinate(),
+          this.randomCoordinate(),
+          action,
+        );
+    }
+  }
+
+  private startAmbientActivityIfDue(): void {
+    if (this.absoluteMinute < this.spatial.nextActivityAt) {
+      return;
+    }
+    if (this.currentAction !== "idle" || this.activePoop !== null) {
+      this.spatial.nextActivityAt = this.absoluteMinute +
+        BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES;
+      return;
+    }
+
+    const activity = this.chooseAmbientActivity();
+    const target = this.ambientTarget(activity);
+    this.setSpatialGoal(
+      target.room,
+      target.x,
+      target.y,
+      activity,
+    );
+    this.record("ambientAction", this.dogRoom, {
+      source: "ambient",
+      activity,
+      targetRoom: target.room,
+      targetX: target.x,
+      targetY: target.y,
+    });
+    this.spatial.nextActivityAt = this.absoluteMinute + this.rng.integer(
+      BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES,
+      BALANCE.SPATIAL.AMBIENT_MAX_INTERVAL_MINUTES,
+    );
+  }
+
+  private chooseAmbientActivity(): DogActivityId {
+    if (this.stats.hunger >= BALANCE.SPATIAL.NEED_THRESHOLD.HUNGER) {
+      return "seekFood";
+    }
+    if (this.stats.thirst >= BALANCE.SPATIAL.NEED_THRESHOLD.THIRST) {
+      return "seekWater";
+    }
+    if (this.stats.fatigue >= BALANCE.SPATIAL.NEED_THRESHOLD.FATIGUE) {
+      return "rest";
+    }
+    if (this.stats.boredom >= BALANCE.SPATIAL.NEED_THRESHOLD.BOREDOM) {
+      return "play";
+    }
+    const ambient: readonly DogActivityId[] = [
+      "followOwner",
+      "wander",
+      "patrol",
+    ];
+    return ambient[this.rng.integer(
+      BALANCE.NUMBER.ZERO,
+      ambient.length - BALANCE.NUMBER.ONE,
+    )];
+  }
+
+  private ambientTarget(
+    activity: DogActivityId,
+  ): DogSpatialWaypoint {
+    switch (activity) {
+      case "seekFood":
+        return BALANCE.SPATIAL.TARGET.FOOD;
+      case "seekWater":
+        return BALANCE.SPATIAL.TARGET.WATER;
+      case "rest":
+        return BALANCE.SPATIAL.TARGET.REST;
+      case "play":
+        return BALANCE.SPATIAL.TARGET.PLAY;
+      case "followOwner": {
+        const target = BALANCE.SPATIAL.INITIAL[this.owner.room];
+        return { room: this.owner.room, x: target.x, y: target.y };
+      }
+      case "patrol": {
+        const rooms = this.adjacentRooms(this.dogRoom);
+        const room = rooms[this.rng.integer(
+          BALANCE.NUMBER.ZERO,
+          rooms.length - BALANCE.NUMBER.ONE,
+        )];
+        return {
+          room,
+          x: this.randomCoordinate(),
+          y: this.randomCoordinate(),
+        };
+      }
+      default:
+        return {
+          room: this.dogRoom,
+          x: this.randomCoordinate(),
+          y: this.randomCoordinate(),
+        };
+    }
+  }
+
+  private setSpatialGoal(
+    room: RoomId,
+    x: number,
+    y: number,
+    activity: DogActivityId,
+  ): void {
+    const finalTarget = {
+      room,
+      x: this.clampCoordinate(x),
+      y: this.clampCoordinate(y),
+    };
+    const waypoints = this.spatialWaypoints(this.spatial.room, finalTarget);
+    const [target, ...route] = waypoints;
+    this.spatial.targetRoom = target.room;
+    this.spatial.targetX = target.x;
+    this.spatial.targetY = target.y;
+    this.spatial.route = route;
+    this.spatial.activity = activity;
+    this.spatial.moving = this.spatial.room !== target.room ||
+      this.spatial.x !== target.x || this.spatial.y !== target.y;
+  }
+
+  private spatialWaypoints(
+    from: RoomId,
+    target: DogSpatialWaypoint,
+  ): DogSpatialWaypoint[] {
+    if (from === target.room || this.adjacent(from, target.room)) {
+      return [target];
+    }
+    const throughLiving = target.room === "kitchen"
+      ? BALANCE.SPATIAL.TRANSITION.living.kitchen.exit
+      : BALANCE.SPATIAL.TRANSITION.living.toilet.exit;
+    return [
+      { room: "living", x: throughLiving.x, y: throughLiving.y },
+      target,
+    ];
+  }
+
+  private advanceSpatialMovement(): void {
+    if (!this.spatial.moving) {
+      return;
+    }
+
+    if (this.spatial.room !== this.spatial.targetRoom) {
+      const transition = this.transitionPoints(
+        this.spatial.room,
+        this.spatial.targetRoom,
+      );
+      if (transition === null) {
+        throw new RangeError("spatial target must be the same or adjacent room");
+      }
+      if (!this.moveSpatialToward(transition.exit.x, transition.exit.y)) {
+        return;
+      }
+      this.spatial.room = this.spatial.targetRoom;
+      this.dogRoom = this.spatial.room;
+      this.spatial.x = transition.entry.x;
+      this.spatial.y = transition.entry.y;
+    }
+
+    if (!this.moveSpatialToward(
+      this.spatial.targetX,
+      this.spatial.targetY,
+    )) {
+      return;
+    }
+    if (this.spatial.route.length > BALANCE.NUMBER.ZERO) {
+      const [next, ...route] = this.spatial.route;
+      this.spatial.targetRoom = next.room;
+      this.spatial.targetX = next.x;
+      this.spatial.targetY = next.y;
+      this.spatial.route = route;
+      return;
+    }
+    this.spatial.moving = false;
+  }
+
+  private moveSpatialToward(x: number, y: number): boolean {
+    const deltaX = x - this.spatial.x;
+    const deltaY = y - this.spatial.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    if (distance <= BALANCE.SPATIAL.SPEED_PER_MINUTE) {
+      this.spatial.x = x;
+      this.spatial.y = y;
+      return true;
+    }
+    const scale = BALANCE.SPATIAL.SPEED_PER_MINUTE / distance;
+    this.spatial.x = this.clampCoordinate(
+      this.spatial.x + deltaX * scale,
+    );
+    this.spatial.y = this.clampCoordinate(
+      this.spatial.y + deltaY * scale,
+    );
+    return false;
+  }
+
+  private transitionPoints(
+    from: RoomId,
+    to: RoomId,
+  ): {
+    exit: { x: number; y: number };
+    entry: { x: number; y: number };
+  } | null {
+    if (from === "living" && to === "kitchen") {
+      return BALANCE.SPATIAL.TRANSITION.living.kitchen;
+    }
+    if (from === "living" && to === "toilet") {
+      return BALANCE.SPATIAL.TRANSITION.living.toilet;
+    }
+    if (from === "kitchen" && to === "living") {
+      return BALANCE.SPATIAL.TRANSITION.kitchen.living;
+    }
+    if (from === "toilet" && to === "living") {
+      return BALANCE.SPATIAL.TRANSITION.toilet.living;
+    }
+    return null;
+  }
+
+  private adjacentRooms(room: RoomId): RoomId[] {
+    return room === "living" ? ["kitchen", "toilet"] : ["living"];
+  }
+
+  private relocateSpatial(room: RoomId): void {
+    if (this.spatial.room === room) {
+      this.dogRoom = room;
+      return;
+    }
+    const position = BALANCE.SPATIAL.INITIAL[room];
+    this.spatial.room = room;
+    this.spatial.x = position.x;
+    this.spatial.y = position.y;
+    this.spatial.targetRoom = room;
+    this.spatial.targetX = position.x;
+    this.spatial.targetY = position.y;
+    this.spatial.route = [];
+    this.spatial.moving = false;
+    this.dogRoom = room;
+  }
+
+  private stopSpatialActivity(): void {
+    this.spatial.activity = "idle";
+    this.spatial.targetRoom = this.spatial.room;
+    this.spatial.targetX = this.spatial.x;
+    this.spatial.targetY = this.spatial.y;
+    this.spatial.route = [];
+    this.spatial.moving = false;
+  }
+
+  private randomCoordinate(): number {
+    return this.rng.range(
+      BALANCE.SPATIAL.RANDOM_TARGET_MIN,
+      BALANCE.SPATIAL.RANDOM_TARGET_MAX,
+    );
+  }
+
+  private clampCoordinate(value: number): number {
+    return Math.max(
+      BALANCE.SPATIAL.MIN_COORDINATE,
+      Math.min(BALANCE.SPATIAL.MAX_COORDINATE, value),
+    );
+  }
+
+  private markOpportunity(room: RoomId): void {
+    this.opportunityRevision += BALANCE.NUMBER.ONE;
+    if (this.visibilityFor(room) !== "hidden") {
+      this.visibleOpportunityRevision += BALANCE.NUMBER.ONE;
+    }
   }
 
   private cancelPendingEat(): void {
@@ -1102,6 +1544,35 @@ class WaitdogSimulation implements WaitdogUiSim {
 
   private isValidSnapshot(value: unknown): value is WaitdogSnapshot {
     if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
+    if (
+      value.version !== BALANCE.NUMBER.TWO ||
+      !this.isValidSnapshotBody(value) ||
+      !this.isValidSpatialState(value.spatial, value.dogRoom)
+    ) {
+      return false;
+    }
+    const log = value.log as EventLog[];
+    const opportunityCount = log.filter((event) =>
+      this.isImportantOpportunityType(event.type)
+    ).length;
+    const visibleOpportunityCount = log.filter((event) =>
+      event.visibility !== "hidden" &&
+      this.isImportantOpportunityType(event.type)
+    ).length;
+    return isNonNegativeInteger(value.opportunityRevision) &&
+      value.opportunityRevision === opportunityCount &&
+      isNonNegativeInteger(value.visibleOpportunityRevision) &&
+      value.visibleOpportunityRevision === visibleOpportunityCount;
+  }
+
+  private isValidSnapshotV1(value: unknown): value is WaitdogSnapshotV1 {
+    return isRecord(value) &&
+      hasExactKeys(value, SNAPSHOT_V1_KEYS) &&
+      value.version === BALANCE.NUMBER.ONE &&
+      this.isValidSnapshotBody(value);
+  }
+
+  private isValidSnapshotBody(value: Record<string, unknown>): boolean {
     const stats = [
       "hunger",
       "thirst",
@@ -1143,8 +1614,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       value.cleanupUntil,
       value.lastDigestedFeedAt,
     ];
-    return value.version === BALANCE.NUMBER.ONE &&
-      isFiniteNumber(value.seed) &&
+    return isFiniteNumber(value.seed) &&
       isNonNegativeInteger(value.rngCursor) &&
       value.rngCursor <= 10_000_000 &&
       isNonNegativeInteger(value.day) &&
@@ -1219,6 +1689,118 @@ class WaitdogSimulation implements WaitdogUiSim {
       ) &&
       Number.isInteger(value.poopRevision) &&
       (value.poopRevision as number) >= BALANCE.NUMBER.ZERO;
+  }
+
+  private isValidSpatialState(
+    value: unknown,
+    dogRoom: unknown,
+  ): value is DogSpatialState {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, [
+        "room",
+        "x",
+        "y",
+        "targetRoom",
+        "targetX",
+        "targetY",
+        "route",
+        "activity",
+        "moving",
+        "nextActivityAt",
+      ]) ||
+      typeof value.room !== "string" ||
+      !isRoom(value.room) ||
+      value.room !== dogRoom ||
+      typeof value.targetRoom !== "string" ||
+      !isRoom(value.targetRoom) ||
+      !this.isCoordinate(value.x) ||
+      !this.isCoordinate(value.y) ||
+      !this.isCoordinate(value.targetX) ||
+      !this.isCoordinate(value.targetY) ||
+      typeof value.activity !== "string" ||
+      !ACTIVITIES.includes(value.activity as DogActivityId) ||
+      typeof value.moving !== "boolean" ||
+      !isNonNegativeInteger(value.nextActivityAt) ||
+      !Array.isArray(value.route)
+    ) {
+      return false;
+    }
+    const route = value.route;
+    if (
+      !route.every((waypoint) =>
+        isRecord(waypoint) &&
+        hasExactKeys(waypoint, ["room", "x", "y"]) &&
+        typeof waypoint.room === "string" &&
+        isRoom(waypoint.room) &&
+        this.isCoordinate(waypoint.x) &&
+        this.isCoordinate(waypoint.y)
+      )
+    ) {
+      return false;
+    }
+    if (
+      route.length > BALANCE.NUMBER.ONE ||
+      (!value.moving &&
+        (route.length > BALANCE.NUMBER.ZERO ||
+          value.room !== value.targetRoom ||
+          value.x !== value.targetX ||
+          value.y !== value.targetY))
+    ) {
+      return false;
+    }
+    const rooms = [
+      value.room,
+      value.targetRoom,
+      ...route.map((waypoint) => waypoint.room as RoomId),
+    ] as RoomId[];
+    return rooms.every((room, index) =>
+      index === BALANCE.NUMBER.ZERO ||
+      room === rooms[index - BALANCE.NUMBER.ONE] ||
+      this.adjacent(rooms[index - BALANCE.NUMBER.ONE], room)
+    );
+  }
+
+  private isCoordinate(value: unknown): value is number {
+    return isFiniteNumber(value) &&
+      value >= BALANCE.SPATIAL.MIN_COORDINATE &&
+      value <= BALANCE.SPATIAL.MAX_COORDINATE;
+  }
+
+  private migrateSnapshotV1(snapshot: WaitdogSnapshotV1): WaitdogSnapshot {
+    const position = BALANCE.SPATIAL.INITIAL[snapshot.dogRoom];
+    const opportunityRevision = snapshot.log.filter((event) =>
+      this.isImportantOpportunityType(event.type)
+    ).length;
+    const visibleOpportunityRevision = snapshot.log.filter((event) =>
+      event.visibility !== "hidden" &&
+      this.isImportantOpportunityType(event.type)
+    ).length;
+    const { version: _version, ...legacy } = snapshot;
+    return {
+      ...legacy,
+      version: 2,
+      spatial: {
+        room: snapshot.dogRoom,
+        x: position.x,
+        y: position.y,
+        targetRoom: snapshot.dogRoom,
+        targetX: position.x,
+        targetY: position.y,
+        route: [],
+        activity: snapshot.currentAction,
+        moving: false,
+        nextActivityAt: snapshot.absoluteMinute +
+          BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES,
+      },
+      opportunityRevision,
+      visibleOpportunityRevision,
+    };
+  }
+
+  private isImportantOpportunityType(type: string): boolean {
+    return type === "sniffFloor" || type === "circle" ||
+      type === "wander" || type === "poop";
   }
 
   private normalizeOwner(owner: OwnerState): Required<OwnerState> {

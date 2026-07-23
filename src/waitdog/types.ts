@@ -38,6 +38,19 @@ export type ActionId =
   | "sniffLeave"
   | "zoomies";
 
+export type DogActivityId =
+  | "idle"
+  | "rest"
+  | "seekFood"
+  | "seekWater"
+  | "followOwner"
+  | "play"
+  | "wander"
+  | "patrol"
+  | ActionId
+  | SignalType
+  | "poop";
+
 export type InterventionKind =
   | "calmCall"
   | "matCommand"
@@ -128,6 +141,36 @@ export interface ActivePoop {
   location: "pad" | "corner";
 }
 
+export interface DogSpatialWaypoint {
+  room: RoomId;
+  x: number;
+  y: number;
+}
+
+export interface DogSpatialState {
+  room: RoomId;
+  x: number;
+  y: number;
+  targetRoom: RoomId;
+  targetX: number;
+  targetY: number;
+  route: DogSpatialWaypoint[];
+  activity: DogActivityId;
+  moving: boolean;
+  nextActivityAt: number;
+}
+
+export interface DogSpatialView {
+  room: RoomId | null;
+  x: number | null;
+  y: number | null;
+  targetRoom: RoomId | null;
+  targetX: number | null;
+  targetY: number | null;
+  activity: DogActivityId | null;
+  moving: boolean | null;
+}
+
 export interface WaitdogFullState {
   day: number;
   minuteOfDay: number;
@@ -141,6 +184,8 @@ export interface WaitdogFullState {
   matSkillOwnerAway: number;
   blocked: boolean;
   currentAction: ActionId | "idle";
+  spatial: DogSpatialState;
+  opportunityRevision: number;
   digestionQueue: DigestionItem[];
   activePoop: ActivePoop | null;
 }
@@ -150,6 +195,9 @@ export interface DogView {
   visibility: Visibility;
   room: RoomId | null;
   action: ActionId | "idle" | null;
+  spatial: DogSpatialView;
+  /** Revision of important opportunities observed while the dog was seen. */
+  opportunityRevision: number;
   observableStats: Partial<DogStats>;
 }
 

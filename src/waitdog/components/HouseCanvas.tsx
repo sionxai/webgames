@@ -12,7 +12,7 @@ import {
   type DogMotionId,
 } from "../constants/artAssets";
 import type { WaitdogUiView } from "../services/waitdogSim";
-import type { RoomId, Visibility } from "../types";
+import type { DogActivityId, RoomId, Visibility } from "../types";
 
 interface HouseCanvasProps {
   view: WaitdogUiView;
@@ -54,7 +54,7 @@ type ArtLoadState =
 
 const WIDTH = 900;
 const HEIGHT = 900;
-const ROOM_TRANSITION_MS = 720;
+const POSITION_TWEEN_MS = 680;
 const TRANSIENT_MOTION_MS = 1600;
 
 const ROOMS: Record<RoomId, RoomRect> = {
@@ -82,6 +82,11 @@ const ROOMS: Record<RoomId, RoomRect> = {
 };
 
 const ROOM_ORDER: RoomId[] = ["living", "kitchen", "toilet"];
+const ROOM_MOVE_LABELS: Record<RoomId, string> = {
+  living: "생활방으로 이동",
+  kitchen: "부엌으로 이동",
+  toilet: "화장실로 이동",
+};
 const TRANSIENT_EVENT_TYPES = new Set([
   "sniffFloor",
   "circle",
@@ -99,6 +104,44 @@ const dogAnchor = (room: RoomId): Point => {
   const rect = ROOMS[room];
   const center = centerOf(room);
   return { x: center.x, y: center.y + rect.height * 0.1 };
+};
+
+const clampCoordinate = (value: number): number =>
+  Math.max(0, Math.min(1, value));
+
+const spatialPoint = (room: RoomId, x: number, y: number): Point => {
+  const rect = ROOMS[room];
+  const horizontalPadding = Math.min(72, rect.width * 0.15);
+  const topPadding = Math.min(100, rect.height * 0.2);
+  const bottomPadding = Math.min(54, rect.height * 0.12);
+  return {
+    x: rect.x + horizontalPadding +
+      clampCoordinate(x) * (rect.width - horizontalPadding * 2),
+    y: rect.y + topPadding +
+      clampCoordinate(y) * (rect.height - topPadding - bottomPadding),
+  };
+};
+
+const visibleSpatialPoint = (view: WaitdogUiView): Point | null => {
+  const { spatial } = view;
+  if (
+    view.visibility !== "seen" || spatial.room === null ||
+    spatial.x === null || spatial.y === null
+  ) return null;
+  return spatialPoint(spatial.room, spatial.x, spatial.y);
+};
+
+const visibleTargetPoint = (view: WaitdogUiView): Point | null => {
+  const { spatial } = view;
+  if (
+    view.visibility !== "seen" || spatial.targetRoom === null ||
+    spatial.targetX === null || spatial.targetY === null
+  ) return null;
+  return spatialPoint(
+    spatial.targetRoom,
+    spatial.targetX,
+    spatial.targetY,
+  );
 };
 
 const ownerAnchor = (room: RoomId): Point => {
@@ -374,13 +417,99 @@ const dogMotionFor = (
   moving: boolean,
   transient: boolean,
 ): DogMotionId => {
-  if (view.action === "zoomies" || view.action === "flee") return "fast";
+  const activity = view.spatial.activity;
+  if (activity === "zoomies" || activity === "flee") return "fast";
   if (moving) return "move";
-  if (view.action === "moveToMat") return "mat";
-  if (view.action === "eatPoop" || view.action === "sniffLeave" || transient) {
+  if (activity === "moveToMat") return "mat";
+  if (
+    activity === "eatPoop" || activity === "sniffLeave" ||
+    activity === "sniffFloor" || activity === "seekFood" ||
+    activity === "seekWater" || transient
+  ) {
     return "approach";
   }
   return "idle";
+};
+
+const ACTIVITY_BUBBLES: Record<DogActivityId, string> = {
+  idle: "잠깐 관찰",
+  rest: "쉬는 중",
+  seekFood: "밥 냄새!",
+  seekWater: "물 마실래",
+  followOwner: "같이 갈래",
+  play: "놀자!",
+  wander: "어디가 좋을까?",
+  patrol: "집 둘러보기",
+  eatPoop: "흔적 발견",
+  moveToMat: "매트로!",
+  watchOwner: "반응 기다리기",
+  flee: "거리를 둘래",
+  sniffLeave: "다른 데로",
+  zoomies: "신난다!",
+  sniffFloor: "킁킁…",
+  circle: "빙글빙글",
+  poop: "자리 잡는 중",
+};
+
+const drawActivityEffects = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+  activity: DogActivityId,
+  moving: boolean,
+  now: number,
+  flipX: boolean,
+  reducedMotion: boolean,
+) => {
+  context.save();
+  if (moving) {
+    const pulse = reducedMotion ? 0 : Math.sin(now / 160) * 4;
+    const direction = flipX ? 1 : -1;
+    context.fillStyle = "rgba(88, 113, 103, 0.42)";
+    for (let index = 1; index <= 3; index += 1) {
+      context.beginPath();
+      context.ellipse(
+        point.x + direction * (42 + index * 22) + pulse,
+        point.y - 5 + (index % 2) * 12,
+        8,
+        5,
+        direction * -0.35,
+        0,
+        Math.PI * 2,
+      );
+      context.fill();
+    }
+  }
+
+  if (activity === "moveToMat") {
+    const ring = reducedMotion ? 52 : 52 + Math.sin(now / 140) * 8;
+    context.strokeStyle = "rgba(239, 127, 104, 0.78)";
+    context.lineWidth = 7;
+    context.beginPath();
+    context.arc(point.x, point.y - 42, ring, 0, Math.PI * 2);
+    context.stroke();
+  }
+
+  const label = ACTIVITY_BUBBLES[activity];
+  context.font = "800 17px sans-serif";
+  const bubbleWidth = Math.min(170, context.measureText(label).width + 30);
+  const bubbleX = Math.max(10, Math.min(WIDTH - bubbleWidth - 10, point.x - bubbleWidth / 2));
+  const bubbleY = Math.max(48, point.y - 150);
+  context.fillStyle = "rgba(255, 255, 255, 0.94)";
+  context.strokeStyle = activity === "moveToMat" ? "#ef7f68" : "#2f6258";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.roundRect(bubbleX, bubbleY, bubbleWidth, 38, 13);
+  context.fill();
+  context.stroke();
+  context.beginPath();
+  context.moveTo(point.x - 8, bubbleY + 38);
+  context.lineTo(point.x, bubbleY + 50);
+  context.lineTo(point.x + 8, bubbleY + 38);
+  context.fill();
+  context.fillStyle = "#203d36";
+  context.textAlign = "center";
+  context.fillText(label, bubbleX + bubbleWidth / 2, bubbleY + 25);
+  context.restore();
 };
 
 const drawDogSprite = (
@@ -458,8 +587,10 @@ export function HouseCanvas({
 }: HouseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const reducedMotionRef = useRef(false);
-  const dogPositionRef = useRef<Point>(dogAnchor(view.room ?? lastSeenRoom ?? "living"));
-  const previousRoomRef = useRef<RoomId | null>(view.room);
+  const dogPositionRef = useRef<Point>(
+    visibleSpatialPoint(view) ?? dogAnchor(view.room ?? lastSeenRoom ?? "living"),
+  );
+  const dogWasSeenRef = useRef(view.visibility === "seen");
   const transitionRef = useRef<RoomTransition | null>(null);
   const transientEventRef = useRef<{ key: string | null; startedAt: number }>({
     key: null,
@@ -523,25 +654,29 @@ export function HouseCanvas({
     if (!canvas || !context) return;
 
     const effectStartedAt = performance.now();
-    if (view.visibility === "seen" && view.room !== null) {
-      const nextAnchor = dogAnchor(view.room);
-      const previousRoom = previousRoomRef.current;
-      if (previousRoom !== null && previousRoom !== view.room) {
-        const from = transitionRef.current === null
-          ? dogPositionRef.current
-          : positionDuring(transitionRef.current, effectStartedAt);
+    const nextPosition = visibleSpatialPoint(view);
+    if (nextPosition !== null) {
+      const from = transitionRef.current === null
+        ? dogPositionRef.current
+        : positionDuring(transitionRef.current, effectStartedAt);
+      if (
+        !dogWasSeenRef.current ||
+        reducedMotionRef.current ||
+        Math.hypot(nextPosition.x - from.x, nextPosition.y - from.y) < 1
+      ) {
+        dogPositionRef.current = nextPosition;
+        transitionRef.current = null;
+      } else {
         transitionRef.current = {
           from,
-          to: nextAnchor,
+          to: nextPosition,
           startedAt: effectStartedAt,
-          duration: ROOM_TRANSITION_MS,
-          movingLeft: nextAnchor.x < from.x,
+          duration: POSITION_TWEEN_MS,
+          movingLeft: nextPosition.x < from.x,
         };
-      } else if (previousRoom === null) {
-        dogPositionRef.current = nextAnchor;
       }
-      previousRoomRef.current = view.room;
     }
+    dogWasSeenRef.current = view.visibility === "seen";
 
     const transientEvent = [...view.recentEvents].reverse().find((event) =>
       TRANSIENT_EVENT_TYPES.has(event.type)
@@ -563,8 +698,24 @@ export function HouseCanvas({
       drawFallbackMat(context);
       if (view.blocked) drawFallbackFence(context);
       if (!ownerAway) drawFallbackOwner(context, view.owner.room);
-      if (view.visibility === "seen" && view.room !== null) {
-        drawFallbackDog(context, dogAnchor(view.room));
+      const fallbackPoint = visibleSpatialPoint(view);
+      if (
+        fallbackPoint !== null && view.spatial.activity !== null &&
+        view.spatial.moving !== null
+      ) {
+        const fallbackTarget = visibleTargetPoint(view);
+        const fallbackFlip = fallbackTarget !== null &&
+          fallbackTarget.x < fallbackPoint.x;
+        drawActivityEffects(
+          context,
+          fallbackPoint,
+          view.spatial.activity,
+          view.spatial.moving,
+          effectStartedAt,
+          fallbackFlip,
+          true,
+        );
+        drawFallbackDog(context, fallbackPoint);
       }
       if (view.activePoop !== null) {
         drawFallbackPoop(context, view.activePoop.room, view.activePoop.location);
@@ -624,23 +775,35 @@ export function HouseCanvas({
 
       if (view.visibility === "seen" && view.room !== null) {
         const transition = transitionRef.current;
-        const moving = transition !== null &&
+        const tweening = transition !== null &&
           now - transition.startedAt < transition.duration;
         if (transition !== null) {
           dogPositionRef.current = positionDuring(transition, now);
-          if (!moving) {
+          if (!tweening) {
             dogPositionRef.current = transition.to;
             transitionRef.current = null;
           }
-        } else {
-          dogPositionRef.current = dogAnchor(view.room);
         }
         const transient = transientEventRef.current.key !== null &&
           now - transientEventRef.current.startedAt < TRANSIENT_MOTION_MS;
+        const moving = tweening || view.spatial.moving === true;
         const motion = dogMotionFor(view, moving, transient);
-        const point = !moving && motion === "mat" && view.room === "living"
-          ? { x: 158, y: 816 }
-          : dogPositionRef.current;
+        const point = dogPositionRef.current;
+        const target = visibleTargetPoint(view);
+        const flipX = tweening
+          ? transition?.movingLeft === true
+          : target !== null && target.x < point.x;
+        if (view.spatial.activity !== null) {
+          drawActivityEffects(
+            context,
+            point,
+            view.spatial.activity,
+            moving,
+            now,
+            flipX,
+            reducedMotionRef.current,
+          );
+        }
         drawDogSprite(
           context,
           images,
@@ -648,7 +811,7 @@ export function HouseCanvas({
           motion,
           now,
           reducedMotionRef.current,
-          moving && transition?.movingLeft === true,
+          flipX,
         );
       }
 
@@ -716,7 +879,7 @@ export function HouseCanvas({
             aria-pressed={view.owner.room === room}
             onClick={() => onRoomSelect(room)}
           >
-            {ROOMS[room].label}로 이동
+            {ROOM_MOVE_LABELS[room]}
           </button>
         ))}
       </div>

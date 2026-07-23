@@ -1,4 +1,5 @@
 import type { WaitdogUiEvent, WaitdogUiView } from "../services/waitdogSim";
+import type { DogActivityId } from "../types";
 
 interface ObservationPanelProps {
   view: WaitdogUiView;
@@ -12,6 +13,26 @@ const ACTION_SENTENCES: Record<string, string> = {
   flee: "몸을 낮추고 거리를 벌립니다.",
   sniffLeave: "냄새를 확인한 뒤 다른 곳으로 향합니다.",
   zoomies: "갑자기 신이 나서 방을 달립니다.",
+};
+
+const ACTIVITY_SENTENCES: Record<DogActivityId, string> = {
+  idle: "강아지가 잠시 멈춰 주변을 살핍니다.",
+  rest: "강아지가 편한 자리에서 몸을 쉬고 있습니다.",
+  seekFood: "강아지가 밥그릇 주변을 확인합니다.",
+  seekWater: "강아지가 물그릇 쪽으로 향합니다.",
+  followOwner: "강아지가 보호자를 따라 움직입니다.",
+  play: "강아지가 장난감을 건드리며 놉니다.",
+  wander: "강아지가 편한 자리를 찾듯 서성입니다.",
+  patrol: "강아지가 방과 방 사이를 둘러봅니다.",
+  eatPoop: "강아지가 바닥의 흔적을 향해 서두릅니다.",
+  moveToMat: "강아지가 매트를 향해 움직입니다.",
+  watchOwner: "강아지가 보호자의 반응을 기다립니다.",
+  flee: "강아지가 몸을 낮추고 거리를 벌립니다.",
+  sniffLeave: "강아지가 냄새를 확인한 뒤 방향을 바꿉니다.",
+  zoomies: "강아지가 흥분해 집 안을 빠르게 달립니다.",
+  sniffFloor: "강아지가 바닥 냄새를 집중해서 확인합니다.",
+  circle: "강아지가 한자리에서 천천히 빙글빙글 돕니다.",
+  poop: "강아지가 배변할 자리를 잡고 있습니다.",
 };
 
 const eventToSentence = (event: WaitdogUiEvent): string => {
@@ -60,6 +81,14 @@ const eventToSentence = (event: WaitdogUiEvent): string => {
 };
 
 export function ObservationPanel({ view, interventionMessages }: ObservationPanelProps) {
+  const currentActivity = view.visibility === "seen" &&
+      view.spatial.activity !== null
+    ? [{
+      key: `activity-${view.t}-${view.spatial.activity}`,
+      text: ACTIVITY_SENTENCES[view.spatial.activity],
+      heard: false,
+    }]
+    : [];
   const observations = view.recentEvents.slice(-8).map((event, index) => ({
     key: `event-${event.t}-${event.type}-${index}`,
     text: eventToSentence(event),
@@ -84,7 +113,7 @@ export function ObservationPanel({ view, interventionMessages }: ObservationPane
         </span>
       </div>
       <ol className="observation-list" aria-live="polite">
-        {[...observations, ...messages].map((item) => (
+        {[...currentActivity, ...observations, ...messages].map((item) => (
           <li className={item.heard ? "heard-note" : ""} key={item.key}>
             <span aria-hidden="true">{item.heard ? "♪" : "•"}</span>
             <p>{item.text}</p>
