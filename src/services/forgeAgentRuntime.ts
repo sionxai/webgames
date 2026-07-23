@@ -353,7 +353,7 @@ export class ForgeAgentRuntime {
   private readonly description: ForgeAgentDescription;
   private readonly listeners = new Set<ForgeAgentRuntimeListener>();
   private readonly usedActionIds = new Set<string>();
-  private timerId: number | null = null;
+  private timerId: ReturnType<typeof setTimeout> | null = null;
   private generation = 0;
   private disposed = false;
   private eventSequence = 0;

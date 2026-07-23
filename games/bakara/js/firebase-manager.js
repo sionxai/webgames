@@ -5,12 +5,14 @@
    ============================================ */
 
 const firebaseConfig = {
-    apiKey: "AIzaSyA5l2nm0ogVxFzPyVd5qWc0iMvRKCFSaFA",
-    authDomain: "baccarat-premium.firebaseapp.com",
-    projectId: "baccarat-premium",
-    storageBucket: "baccarat-premium.firebasestorage.app",
-    messagingSenderId: "467665520336",
-    appId: "1:467665520336:web:b39c23924286ad615640d5"
+    apiKey: "AIzaSyCc4Gjh0N3wzCxqAEEQkrsX8AlI7UNBGR0",
+    authDomain: "webgames-66ccf.firebaseapp.com",
+    databaseURL: "https://webgames-66ccf-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "webgames-66ccf",
+    storageBucket: "webgames-66ccf.firebasestorage.app",
+    messagingSenderId: "539839465670",
+    appId: "1:539839465670:web:b6bdf12a8d14d067e2efc7",
+    measurementId: "G-94XVFXT33H"
 };
 
 // Initialize Firebase
