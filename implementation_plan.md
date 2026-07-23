@@ -243,3 +243,26 @@
 - 목표 단계별 실패 보정은 하락·복귀를 거쳐 유지되고 해당 목표 성공 또는 새 검 생성에서만 초기화된다.
 - AI 브리지는 숨은 보스 위치 없이 현재 상태와 가능한 행동을 반환하고, 잘못된 행동은 상태 변경 없이 거부한다.
 - AI 관전 패널은 데스크톱 16:9와 모바일 9:16에서 핵심 조작과 판단 타임라인이 잘리지 않으며, 중지·언마운트 후 타이머가 남지 않는다.
+
+---
+
+# P2B — Forge 강화 패널 정보 밀도
+
+## Goal
+
+기존 강화 기능·DOM 계약을 유지하면서 기본 `간단히` 보기와 전체 정보를 복원하는 `자세히` 보기를 제공한다.
+
+## Work Packages
+
+- [x] P2B-1 — 명세와 `EnhancePanel.tsx`·`App.tsx` 실제 구조/클래스 정찰
+- [x] P2B-2 — `App.tsx` 밀도 상태·로컬 저장·두 패널 전달
+- [x] P2B-3 — `EnhancePanel.tsx` 토글·간단히 보기·필수 경고 보존
+- [x] P2B-4 — `index.css` 밀도별 표시·반응형 규칙
+- [x] P2B-5 — TypeScript·계약·브라우저 표적 검증 및 독립 검수
+
+## Fixed Decisions
+
+- 수정 범위는 `src/App.tsx`, `src/components/game/EnhancePanel.tsx`, `src/index.css`로 제한한다.
+- `src/services`, `src/constants`, `src/types`는 수정하지 않는다.
+- `cta-reason`, `repair-shortage`, `panel-notice`, 파괴 복구, 결과 본문은 `간단히`에서도 항상 표시한다.
+- `npm run build`는 실행하지 않는다.

@@ -49,7 +49,9 @@ import {
 
 type ToastTone = 'success' | 'error' | 'info';
 type ActiveTab = 'game' | 'arena' | 'ranking' | 'collection';
+type ForgeDensity = 'simple' | 'detail';
 const FORGE_LOCAL_SAVED_AT_KEY = 'portal_cloud_save_local_updated_at_forge';
+const FORGE_DENSITY_STORAGE_KEY = 'forge_ui_density_v1';
 const forgeCloudSave = createCloudSave('forge', 3);
 
 interface ToastMessage {
@@ -61,6 +63,14 @@ interface ToastMessage {
 function readLocalSavedAt(): number | null {
   const value = Number(localStorage.getItem(FORGE_LOCAL_SAVED_AT_KEY));
   return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function readForgeDensity(): ForgeDensity {
+  try {
+    return localStorage.getItem(FORGE_DENSITY_STORAGE_KEY) === 'detail' ? 'detail' : 'simple';
+  } catch {
+    return 'simple';
+  }
 }
 
 function formatSavedAt(value: number | null): string {
@@ -248,6 +258,7 @@ export default function App() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showLegalModal, setShowLegalModal] = useState(false);
+  const [forgeDensity, setForgeDensity] = useState<ForgeDensity>(() => readForgeDensity());
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [cloudState, setCloudState] = useState<CloudSaveState>(() => forgeCloudSave.getState());
   const [cloudConflict, setCloudConflict] = useState<CloudSaveRecord | null>(null);
@@ -272,6 +283,14 @@ export default function App() {
     toastTimersRef.current.forEach(timer => window.clearTimeout(timer));
     toastTimersRef.current.clear();
   }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FORGE_DENSITY_STORAGE_KEY, forgeDensity);
+    } catch {
+      // Density preference is optional; the in-memory selection remains active.
+    }
+  }, [forgeDensity]);
 
   const showToast = useCallback((message: string, tone: ToastTone = 'info') => {
     const id = ++toastIdRef.current;
@@ -913,6 +932,8 @@ export default function App() {
             />
             <EnhancePanel
               profile={humanProfile}
+              density={forgeDensity}
+              onDensityChange={setForgeDensity}
               onAttemptEnhance={() => handleAttemptEnhance('human')}
               onRepairCrack={() => handleRepairCrack('human')}
               onAdRestore={() => handleAdRestore('human')}
@@ -950,6 +971,8 @@ export default function App() {
             <EnhancePanel
               profile={agentProfile}
               readOnly
+              density={forgeDensity}
+              onDensityChange={setForgeDensity}
               onAttemptEnhance={() => handleAttemptEnhance('agent')}
               onRepairCrack={() => handleRepairCrack('agent')}
               onAdRestore={() => handleAdRestore('agent')}
