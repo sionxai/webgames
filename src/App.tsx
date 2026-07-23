@@ -37,14 +37,66 @@ import { CollectionGuideView } from './components/portal/CollectionGuideView';
 import { LegalDocsModal } from './components/portal/LegalDocsModal';
 import { GAME_IMAGES } from './constants/imageAssets';
 import { BookOpen, Bot, Flame, ScrollText, Share2, Sparkles, Trophy } from 'lucide-react';
+import {
+  createCloudSave,
+  type CloudSaveRecord,
+  type CloudSaveState
+} from './lib/cloudSave';
+import {
+  initPortalAuth,
+  subscribePortalAuth
+} from './lib/portalAuth';
 
 type ToastTone = 'success' | 'error' | 'info';
 type ActiveTab = 'game' | 'arena' | 'ranking' | 'collection';
+const FORGE_LOCAL_SAVED_AT_KEY = 'portal_cloud_save_local_updated_at_forge';
+const forgeCloudSave = createCloudSave('forge', 3);
 
 interface ToastMessage {
   id: number;
   message: string;
   tone: ToastTone;
+}
+
+function readLocalSavedAt(): number | null {
+  const value = Number(localStorage.getItem(FORGE_LOCAL_SAVED_AT_KEY));
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function formatSavedAt(value: number | null): string {
+  return value === null
+    ? '시각 정보 없음'
+    : new Intl.DateTimeFormat('ko-KR', {
+      dateStyle: 'short',
+      timeStyle: 'short'
+    }).format(value);
+}
+
+function summarizeForgePayload(payload: string): string {
+  try {
+    const parsed = JSON.parse(payload) as { currentLevel?: unknown; gold?: unknown };
+    const level = typeof parsed.currentLevel === 'number' ? Math.max(0, Math.floor(parsed.currentLevel)) : 0;
+    const gold = typeof parsed.gold === 'number' ? Math.max(0, Math.floor(parsed.gold)) : 0;
+    return `+${level} 강화 · 골드 ${gold.toLocaleString()}`;
+  } catch {
+    return '진행도 정보를 읽을 수 없음';
+  }
+}
+
+function cloudBadgeLabel(state: CloudSaveState): string {
+  if (state === 'synced') return '☁ 저장됨';
+  if (state === 'loading') return '동기화 중';
+  if (state === 'offline' || state === 'error') return '로컬 저장 중';
+  if (state === 'conflict') return '기록 선택 필요';
+  return '게스트 — 이 기기에만 저장';
+}
+
+function cloudBadgeTitle(state: CloudSaveState): string {
+  if (state === 'offline') return '네트워크 연결을 확인해 주세요. 진행도는 이 기기에 계속 저장됩니다.';
+  if (state === 'error') return '클라우드 저장을 사용할 수 없습니다. 진행도는 이 기기에 계속 저장됩니다.';
+  if (state === 'idle') return '게스트 기록은 이 기기에만 저장됩니다.';
+  if (state === 'conflict') return '사용할 진행 기록을 선택해 주세요.';
+  return '계정 진행도를 클라우드와 동기화합니다.';
 }
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -197,6 +249,9 @@ export default function App() {
   const [showShareModal, setShowShareModal] = useState(false);
   const [showLegalModal, setShowLegalModal] = useState(false);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [cloudState, setCloudState] = useState<CloudSaveState>(() => forgeCloudSave.getState());
+  const [cloudConflict, setCloudConflict] = useState<CloudSaveRecord | null>(null);
+  const [localSavedAt, setLocalSavedAt] = useState<number | null>(() => readLocalSavedAt());
   const toastIdRef = useRef(0);
   const toastTimersRef = useRef(new Map<number, number>());
   const upgradeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -206,6 +261,11 @@ export default function App() {
   const agentAttackRef = useRef<(() => CombatAttackResult) | null>(null);
   const agentRenderStateRef = useRef<(() => string) | null>(null);
   const agentDisposeTimerRef = useRef<number | null>(null);
+  const applyingCloudRef = useRef(false);
+  const hasMeaningfulLocalRef = useRef(serverSimulator.hadLocalHumanProfileAtStartup());
+  const syncSequenceRef = useRef(0);
+  const syncedUidRef = useRef<string | null>(null);
+  const retryCloudSyncRef = useRef<() => void>(() => undefined);
   agentProfileRef.current = agentProfile;
 
   useEffect(() => () => {
@@ -228,6 +288,108 @@ export default function App() {
     const nextProfile = serverSimulator.getProfile();
     setHumanProfile(nextProfile);
     return nextProfile;
+  }, []);
+
+  useEffect(() => {
+    const unsubscribeCloud = forgeCloudSave.subscribe(setCloudState);
+    const unsubscribeSaves = serverSimulator.subscribeHumanProfileSaves(payload => {
+      hasMeaningfulLocalRef.current = true;
+      const savedAt = Date.now();
+      try {
+        localStorage.setItem(FORGE_LOCAL_SAVED_AT_KEY, String(savedAt));
+        setLocalSavedAt(savedAt);
+      } catch {
+        // Companion metadata failure must not interrupt the existing local save.
+      }
+      if (!applyingCloudRef.current) {
+        forgeCloudSave.push(payload);
+      }
+    });
+
+    const syncAccount = (uid: string): void => {
+      const sequence = ++syncSequenceRef.current;
+      void (async () => {
+        const cloudRecord = await forgeCloudSave.pull();
+        const localPayload = serverSimulator.getRawHumanProfile();
+        if (sequence !== syncSequenceRef.current || syncedUidRef.current !== uid) {
+          return;
+        }
+        if (!cloudRecord) {
+          if (localPayload && forgeCloudSave.getState() === 'loading') {
+            forgeCloudSave.push(localPayload);
+            await forgeCloudSave.flush();
+          }
+          return;
+        }
+
+        if (!localPayload || !hasMeaningfulLocalRef.current) {
+          let applied = false;
+          applyingCloudRef.current = true;
+          try {
+            const nextProfile = serverSimulator.applyRawHumanProfile(cloudRecord.payload);
+            setHumanProfile(nextProfile);
+            applied = true;
+          } catch {
+            setCloudConflict(cloudRecord);
+          } finally {
+            applyingCloudRef.current = false;
+          }
+          if (applied) {
+            try {
+              localStorage.setItem(FORGE_LOCAL_SAVED_AT_KEY, String(cloudRecord.updatedAt));
+              setLocalSavedAt(cloudRecord.updatedAt);
+            } catch {
+              // Companion metadata is optional; the validated profile remains applied.
+            }
+          }
+        }
+
+        setCloudConflict(cloudRecord.payload === serverSimulator.getRawHumanProfile() ? null : cloudRecord);
+        const currentPayload = serverSimulator.getRawHumanProfile();
+        if (currentPayload) {
+          forgeCloudSave.push(currentPayload);
+        }
+      })();
+    };
+
+    retryCloudSyncRef.current = () => {
+      const uid = syncedUidRef.current;
+      if (uid) syncAccount(uid);
+    };
+    const handleOnline = (): void => {
+      if (
+        forgeCloudSave.getState() === 'offline'
+        || forgeCloudSave.getState() === 'error'
+      ) {
+        retryCloudSyncRef.current();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+
+    initPortalAuth();
+    const unsubscribeAuth = subscribePortalAuth(authState => {
+      if (authState.status !== 'google') {
+        syncedUidRef.current = null;
+        setCloudConflict(null);
+        return;
+      }
+      if (syncedUidRef.current === authState.user.uid) {
+        return;
+      }
+
+      syncedUidRef.current = authState.user.uid;
+      syncAccount(authState.user.uid);
+    });
+
+    return () => {
+      ++syncSequenceRef.current;
+      syncedUidRef.current = null;
+      retryCloudSyncRef.current = () => undefined;
+      window.removeEventListener('online', handleOnline);
+      unsubscribeAuth();
+      unsubscribeSaves();
+      unsubscribeCloud();
+    };
   }, []);
 
   const refreshAgentProfile = useCallback(() => {
@@ -566,6 +728,35 @@ export default function App() {
     agentRenderStateRef.current = renderState;
   }, []);
 
+  const handleUseLocalSave = useCallback(() => {
+    forgeCloudSave.resolveConflict('local');
+    setCloudConflict(null);
+  }, []);
+
+  const handleUseCloudSave = useCallback(() => {
+    if (!cloudConflict) {
+      return;
+    }
+
+    applyingCloudRef.current = true;
+    try {
+      const nextProfile = serverSimulator.applyRawHumanProfile(cloudConflict.payload);
+      setHumanProfile(nextProfile);
+      try {
+        localStorage.setItem(FORGE_LOCAL_SAVED_AT_KEY, String(cloudConflict.updatedAt));
+        setLocalSavedAt(cloudConflict.updatedAt);
+      } catch {
+        // Companion metadata is optional; the validated profile remains applied.
+      }
+      forgeCloudSave.resolveConflict('cloud');
+      setCloudConflict(null);
+    } catch {
+      // Keep the non-blocking conflict card open if the cloud payload cannot be applied.
+    } finally {
+      applyingCloudRef.current = false;
+    }
+  }, [cloudConflict]);
+
   return (
     <div className="forge-app">
       <header
@@ -579,14 +770,34 @@ export default function App() {
               <p className="forge-brand__eyebrow">THE ANVIL AWAITS</p>
               <h1>Project Forge</h1>
             </div>
-            <button
-              type="button"
-              className="icon-text-button forge-policy-button"
-              onClick={() => setShowLegalModal(true)}
-            >
-              <ScrollText size={15} aria-hidden="true" />
-              정책
-            </button>
+            <div className="forge-header-tools">
+              {cloudState === 'offline' || cloudState === 'error' ? (
+                <button
+                  type="button"
+                  className={`cloud-save-badge cloud-save-badge--${cloudState}`}
+                  title={`${cloudBadgeTitle(cloudState)} 눌러서 다시 시도할 수 있습니다.`}
+                  onClick={() => retryCloudSyncRef.current()}
+                >
+                  {cloudBadgeLabel(cloudState)}
+                </button>
+              ) : (
+                <span
+                  className={`cloud-save-badge cloud-save-badge--${cloudState}`}
+                  title={cloudBadgeTitle(cloudState)}
+                  role="status"
+                >
+                  {cloudBadgeLabel(cloudState)}
+                </span>
+              )}
+              <button
+                type="button"
+                className="icon-text-button forge-policy-button"
+                onClick={() => setShowLegalModal(true)}
+              >
+                <ScrollText size={15} aria-hidden="true" />
+                정책
+              </button>
+            </div>
           </div>
 
           <div className="resource-hud" aria-label={`${currentLane === 'agent' ? 'AI' : '사람'} 보유 자원과 빠른 메뉴`}>
@@ -629,6 +840,28 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {cloudState === 'conflict' && cloudConflict && (
+        <section className="cloud-conflict-card" aria-label="클라우드 저장 기록 선택">
+          <p className="cloud-conflict-card__title">어느 대장간 기록을 이어갈까요?</p>
+          <div className="cloud-conflict-card__options">
+            <div>
+              <strong>이 기기</strong>
+              <span>{formatSavedAt(localSavedAt)}</span>
+              <small>+{humanProfile.currentLevel} 강화 · 골드 {Math.floor(humanProfile.gold).toLocaleString()}</small>
+            </div>
+            <div>
+              <strong>클라우드</strong>
+              <span>{formatSavedAt(cloudConflict.updatedAt)}</span>
+              <small>{summarizeForgePayload(cloudConflict.payload)}</small>
+            </div>
+          </div>
+          <div className="cloud-conflict-card__actions">
+            <button type="button" onClick={handleUseLocalSave}>이 기기 기록 사용</button>
+            <button type="button" onClick={handleUseCloudSave}>클라우드 기록 사용</button>
+          </div>
+        </section>
+      )}
 
       <nav className="forge-tabs" aria-label="Project Forge 메뉴">
         <button

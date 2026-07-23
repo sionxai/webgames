@@ -88,7 +88,8 @@ button:disabled {
 .forge-header {
   position: relative;
   min-height: 92px;
-  padding: 9px 12px 10px;
+  /* 왼쪽 여백은 고정 배치된 포털 복귀 버튼이 브랜드를 가리지 않게 비워 둔다 */
+  padding: 9px 12px 10px 54px;
   overflow: hidden;
   isolation: isolate;
   background-size: cover;
@@ -113,7 +114,8 @@ button:disabled {
 .forge-brand-row,
 .resource-hud,
 .resource-hud__balances,
-.resource-hud__actions {
+.resource-hud__actions,
+.forge-header-tools {
   display: flex;
   align-items: center;
 }
@@ -142,6 +144,111 @@ button:disabled {
   line-height: 1;
   letter-spacing: 0.015em;
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.8);
+}
+
+.forge-header-tools {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cloud-save-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 7px;
+  color: #c9bfb5;
+  background: rgba(22, 18, 15, 0.86);
+  border: 1px solid rgba(206, 170, 124, 0.28);
+  border-radius: 999px;
+  font-size: 0.61rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.cloud-save-badge--synced {
+  color: var(--forge-success-bright);
+  border-color: rgba(93, 187, 149, 0.48);
+}
+
+.cloud-save-badge--loading {
+  color: var(--forge-amber-bright);
+}
+
+.cloud-save-badge--offline,
+.cloud-save-badge--error,
+.cloud-save-badge--conflict {
+  color: #ffc09f;
+  border-color: rgba(217, 102, 79, 0.52);
+}
+
+.cloud-conflict-card {
+  z-index: 2;
+  display: grid;
+  gap: 9px;
+  margin: 10px 12px 0;
+  padding: 12px;
+  background: #211b17;
+  border: 1px solid #765039;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+}
+
+.cloud-conflict-card__title {
+  margin: 0;
+  color: #f2d5aa;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.cloud-conflict-card__options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.cloud-conflict-card__options > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  background: rgba(10, 8, 7, 0.52);
+  border: 1px solid #49392e;
+  border-radius: 7px;
+}
+
+.cloud-conflict-card__options strong {
+  color: #f1e6d7;
+  font-size: 0.74rem;
+}
+
+.cloud-conflict-card__options span,
+.cloud-conflict-card__options small {
+  color: var(--forge-muted);
+  font-size: 0.65rem;
+  line-height: 1.35;
+}
+
+.cloud-conflict-card__options small {
+  color: #dcb77f;
+}
+
+.cloud-conflict-card__actions {
+  display: flex;
+  gap: 7px;
+}
+
+.cloud-conflict-card__actions button {
+  flex: 1;
+  min-height: 36px;
+  padding: 7px;
+  color: #f4e7d7;
+  background: #3b2b22;
+  border: 1px solid #765039;
+  border-radius: 7px;
+  cursor: pointer;
+  font-size: 0.7rem;
+  font-weight: 800;
 }
 
 .icon-text-button,
@@ -2355,7 +2462,7 @@ button:disabled {
 
 @media (max-width: 400px) {
   .forge-header {
-    padding-inline: 9px;
+    padding-inline: 46px 9px;
   }
 
   .resource-chip {
@@ -2527,7 +2634,9 @@ button:disabled {
 
   .forge-header {
     min-height: 68px;
-    padding: 8px max(24px, calc((100vw - 1240px) / 2));
+    /* 왼쪽은 고정 배치된 포털 복귀 버튼 자리를 확보한다 */
+    padding: 8px max(24px, calc((100vw - 1240px) / 2)) 8px
+      max(58px, calc((100vw - 1240px) / 2));
     background-position: center 52%;
   }
 
