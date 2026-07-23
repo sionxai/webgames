@@ -1,0 +1,579 @@
+:root {
+  --hp-bg: #0f1117;
+  --hp-surface: #171a22;
+  --hp-surface-2: #1f2430;
+  --hp-border: #2b3140;
+  --hp-text: #e8ecf4;
+  --hp-muted: #98a1b3;
+  --hp-accent: #e9a44b;
+  --hp-accent-2: #ff8a3d;
+  --hp-radius: 14px;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--hp-bg);
+}
+
+body {
+  background:
+    radial-gradient(circle at 50% -15%, rgba(233, 164, 75, 0.11), transparent 34rem),
+    var(--hp-bg);
+  color: var(--hp-text);
+}
+
+body.hp-ui-ready {
+  --bg: var(--hp-bg);
+  --panel: var(--hp-surface);
+  --panel-2: var(--hp-surface-2);
+  --text: var(--hp-text);
+  --muted: var(--hp-muted);
+  --grid: var(--hp-border);
+  --nav-height: 68px;
+  min-width: 0;
+  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
+}
+
+body.hp-surface-open {
+  overflow: hidden !important;
+  overscroll-behavior: none;
+}
+
+body.hp-ui-ready button,
+body.hp-ui-ready input,
+body.hp-ui-ready select {
+  font: inherit;
+}
+
+body.hp-ui-ready button {
+  min-height: 44px;
+}
+
+body.hp-ui-ready .wrap {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1120px;
+  padding: 12px 16px 24px;
+}
+
+body.hp-ui-ready .panel {
+  border-color: var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: var(--hp-surface);
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.22);
+}
+
+/* Compact header --------------------------------------------------------- */
+body.hp-ui-ready header.top.hp-header {
+  position: relative;
+  z-index: 200;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-left: max(52px, calc(52px + env(safe-area-inset-left, 0px)));
+}
+
+.hp-header-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.hp-header-main .title-section {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.hp-header-main .title-section h1 {
+  overflow: hidden;
+  color: var(--hp-text);
+  font-size: clamp(17px, 4.7vw, 22px);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hp-header-main .hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hp-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hp-resource-strip {
+  display: flex;
+  gap: 7px;
+  min-width: 0;
+  margin-inline: -2px;
+  padding: 1px 2px 3px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.hp-resource-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.hp-resource-chip {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: 999px;
+  background: var(--hp-surface-2);
+  color: transparent;
+  font-size: 0;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.hp-resource-chip::before {
+  content: attr(data-hp-icon);
+  color: var(--hp-accent);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.hp-resource-chip b {
+  color: var(--hp-text);
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hp-header-actions {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+  margin-left: auto;
+}
+
+body.hp-ui-ready .hp-menu-trigger {
+  position: relative;
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--hp-border);
+  border-radius: 12px;
+  background: var(--hp-surface-2);
+  color: var(--hp-text);
+  font-size: 19px;
+  line-height: 1;
+}
+
+body.hp-ui-ready .hp-menu-trigger:hover,
+body.hp-ui-ready .hp-menu-trigger[aria-expanded="true"] {
+  border-color: rgba(233, 164, 75, 0.55);
+  background: rgba(233, 164, 75, 0.12);
+  color: var(--hp-accent);
+}
+
+.hp-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  box-sizing: border-box;
+  display: grid;
+  width: min(270px, calc(100vw - 24px));
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: #1a1e27;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.48);
+}
+
+.hp-popover[hidden] {
+  display: none !important;
+}
+
+.hp-profile-popover {
+  right: 50px;
+}
+
+.hp-popover > button,
+.hp-popover .mailbox-button {
+  box-sizing: border-box;
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--hp-text);
+  text-align: left;
+}
+
+.hp-popover > button:hover,
+.hp-popover .mailbox-button:hover {
+  border-color: var(--hp-border);
+  background: var(--hp-surface-2);
+}
+
+.hp-profile-popover #whoami {
+  display: block;
+  overflow: hidden;
+  padding: 8px 10px 10px;
+  border-bottom: 1px solid var(--hp-border);
+  color: var(--hp-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hp-profile-popover .sep {
+  display: none;
+}
+
+body.hp-ui-ready .hp-menu-popover .mailbox-widget {
+  position: static;
+  inset: auto;
+  z-index: auto;
+}
+
+/* Main and sub tabs ------------------------------------------------------ */
+body.hp-ui-ready .gacha-main-panel > h2 {
+  margin-bottom: 12px;
+  font-size: 15px;
+}
+
+body.hp-ui-ready .gacha-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 3px;
+  margin: 0 0 12px;
+  padding: 4px;
+  overflow: visible;
+  border: 1px solid var(--hp-border);
+  border-radius: 12px;
+  background: #11141b;
+}
+
+body.hp-ui-ready .gacha-tab {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 9px;
+  color: var(--hp-muted);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body.hp-ui-ready .gacha-tab.active {
+  background: var(--hp-surface-2);
+  color: var(--hp-accent);
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.3);
+}
+
+body.hp-ui-ready .gacha-type-row {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin: 4px 0 14px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+body.hp-ui-ready .gacha-type-row::-webkit-scrollbar {
+  display: none;
+}
+
+body.hp-ui-ready .gacha-type-row .mode-btn {
+  flex: 0 0 auto;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-color: var(--hp-border);
+  background: transparent;
+  color: var(--hp-muted);
+}
+
+body.hp-ui-ready .gacha-type-row .mode-btn.active {
+  border-color: rgba(233, 164, 75, 0.65);
+  background: rgba(233, 164, 75, 0.12);
+  color: var(--hp-accent);
+}
+
+body.hp-ui-ready .draw-group,
+body.hp-ui-ready .character-draw-controls,
+body.hp-ui-ready .diamond-shop {
+  border-color: var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: var(--hp-surface-2);
+  box-shadow: none;
+}
+
+body.hp-ui-ready .draw-button {
+  min-height: 68px;
+  border-radius: 12px;
+}
+
+/* Shared modal layer ---------------------------------------------------- */
+.hp-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: block;
+  opacity: 0;
+  pointer-events: none;
+  background: rgba(5, 7, 11, 0.82);
+  -webkit-backdrop-filter: blur(7px);
+  backdrop-filter: blur(7px);
+  transition: opacity 160ms ease;
+}
+
+.hp-backdrop.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/*
+ * 오버레이 자신이 백드롭을 맡는다.
+ * 투명하게 두면 뒤의 본문 글자가 패널을 뚫고 비쳐 읽을 수 없게 된다.
+ */
+body.hp-ui-ready .quest-overlay,
+body.hp-ui-ready .user-options-modal,
+body.hp-ui-ready .mailbox-overlay {
+  /* 게임이 쓰는 기존 층(9500~10000)보다 낮으면 본문에 가려진다 */
+  z-index: 9600 !important;
+  background: rgba(6, 8, 12, 0.88) !important;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+body.hp-ui-ready .quest-panel,
+body.hp-ui-ready .user-options-panel,
+body.hp-ui-ready .mailbox-panel {
+  position: relative;
+  z-index: 1000;
+  box-sizing: border-box;
+  border: 1px solid var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: #171a22;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62);
+}
+
+body.hp-ui-ready .quest-close,
+body.hp-ui-ready .mailbox-close {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  min-height: 44px;
+}
+
+/* navigation.js injects its rules later, so these selectors are scoped. */
+body.hp-ui-ready .bottom-nav {
+  box-sizing: content-box;
+  height: 58px !important;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  border-color: var(--hp-border);
+  background: rgba(23, 26, 34, 0.97);
+  z-index: 100 !important;
+}
+
+body.hp-ui-ready .bottom-nav__button {
+  position: relative;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 58px;
+  padding: 6px 2px;
+  color: var(--hp-muted);
+}
+
+body.hp-ui-ready .bottom-nav__button.active {
+  color: var(--hp-accent);
+}
+
+body.hp-ui-ready .bottom-nav__button.active::after {
+  content: "";
+  position: absolute;
+  right: 24%;
+  bottom: 2px;
+  left: 24%;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--hp-accent);
+}
+
+body.hp-ui-ready .bottom-nav__button .nav-icon {
+  font-size: 19px;
+}
+
+body.hp-ui-ready .global-chat {
+  right: 0;
+  bottom: calc(58px + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  z-index: 1000 !important;
+  box-sizing: border-box;
+  width: min(720px, 100%);
+  max-width: none;
+  max-height: min(72vh, 580px);
+  margin: auto;
+  padding: 14px 16px calc(18px + env(safe-area-inset-bottom, 0px));
+  overflow: hidden;
+  border-color: var(--hp-border);
+  border-radius: 18px 18px 0 0;
+  background: #171a22;
+  box-shadow: 0 -18px 60px rgba(0, 0, 0, 0.5);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+body.hp-ui-ready .global-chat.is-hidden {
+  display: none !important;
+}
+
+body.hp-ui-ready .global-chat__log,
+body.hp-ui-ready .global-chat.is-expanded .global-chat__log {
+  max-height: min(42vh, 320px);
+}
+
+body.hp-ui-ready .global-chat__button,
+body.hp-ui-ready .global-chat__input,
+body.hp-ui-ready .global-chat__send {
+  min-height: 44px;
+  height: 44px;
+}
+
+body.hp-ui-ready .global-chat__floating-btn {
+  right: max(14px, env(safe-area-inset-right, 0px));
+  bottom: calc(74px + env(safe-area-inset-bottom, 0px));
+  z-index: 110 !important;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  padding: 0;
+  border: 1px solid rgba(233, 164, 75, 0.48);
+  border-radius: 50%;
+  background: linear-gradient(145deg, var(--hp-accent), var(--hp-accent-2));
+  color: #211307;
+}
+
+body.hp-ui-ready .global-chat__floating-btn span {
+  width: 100%;
+  overflow: hidden;
+  font-size: 0;
+  justify-content: center;
+}
+
+body.hp-ui-ready .global-chat__floating-btn span::before {
+  content: "💬";
+  font-size: 22px;
+}
+
+/* Auth pages load the same assets but do not receive game-only DOM. */
+body.auth-body {
+  background-color: var(--hp-bg);
+}
+
+body.auth-body .auth-card .panel {
+  border-color: var(--hp-border);
+  border-radius: var(--hp-radius);
+  background: rgba(23, 26, 34, 0.94);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5);
+}
+
+body.auth-body .auth-card input {
+  min-height: 44px;
+  border-color: var(--hp-border);
+  background: var(--hp-surface-2);
+}
+
+@media (max-width: 720px) {
+  body.hp-ui-ready .wrap {
+    padding: 10px 10px 20px;
+  }
+
+  body.hp-ui-ready header.top.hp-header {
+    gap: 8px;
+  }
+
+  .hp-header-main .hint,
+  .hp-header-main .version {
+    display: none;
+  }
+
+  body.hp-ui-ready .gacha-main-panel > h2 {
+    display: none;
+  }
+
+  body.hp-ui-ready .quest-overlay,
+  body.hp-ui-ready .user-options-modal,
+  body.hp-ui-ready .mailbox-overlay {
+    align-items: flex-end;
+    justify-content: center;
+    padding: 12px 10px calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  body.hp-ui-ready .quest-panel,
+  body.hp-ui-ready .user-options-panel,
+  body.hp-ui-ready .mailbox-panel {
+    width: 100%;
+    max-height: min(82vh, 680px);
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 420px) {
+  body.hp-ui-ready .wrap {
+    padding-inline: 8px;
+  }
+
+  body.hp-ui-ready header.top.hp-header {
+    padding-left: max(52px, calc(52px + env(safe-area-inset-left, 0px)));
+  }
+
+  .hp-header-main {
+    gap: 7px;
+  }
+
+  .hp-header-main .title-section h1 {
+    font-size: 17px;
+  }
+
+  body.hp-ui-ready .hp-menu-trigger {
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    min-height: 42px;
+  }
+
+  body.hp-ui-ready .gacha-tab {
+    font-size: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hp-backdrop,
+  body.hp-ui-ready *,
+  body.hp-ui-ready *::before,
+  body.hp-ui-ready *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
