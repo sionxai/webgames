@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>바카라 - Premium Baccarat Game</title>
+    <meta name="description" content="프리미엄 바카라 게임 - 자동 배팅 전략 시뮬레이터">
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♠</text></svg>">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;900&display=swap"
+        rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <!-- Auth Bar -->
+    <div id="auth-bar" class="auth-bar">
+        <div id="auth-login">
+            <button id="btn-google-login" class="btn-auth-google">🔑 Google 로그인</button>
+            <span id="sync-status" class="sync-status">💾 로컬</span>
+        </div>
+        <div id="auth-user" class="hidden">
+            <img id="auth-user-avatar" class="auth-avatar hidden" alt="avatar">
+            <span id="auth-user-name" class="auth-name"></span>
+            <span id="sync-status" class="sync-status">☁️ 동기화</span>
+            <button id="btn-logout" class="btn-auth-logout">로그아웃</button>
+        </div>
+    </div>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">♠ ♥ ♦ ♣</div>
+            <h1>BACCARAT</h1>
+            <div class="loading-bar">
+                <div class="loading-bar-fill"></div>
+            </div>
+            <p>Loading Premium Experience...</p>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div id="app" class="app hidden">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">♠ BACCARAT</h1>
+                <span class="badge">PREMIUM</span>
+            </div>
+            <div class="header-center">
+                <div class="round-info">
+                    <span class="round-label">ROUND</span>
+                    <span id="round-number" class="round-number">0</span>
+                </div>
+                <div class="shoe-info">
+                    <span class="shoe-label">SHOE</span>
+                    <div class="shoe-bar">
+                        <div id="shoe-progress" class="shoe-bar-fill" style="width: 100%"></div>
+                    </div>
+                    <span id="shoe-count" class="shoe-count">416</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <button id="btn-settings" class="btn-icon" title="설정">⚙️</button>
+                <button id="btn-stats" class="btn-icon" title="통계">📊</button>
+                <button id="btn-history" class="btn-icon" title="기록">📋</button>
+            </div>
+        </header>
+
+        <!-- Game Area -->
+        <main class="game-area">
+            <!-- Scoreboard / Road Map -->
+            <section class="scoreboard-section">
+                <div class="scoreboard-header">
+                    <h3>스코어보드</h3>
+                    <div class="scoreboard-tabs">
+                        <button class="scoreboard-tab active" data-tab="bead">비드로드</button>
+                        <button class="scoreboard-tab" data-tab="big">빅로드</button>
+                    </div>
+                </div>
+                <div id="bead-road" class="road-grid bead-road"></div>
+                <div id="big-road" class="road-grid big-road hidden"></div>
+                <div class="scoreboard-summary">
+                    <div class="summary-item player-color">
+                        <span class="summary-dot player-dot"></span>
+                        <span>플레이어</span>
+                        <span id="score-player" class="summary-count">0</span>
+                    </div>
+                    <div class="summary-item banker-color">
+                        <span class="summary-dot banker-dot"></span>
+                        <span>뱅커</span>
+                        <span id="score-banker" class="summary-count">0</span>
+                    </div>
+                    <div class="summary-item tie-color">
+                        <span class="summary-dot tie-dot"></span>
+                        <span>타이</span>
+                        <span id="score-tie" class="summary-count">0</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Table Area -->
+            <section class="table-section">
+                <!-- Dealer Area -->
+                <div class="dealer-area">
+                    <div class="dealer-label">DEALER</div>
+                </div>
+
+                <!-- Cards Display -->
+                <div class="cards-display">
+                    <div class="hand-area player-hand-area">
+                        <div class="hand-label">PLAYER</div>
+                        <div id="player-cards" class="cards-container"></div>
+                        <div id="player-score" class="hand-score">-</div>
+                    </div>
+                    <div class="vs-divider">VS</div>
+                    <div class="hand-area banker-hand-area">
+                        <div class="hand-label">BANKER</div>
+                        <div id="banker-cards" class="cards-container"></div>
+                        <div id="banker-score" class="hand-score">-</div>
+                    </div>
+                </div>
+
+                <!-- Result Display -->
+                <div id="result-display" class="result-display hidden">
+                    <div id="result-text" class="result-text"></div>
+                    <div id="result-amount" class="result-amount"></div>
+                </div>
+
+                <!-- AI Players -->
+                <div class="ai-players">
+                    <div class="ai-player" id="ai-player-1">
+                        <div class="ai-avatar">🤖</div>
+                        <div class="ai-info">
+                            <span class="ai-name">AI - Alex</span>
+                            <span class="ai-balance" id="ai1-balance">₩1,000,000</span>
+                            <span class="ai-bet" id="ai1-bet">-</span>
+                        </div>
+                    </div>
+                    <div class="ai-player" id="ai-player-2">
+                        <div class="ai-avatar">🤖</div>
+                        <div class="ai-info">
+                            <span class="ai-name">AI - Blake</span>
+                            <span class="ai-balance" id="ai2-balance">₩1,000,000</span>
+                            <span class="ai-bet" id="ai2-bet">-</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Betting Area -->
+            <section class="betting-section">
+                <!-- Player Balance -->
+                <div class="balance-bar">
+                    <div class="balance-info">
+                        <span class="balance-label">보유 금액</span>
+                        <span id="player-balance" class="balance-amount">₩1,000,000</span>
+                    </div>
+                    <div class="current-bet-info">
+                        <span class="bet-label">현재 배팅</span>
+                        <span id="current-bet" class="bet-amount">₩0</span>
+                        <span id="max-bet-display" class="bet-limit-label">최대: ₩500,000</span>
+                    </div>
+                </div>
+
+                <!-- Betting Options -->
+                <div class="betting-options">
+                    <button id="bet-player" class="bet-option bet-player-btn">
+                        <span class="bet-option-label">PLAYER</span>
+                        <span class="bet-option-payout">1:1</span>
+                        <span id="bet-player-amount" class="bet-option-amount">₩0</span>
+                    </button>
+                    <button id="bet-tie" class="bet-option bet-tie-btn">
+                        <span class="bet-option-label">TIE</span>
+                        <span class="bet-option-payout">1:8</span>
+                        <span id="bet-tie-amount" class="bet-option-amount">₩0</span>
+                    </button>
+                    <button id="bet-banker" class="bet-option bet-banker-btn">
+                        <span class="bet-option-label">BANKER</span>
+                        <span class="bet-option-payout">1:0.95</span>
+                        <span id="bet-banker-amount" class="bet-option-amount">₩0</span>
+                    </button>
+                </div>
+
+                <!-- Preset Chip System -->
+                <div class="preset-section">
+                    <div class="preset-header">
+                        <span class="preset-title">🎰 칩 프리셋</span>
+                        <button id="btn-preset-edit" class="btn-preset-toggle">✏️ 수정</button>
+                    </div>
+                    <div class="preset-set-bar">
+                        <select id="preset-set-select" class="preset-set-select">
+                            <option value="__default__">기본 세트</option>
+                        </select>
+                        <button id="btn-preset-set-save" class="btn-preset-set" title="현재 프리셋을 새 세트로 저장">💾 저장</button>
+                        <button id="btn-preset-set-overwrite" class="btn-preset-set" title="선택된 세트에 덮어쓰기">📝
+                            덮어쓰기</button>
+                        <button id="btn-preset-set-delete" class="btn-preset-set btn-preset-set-danger"
+                            title="선택된 세트 삭제">🗑️</button>
+                    </div>
+                    <div id="preset-tray" class="preset-tray">
+                        <!-- 10 preset slots rendered by JS -->
+                    </div>
+                    <!-- Edit mode chip selector -->
+                    <div id="preset-editor" class="preset-editor hidden">
+                        <div class="preset-editor-info">
+                            <span>슬롯 <strong id="editing-slot-num">1</strong> 수정 중</span>
+                            <span id="editing-slot-total" class="editing-total">₩0</span>
+                        </div>
+                        <div class="preset-editor-chips">
+                            <button class="chip-add" data-chip="1000">₩1K</button>
+                            <button class="chip-add" data-chip="5000">₩5K</button>
+                            <button class="chip-add" data-chip="10000">₩10K</button>
+                            <button class="chip-add" data-chip="50000">₩50K</button>
+                            <button class="chip-add" data-chip="100000">₩100K</button>
+                            <button class="chip-add" data-chip="500000">₩500K</button>
+                        </div>
+                        <div class="preset-editor-actions">
+                            <button id="btn-preset-clear-slot" class="btn btn-clear"
+                                style="font-size:0.75rem; padding:4px 12px;">초기화</button>
+                            <button id="btn-preset-confirm" class="btn btn-deal"
+                                style="font-size:0.75rem; padding:4px 12px;">✅ 확인</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="action-buttons">
+                    <button id="btn-clear" class="btn btn-clear">초기화</button>
+                    <button id="btn-undo" class="btn btn-undo">취소</button>
+                    <button id="btn-deal" class="btn btn-deal" disabled>딜</button>
+                    <button id="btn-next-round" class="btn btn-next-round hidden">▶ 다음 라운드</button>
+                    <button id="btn-rebet" class="btn btn-rebet">리벳</button>
+                </div>
+
+                <!-- Auto Play Controls -->
+                <div class="auto-play-section">
+                    <button id="btn-trend-advice" class="btn btn-trend-advice">🧠 추세 조언</button>
+                    <button id="btn-auto-toggle" class="btn btn-auto">🤖 자동 배팅</button>
+                    <button id="btn-battle" class="btn btn-battle">🏆 전략 대결</button>
+                </div>
+            </section>
+
+            <!-- Commentary Panel (moved to bottom) -->
+            <section id="commentary-section" class="commentary-section hidden">
+                <div class="commentary-header">
+                    <span class="commentary-icon">💡</span>
+                    <span class="commentary-title">게임 해설</span>
+                </div>
+                <div id="commentary-lines" class="commentary-lines">
+                    <div class="commentary-line" id="commentary-line-1"></div>
+                    <div class="commentary-line" id="commentary-line-2"></div>
+                    <div class="commentary-line" id="commentary-line-3"></div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Auto Play Modal -->
+        <div id="auto-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content auto-modal-content">
+                <div class="modal-header">
+                    <h2>🤖 자동 배팅 설정</h2>
+                    <button class="modal-close" data-close="auto-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="auto-form">
+                        <div class="form-group">
+                            <label>배팅 전략</label>
+                            <div class="strategy-cards">
+                                <div class="strategy-card active" data-strategy="martingale">
+                                    <h4>📈 마틴게일</h4>
+                                    <p>패배 시 배팅액 2배 증가. 승리 시 초기 배팅으로 복귀.</p>
+                                    <span class="strategy-risk high">위험도: 높음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="grand-martingale">
+                                    <h4>📈📈 그랜드 마틴게일</h4>
+                                    <p>패배 시 배팅액 2배 + 1단위 증가. 더 공격적인 전략.</p>
+                                    <span class="strategy-risk very-high">위험도: 매우 높음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="hybrid-beast">
+                                    <h4>🦁 하이브리드 비스트</h4>
+                                    <p>승리 시 파롤리(2배↑), 패배 시 그랜드 마틴(2배+1단위). 공수 전환형!</p>
+                                    <span class="strategy-risk very-high">위험도: 매우 높음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="paroli">
+                                    <h4>🔄 파롤리 (역마틴게일)</h4>
+                                    <p>승리 시 배팅액 2배 증가. 3연승 또는 패배 시 초기 복귀.</p>
+                                    <span class="strategy-risk low">위험도: 낮음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="fibonacci">
+                                    <h4>🐚 피보나치</h4>
+                                    <p>패배 시 피보나치 수열 진행 (1→1→2→3→5→8...). 승리 시 2단계 후퇴.</p>
+                                    <span class="strategy-risk medium">위험도: 중간</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="dalembert">
+                                    <h4>⚖️ 달랑베르</h4>
+                                    <p>패배 시 +1단위, 승리 시 -1단위. 가장 안정적인 점진적 전략.</p>
+                                    <span class="strategy-risk low">위험도: 낮음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="1326">
+                                    <h4>🎯 1-3-2-6 시스템</h4>
+                                    <p>승리할 때마다 1→3→2→6 단위 순서대로 배팅. 4연승 시 큰 수익!</p>
+                                    <span class="strategy-risk low">위험도: 낮음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="labouchere">
+                                    <h4>✂️ 라부셰르 (취소법)</h4>
+                                    <p>숫자 리스트의 양끝을 더해 배팅. 승리 시 양끝 제거, 패배 시 합을 추가.</p>
+                                    <span class="strategy-risk medium">위험도: 중간</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="oscar-grind">
+                                    <h4>🎰 오스카 그라인드</h4>
+                                    <p>매 사이클마다 1단위 수익 목표. 패배 시 유지, 승리 시 +1단위.</p>
+                                    <span class="strategy-risk low">위험도: 낮음</span>
+                                </div>
+                                <div class="strategy-card" data-strategy="flat">
+                                    <h4>📊 플랫 베팅</h4>
+                                    <p>항상 동일 금액 배팅. 가장 보수적이며 전략 비교의 기준선.</p>
+                                    <span class="strategy-risk very-low">위험도: 매우 낮음</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>배팅 대상</label>
+                            <div class="radio-group">
+                                <label class="radio-label">
+                                    <input type="radio" name="auto-target" value="player" checked>
+                                    <span class="radio-custom player-radio"></span>
+                                    플레이어
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="auto-target" value="banker">
+                                    <span class="radio-custom banker-radio"></span>
+                                    뱅커
+                                </label>
+                                <label class="radio-label">
+                                    <input type="radio" name="auto-target" value="trend">
+                                    <span class="radio-custom trend-radio"></span>
+                                    📊 추세 분석 (자동)
+                                </label>
+                            </div>
+                            <div id="trend-description" class="trend-desc hidden">
+                                <span class="trend-desc-icon">🧠</span>
+                                <span>스트릭 추종 + 쵸핑 패턴 + 통계 편향을 결합하여 매 라운드 배팅 대상을 자동 결정합니다.</span>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>기본 배팅액</label>
+                                <input type="number" id="auto-base-bet" class="form-input" value="10000" min="1000"
+                                    step="1000">
+                            </div>
+                            <div class="form-group">
+                                <label>종료 조건</label>
+                                <select id="auto-stop-condition" class="form-input">
+                                    <option value="target">목표 금액 도달</option>
+                                    <option value="allin">올인 (파산)</option>
+                                    <option value="rounds">지정 라운드 수</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row" id="target-amount-row">
+                            <div class="form-group">
+                                <label>목표 금액 (₩)</label>
+                                <input type="number" id="auto-target-amount" class="form-input" value="2000000"
+                                    min="100000" step="100000">
+                            </div>
+                        </div>
+                        <div class="form-row hidden" id="target-rounds-row">
+                            <div class="form-group">
+                                <label>라운드 수</label>
+                                <input type="number" id="auto-target-rounds" class="form-input" value="100" min="1"
+                                    step="1">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>게임 속도</label>
+                            <div class="speed-control">
+                                <input type="range" id="auto-speed" class="speed-slider" min="1" max="10" value="1">
+                                <span id="speed-value" class="speed-value">1x</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-auto-start" class="btn btn-deal">▶ 자동 배팅 시작</button>
+                    <button id="btn-show-progression" class="btn btn-info">📊 배팅 진행표</button>
+                    <button class="btn btn-clear" data-close="auto-modal">취소</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trend Advice Modal -->
+        <div id="advice-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content advice-modal-content">
+                <div class="modal-header">
+                    <h2>🧠 추세 분석 조언</h2>
+                    <button class="modal-close" data-close="advice-modal">&times;</button>
+                </div>
+                <div class="modal-body" id="advice-body">
+                    <!-- Advice content injected by JS -->
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-clear" data-close="advice-modal">닫기</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Betting Progression Popup -->
+        <div id="progression-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content" style="max-width: 700px;">
+                <div class="modal-header">
+                    <h2>📊 <span id="progression-title">배팅 진행표</span></h2>
+                    <button class="modal-close" data-close="progression-modal">&times;</button>
+                </div>
+                <div class="modal-body" style="padding: 12px;">
+                    <div id="progression-content" style="display: flex; gap: 16px; flex-wrap: wrap;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-clear" data-close="progression-modal">닫기</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Auto Play Running Bar -->
+        <div id="auto-running-bar" class="auto-running-bar hidden">
+            <div class="auto-running-info">
+                <span class="auto-running-indicator">🔴 LIVE</span>
+                <span id="auto-strategy-name" class="auto-running-strategy">마틴게일</span>
+                <span class="auto-running-divider">|</span>
+                <span>라운드: <strong id="auto-round-count">0</strong></span>
+                <span class="auto-running-divider">|</span>
+                <span>손익: <strong id="auto-profit" class="profit-positive">₩0</strong></span>
+                <span class="auto-running-divider">|</span>
+                <span>⏱ <strong id="auto-elapsed">0:00</strong></span>
+                <span class="auto-running-divider">|</span>
+                <span>잔여: <strong id="auto-eta">--:--</strong></span>
+                <span class="auto-running-divider">|</span>
+                <span>다음 배팅: <strong id="auto-next-bet">₩10,000</strong></span>
+                <span id="auto-trend-indicator" class="hidden">
+                    <span class="auto-running-divider">|</span>
+                    <span>추세: <strong id="auto-trend-label">📊 분석 중...</strong></span>
+                </span>
+            </div>
+            <div class="auto-running-controls">
+                <div class="speed-control-mini">
+                    <button class="speed-btn" id="speed-down">◀</button>
+                    <span id="current-speed">1x</span>
+                    <button class="speed-btn" id="speed-up">▶</button>
+                </div>
+                <button id="btn-auto-pause" class="btn btn-pause">⏸ 일시정지</button>
+                <button id="btn-auto-stop" class="btn btn-stop">⏹ 중지</button>
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>⚙️ 게임 설정</h2>
+                    <button class="modal-close" data-close="settings-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>시작 자금 (₩)</label>
+                        <select id="setting-balance" class="form-input">
+                            <option value="500000">₩500,000</option>
+                            <option value="1000000" selected>₩1,000,000</option>
+                            <option value="5000000">₩5,000,000</option>
+                            <option value="10000000">₩10,000,000</option>
+                            <option value="50000000">₩50,000,000</option>
+                            <option value="100000000">₩100,000,000</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>최대 배팅 금액 (₩)</label>
+                        <select id="setting-max-bet" class="form-input">
+                            <option value="50000">₩50,000</option>
+                            <option value="100000">₩100,000</option>
+                            <option value="500000" selected>₩500,000</option>
+                            <option value="1000000">₩1,000,000</option>
+                            <option value="5000000">₩5,000,000</option>
+                            <option value="10000000">₩10,000,000</option>
+                            <option value="0">무제한</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>덱 수</label>
+                        <select id="setting-decks" class="form-input">
+                            <option value="6">6 덱</option>
+                            <option value="8" selected>8 덱 (표준)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>사운드 효과</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-sound" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="form-group">
+                        <label>카드 애니메이션</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="setting-animation" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button id="btn-new-game" class="btn btn-deal">새 게임 시작</button>
+                    <button class="btn btn-clear" data-close="settings-modal">닫기</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Stats Modal -->
+        <div id="stats-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content stats-modal-content">
+                <div class="modal-header">
+                    <h2>📊 통계 & 분석</h2>
+                    <button class="modal-close" data-close="stats-modal">&times;</button>
+                </div>
+                <div class="modal-body stats-body">
+                    <!-- Stats Overview -->
+                    <div class="stats-overview">
+                        <div class="stat-card">
+                            <span class="stat-label">총 라운드</span>
+                            <span id="stat-total-rounds" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">승률</span>
+                            <span id="stat-win-rate" class="stat-value">0%</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">총 수익</span>
+                            <span id="stat-total-profit" class="stat-value">₩0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">ROI</span>
+                            <span id="stat-roi" class="stat-value">0%</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">최대 연승</span>
+                            <span id="stat-max-streak" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">최대 연패</span>
+                            <span id="stat-max-loss-streak" class="stat-value">0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">최고 잔액</span>
+                            <span id="stat-peak-balance" class="stat-value">₩0</span>
+                        </div>
+                        <div class="stat-card">
+                            <span class="stat-label">최저 잔액</span>
+                            <span id="stat-lowest-balance" class="stat-value">₩0</span>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="stats-charts">
+                        <div class="chart-container">
+                            <h3>잔액 변화 추이</h3>
+                            <canvas id="chart-balance"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <h3>결과 분포</h3>
+                            <canvas id="chart-results"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <h3>배팅 대상별 적중률</h3>
+                            <canvas id="chart-bets"></canvas>
+                        </div>
+                        <div class="chart-container">
+                            <h3>수익/손실 추이</h3>
+                            <canvas id="chart-profit"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Detail Table -->
+                    <div class="stats-detail">
+                        <h3>상세 분석</h3>
+                        <div class="detail-table-wrapper">
+                            <table class="detail-table">
+                                <thead>
+                                    <tr>
+                                        <th>항목</th>
+                                        <th>플레이어 배팅</th>
+                                        <th>뱅커 배팅</th>
+                                        <th>타이 배팅</th>
+                                        <th>전체</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="stats-detail-body">
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- History Modal -->
+        <div id="history-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📋 게임 기록</h2>
+                    <button class="modal-close" data-close="history-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <div id="history-list" class="history-list">
+                        <p class="empty-state">아직 게임 기록이 없습니다.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Battle Simulation Modal -->
+        <div id="battle-modal" class="modal hidden">
+            <div class="modal-overlay"></div>
+            <div class="modal-content battle-modal-content">
+                <div class="modal-header">
+                    <h2>🏆 전략 대결 시뮬레이션</h2>
+                    <button class="modal-close" data-close="battle-modal">&times;</button>
+                </div>
+                <div class="modal-body">
+                    <!-- Battle Settings -->
+                    <div id="battle-settings" class="battle-settings">
+                        <p class="battle-desc">같은 카드로 9가지 전략을 동시에 돌려서 성과를 비교합니다.</p>
+                        <div class="battle-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>시작 잔액</label>
+                                    <input type="number" id="battle-balance" class="form-input" value="1000000"
+                                        min="10000" step="10000">
+                                    <div class="preset-chips">
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-balance').value=500000">50만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-balance').value=1000000"
+                                            class="active">100만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-balance').value=5000000">500만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-balance').value=10000000">1천만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-balance').value=100000000">1억</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>기본 배팅액</label>
+                                    <input type="number" id="battle-baseBet" class="form-input" value="10000" min="1000"
+                                        step="1000">
+                                    <div class="preset-chips">
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-baseBet').value=5000">5천</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-baseBet').value=10000"
+                                            class="active">1만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-baseBet').value=50000">5만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-baseBet').value=100000">10만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-baseBet').value=500000">50만</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>최대 라운드</label>
+                                    <input type="number" id="battle-rounds" class="form-input" value="50" min="10"
+                                        step="10">
+                                    <div class="preset-chips">
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-rounds').value=50"
+                                            class="active">50</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-rounds').value=100">100</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-rounds').value=200">200</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-rounds').value=500">500</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-rounds').value=1000">1000</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>목표 잔액</label>
+                                    <input type="number" id="battle-target" class="form-input" value="100000000"
+                                        min="100000" step="100000">
+                                    <div class="preset-chips">
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-target').value=2000000">200만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-target').value=5000000">500만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-target').value=10000000">1천만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-target').value=100000000"
+                                            class="active">1억</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-target').value=1000000000">10억</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>최대 배팅 한도</label>
+                                    <div style="display:flex; gap:8px; align-items:center;">
+                                        <input type="number" id="battle-maxBet" class="form-input" value="5000000"
+                                            min="0" step="100000" style="flex:1;">
+                                        <label class="chip-checkbox"
+                                            style="white-space:nowrap; font-size:0.75rem; cursor:pointer; display:flex; align-items:center; gap:4px;">
+                                            <input type="checkbox" id="battle-maxBet-unlimited" onchange="
+                                                const inp = document.getElementById('battle-maxBet');
+                                                if(this.checked){inp.value=0;inp.disabled=true;}
+                                                else{inp.value=5000000;inp.disabled=false;}
+                                            ">
+                                            <span>♾️ 없음</span>
+                                        </label>
+                                    </div>
+                                    <div class="preset-chips">
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-maxBet').value=500000;document.getElementById('battle-maxBet').disabled=false;document.getElementById('battle-maxBet-unlimited').checked=false;">50만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-maxBet').value=1000000;document.getElementById('battle-maxBet').disabled=false;document.getElementById('battle-maxBet-unlimited').checked=false;">100만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-maxBet').value=5000000;document.getElementById('battle-maxBet').disabled=false;document.getElementById('battle-maxBet-unlimited').checked=false;"
+                                            class="active">500만</button>
+                                        <button type="button"
+                                            onclick="document.getElementById('battle-maxBet').value=10000000;document.getElementById('battle-maxBet').disabled=false;document.getElementById('battle-maxBet-unlimited').checked=false;">1천만</button>
+                                    </div>
+                                </div>
+                                <div class="form-group" style="display:flex; align-items:flex-end;">
+                                    <p style="font-size: 0.72rem; color: var(--text-muted); line-height: 1.4;">
+                                        💡 실제 카지노는 ₩500만~₩5,000만 한도
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>배팅 대상</label>
+                                <div class="radio-group">
+                                    <label class="radio-label">
+                                        <input type="radio" name="battle-target-type" value="banker" checked>
+                                        <span class="radio-custom banker-radio"></span>
+                                        뱅커 (하우스 엣지 1.06%)
+                                    </label>
+                                    <label class="radio-label">
+                                        <input type="radio" name="battle-target-type" value="player">
+                                        <span class="radio-custom player-radio"></span>
+                                        플레이어 (하우스 엣지 1.24%)
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="form-group"
+                                style="margin-top: 0.5rem; padding: 0.6rem 0.8rem; background: rgba(255,215,0,0.05); border: 1px solid rgba(255,215,0,0.15); border-radius: var(--radius-md);">
+                                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin:0;">
+                                    <input type="checkbox" id="battle-godsEye"
+                                        style="accent-color: #FFD700; width:16px; height:16px;">
+                                    <span style="font-size:0.85rem;">👁️ <strong>신의 눈</strong> 전략 포함 <span
+                                            style="font-size:0.7rem; color:var(--text-muted);">(치트 — 카드를 미리 보고
+                                            배팅)</span></span>
+                                </label>
+                            </div>
+                        </div>
+                        <button id="btn-battle-start" class="btn btn-deal"
+                            style="width: 100%; margin-top: 1rem; font-size: 1rem;">
+                            ⚡ 시뮬레이션 시작!
+                        </button>
+                    </div>
+                    <!-- Battle Results -->
+                    <div id="battle-results" class="battle-results"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/card.js"></script>
+    <script src="js/game.js"></script>
+    <script src="js/commentary.js"></script>
+    <script src="js/strategy.js"></script>
+    <script src="js/simulation.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/app.js"></script>
+    <script src="js/firebase-manager.js"></script>
+    <script>
+        // Initialize Firebase Manager after app is ready
+        document.addEventListener('DOMContentLoaded', () => {
+            if (window.app) {
+                window.app.firebaseManager = new FirebaseManager(window.app);
+                // Hook into savePresets to also sync to cloud
+                const originalSave = window.app.savePresets.bind(window.app);
+                window.app.savePresets = function () {
+                    originalSave();
+                    if (window.app.firebaseManager?.user) {
+                        window.app.firebaseManager.savePresetsToCloud();
+                    }
+                };
+            }
+        });
+    </script>
+</body>
+
+</html>

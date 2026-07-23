@@ -1,0 +1,110 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        ".validate": "!newData.exists() || ((!data.exists() && newData.hasChild('role') && newData.child('role').val() === 'user') || (data.exists() && newData.child('role').val() === data.child('role').val()))",
+        "role": {
+          ".validate": "(!data.exists() && newData.val() === 'user') || newData.val() === data.val()"
+        },
+        "pvpStats": {
+          ".write": "auth != null",
+          ".validate": "newData.hasChildren(['wins','losses','draws']) && newData.child('wins').isNumber() && newData.child('losses').isNumber() && newData.child('draws').isNumber()"
+        }
+      }
+    },
+
+    "usernameIndex": {
+      "$username": {
+        ".read": true,
+        ".write": "auth != null && !data.exists() && newData.isString() && newData.val() === auth.uid",
+        ".validate": "newData.isString()"
+      }
+    },
+
+    "mailbox": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        "$mailId": {
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren() &&\n                newData.child('title').isString() && newData.child('title').val().length <= 120 &&\n                newData.child('message').isString() && newData.child('message').val().length <= 1000 &&\n                newData.child('createdAt').isNumber() && newData.child('expiresAt').isNumber() &&\n                newData.child('type').isString() && newData.child('read').isBoolean()\n              ) ||\n              (data.exists() && !newData.exists())\n            ))\n          )",
+          ".validate": "newData.hasChildren(['title','message','createdAt','expiresAt','type','read'])"
+        }
+      }
+    },
+
+    "user_mail": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        "$mailId": {
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
+        }
+      }
+    },
+
+    "test_mail": {
+      "$uid": {
+        ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
+        "$mailId": {
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
+        }
+      }
+    },
+
+    "config": {
+      ".read": "auth != null",
+      "global": {
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+      },
+      "presets": {
+        ".read": "auth != null",
+        "$presetId": {
+          ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+        }
+      }
+    },
+
+    "pvpRegistrations": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')"
+      }
+    },
+
+    "pvpSeason": {
+      ".read": "auth != null",
+      ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+    },
+
+    "pvpMatches": {
+      ".read": "auth != null",
+      "$matchId": {
+        ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || (!data.exists() && newData.hasChildren(['createdAt','playerA','playerB']) && newData.child('createdAt').isNumber() && (newData.child('playerA').val() === auth.uid || newData.child('playerB').val() === auth.uid)))"
+      }
+    },
+
+    "mirrors": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
+    },
+
+    "snapshots": {
+      ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+      "$uid": {
+        ".indexOn": ["snapshotAt"]
+      }
+    },
+
+    "chat": {
+      "messages": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
+        "$msgId": {
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (!data.exists() &&\n              newData.child('text').isString() &&\n              newData.child('createdAt').isNumber() &&\n              newData.child('kind').val() != 'system' &&\n              newData.child('uid').val() === auth.uid\n            )\n          )"
+        }
+      }
+    }
+  }
+}
