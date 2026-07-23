@@ -44,11 +44,43 @@ export const GAMES: GameEntry[] = [
     status: 'live'
   },
   {
+    id: 'bakara',
+    title: '프리미엄 바카라',
+    genre: '카지노 카드 시뮬',
+    tagline: '자동 배팅 전략으로 즐기는 바카라',
+    description: '프리미엄 바카라 게임 - 자동 배팅 전략 시뮬레이터',
+    path: '/games/bakara/',
+    thumbnail: '/assets/images/bakara-key-v1.webp',
+    status: 'live'
+  },
+  {
+    id: 'gacha',
+    title: '가챠 RPG',
+    genre: '실시간 멀티플레이 RPG',
+    tagline: '장비를 모으고 캐릭터를 키워 PvP까지',
+    description:
+      'Firebase 실시간 멀티플레이 환경에서 장비를 수집하고 캐릭터를 육성해 PvP 전투를 즐기는 가챠 RPG입니다.',
+    path: '/games/gacha/',
+    thumbnail: '/assets/images/gacha-key-v1.webp',
+    status: 'live'
+  },
+  {
+    id: 'life-rpg',
+    title: 'Life RPG Simulator',
+    genre: '라이프 시뮬레이션 RPG',
+    tagline: '스탯을 키우며 살아가는 나만의 인생 RPG',
+    description:
+      '스탯과 직업·알바를 관리하고 상점, 퀘스트, 알람과 공백 처리까지 즐기는 웹 기반 Life RPG 시뮬레이터입니다.',
+    path: '/games/life-rpg/',
+    thumbnail: '/assets/images/liferpg-key-v1.webp',
+    status: 'live'
+  },
+  {
     id: 'coming-soon-2',
-    title: '세 번째 게임',
+    title: 'DADADAK',
     genre: '준비 중',
-    tagline: '순차 공개 예정',
-    description: '새로운 웹게임을 준비하고 있습니다. 곧 이 자리에서 만나요.',
+    tagline: '서버 오픈과 함께 공개 예정',
+    description: '실시간 대전 게임 — 서버 준비 중입니다.',
     path: '',
     thumbnail: null,
     status: 'coming-soon'
