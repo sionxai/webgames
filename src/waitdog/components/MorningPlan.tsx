@@ -1,40 +1,12 @@
-import type {
-  CampaignScheduleItem,
-  TrainingGoalId,
-} from "../services/campaign";
+import type { CampaignScheduleItem } from "../services/campaign";
 
 interface MorningPlanProps {
   day: number;
   schedule: readonly CampaignScheduleItem[];
   prediction: { start: number; end: number; confidence: number };
   tip: string | null;
-  selectedGoal: TrainingGoalId;
-  recommendedGoal: TrainingGoalId;
-  onGoalChange: (goal: TrainingGoalId) => void;
   onStart: () => void;
 }
-
-const TRAINING_GOALS: ReadonlyArray<{
-  id: TrainingGoalId;
-  title: string;
-  description: string;
-}> = [
-  {
-    id: "mat",
-    title: "매트 습관",
-    description: "신호 뒤 매트로 이동하면 바로 보상해 좋은 선택을 연결합니다.",
-  },
-  {
-    id: "recall",
-    title: "부르기 신뢰",
-    description: "차분히 불러 돌아온 뒤 1게임분 안에 간식으로 신뢰를 쌓습니다.",
-  },
-  {
-    id: "calm",
-    title: "침착 전환",
-    description: "흥분 신호를 보고 장난감으로 시선을 안전하게 돌립니다.",
-  },
-];
 
 const formatClock = (absoluteMinute: number): string => {
   const minuteOfDay = ((absoluteMinute % 1440) + 1440) % 1440;
@@ -54,48 +26,27 @@ export function MorningPlan({
   schedule,
   prediction,
   tip,
-  selectedGoal,
-  recommendedGoal,
-  onGoalChange,
   onStart,
 }: MorningPlanProps) {
   return (
     <main className="waitdog-page phase-page">
       <section className="phase-card morning-card" aria-labelledby="morning-title">
         <span className="section-kicker">MORNING PLAN</span>
-        <h1 id="morning-title">Day {day} 아침 계획</h1>
-        <p className="phase-lead">시간은 멈춰 있습니다. 오늘의 흐름을 먼저 살펴보세요.</p>
-
-        <fieldset className="training-goal-picker">
-          <legend>오늘의 짧은 훈련 목표</legend>
-          <p>한 번에 한 가지를 연습해 타이밍과 결과를 분명하게 확인하세요.</p>
-          <div>
-            {TRAINING_GOALS.map((goal) => (
-              <button
-                className={selectedGoal === goal.id ? "is-selected" : ""}
-                type="button"
-                key={goal.id}
-                aria-pressed={selectedGoal === goal.id}
-                onClick={() => onGoalChange(goal.id)}
-              >
-                <strong>{goal.title}</strong>
-                {recommendedGoal === goal.id && <span>오늘 추천</span>}
-                <small>{goal.description}</small>
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        <h1 id="morning-title">Day {day} 생활 계획</h1>
+        <p className="phase-lead">
+          첫 미션은 하루를 시작하자마자 열립니다. 단서를 보고 차분하게 대응해 보세요.
+        </p>
 
         <div className="morning-grid">
           <section aria-labelledby="schedule-title">
-            <h2 id="schedule-title">오늘 일정</h2>
+            <h2 id="schedule-title">오늘의 생활 리듬</h2>
             {schedule.length > 0 ? (
               <ol className="schedule-list">
                 {schedule.map((item) => (
                   <li key={item.id}>
                     <time>{formatClock(item.startMinute)}–{formatClock(item.endMinute)}</time>
                     <strong>{item.title}</strong>
-                    <span>{item.away ? "개입 불가" : item.focusLock ? "집중 업무" : "일정"}</span>
+                    <span>{item.away ? "외출" : item.focusLock ? "업무 추천" : "일정"}</span>
                   </li>
                 ))}
               </ol>
@@ -114,8 +65,14 @@ export function MorningPlan({
           </section>
         </div>
 
+        <aside className="morning-safety" aria-label="생활 안전 원칙">
+          <strong>오늘의 원칙</strong>
+          <span>위협 신호에는 거리를 확보하고, 억지 제지나 체벌은 사용하지 않습니다.</span>
+        </aside>
         {tip && <aside className="curriculum-tip" aria-label="오늘의 팁">{tip}</aside>}
-        <button className="primary-action" type="button" onClick={onStart}>하루 시작</button>
+        <button className="primary-action" type="button" onClick={onStart}>
+          하루 시작 · 첫 미션
+        </button>
       </section>
     </main>
   );

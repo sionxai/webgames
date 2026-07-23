@@ -1,5 +1,4 @@
 import type { RoomId } from "../types";
-import type { OwnerResources } from "../services/campaign";
 
 export type GameSpeed = 0 | 1 | 2 | 4;
 
@@ -8,10 +7,11 @@ interface TopBarProps {
   minuteOfDay: number;
   speed: GameSpeed;
   ownerRoom: RoomId;
-  focusLocked: boolean;
-  away: boolean;
-  resources: OwnerResources;
-  guide: string | null;
+  ownerMoving: boolean;
+  money: number;
+  carePoints: number;
+  salaryBonusPercent: number;
+  pausedReason: string | null;
   ended: boolean;
   onSpeedChange: (speed: GameSpeed) => void;
 }
@@ -40,15 +40,16 @@ export function TopBar({
   minuteOfDay,
   speed,
   ownerRoom,
-  focusLocked,
-  away,
-  resources,
-  guide,
+  ownerMoving,
+  money,
+  carePoints,
+  salaryBonusPercent,
+  pausedReason,
   ended,
   onSpeedChange,
 }: TopBarProps) {
   return (
-    <header className="top-bar">
+    <header className="top-bar lifestyle-topbar">
       <div className="brand-block">
         <span className="eyebrow">WAIT, DOG!</span>
         <h1>기다려, 멍!</h1>
@@ -60,15 +61,31 @@ export function TopBar({
         <time>{formatClock(minuteOfDay)}</time>
       </div>
 
+      <div className="economy-hud" aria-label="생활 자원">
+        <span>
+          <small>보유금</small>
+          <strong>{money.toLocaleString("ko-KR")}원</strong>
+        </span>
+        <span>
+          <small>돌봄</small>
+          <strong>{carePoints}P</strong>
+        </span>
+        <span>
+          <small>급여 보너스</small>
+          <strong>+{salaryBonusPercent}%</strong>
+        </span>
+      </div>
+
       <div className="speed-control" role="group" aria-label="게임 배속">
         {SPEEDS.map((item) => (
           <button
             className={speed === item.value ? "is-active" : ""}
             type="button"
             key={item.value}
-            disabled={ended}
+            disabled={ended || pausedReason !== null}
             aria-pressed={speed === item.value}
             aria-label={item.value === 0 ? "일시정지" : `${item.label} 배속`}
+            title={pausedReason ?? undefined}
             onClick={() => onSpeedChange(item.value)}
           >
             {item.label}
@@ -76,35 +93,12 @@ export function TopBar({
         ))}
       </div>
 
-      <div className="resource-gauges" aria-label="보호자 자원">
-        {([
-          ["energy", "에너지"],
-          ["focus", "집중"],
-          ["workScore", "업무 성과"],
-        ] as const).map(([key, label]) => (
-          <div className="resource-gauge" key={key}>
-            <span>{label}</span>
-            <div
-              className={`resource-meter resource-${key}`}
-              role="progressbar"
-              aria-label={label}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={resources[key]}
-            >
-              <span style={{ width: `${resources[key]}%` }} />
-            </div>
-          </div>
-        ))}
-      </div>
-
       <div className="owner-status" role="status">
-        <span>{away ? "보호자 · 외출 중" : `보호자 · ${ROOM_NAMES[ownerRoom]}`}</span>
-        <span className={focusLocked ? "focus-on" : "focus-off"}>
-          {away ? "개입 불가" : focusLocked ? "집중 업무 중" : "관찰 가능"}
+        <span>보호자 · {ROOM_NAMES[ownerRoom]}</span>
+        <span className={pausedReason ? "focus-on" : "focus-off"}>
+          {pausedReason ?? (ownerMoving ? "이동 중" : "생활 중")}
         </span>
       </div>
-      {guide && <div className="day-guide" role="note">{guide}</div>}
     </header>
   );
 }
