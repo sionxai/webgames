@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GAMES, GameEntry } from './games';
 import { LegalDocsModal } from '../components/portal/LegalDocsModal';
-import { NoljaLogo } from './components/NoljaLogo';
+import { HanpanLogo } from './components/HanpanLogo';
 import { Bot, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
 import { AccountWidget } from './components/AccountWidget';
 
@@ -54,8 +54,8 @@ export function HomePage() {
       <header className="portal-header">
         <div className="portal-header__top">
           <h1 className="portal-brand">
-            <NoljaLogo className="portal-brand__logo" />
-            <span className="portal-brand__sr">nolja — 웹게임 모음</span>
+            <HanpanLogo className="portal-brand__logo" />
+            <span className="portal-brand__sr">한판 — 웹게임 모음</span>
           </h1>
           <AccountWidget />
         </div>
@@ -144,7 +144,7 @@ export function HomePage() {
             개인정보처리방침
           </button>
         </div>
-        <p className="portal-footer__copy">© 2026 nolja. All rights reserved.</p>
+        <p className="portal-footer__copy">© 2026 한판. All rights reserved.</p>
       </footer>
 
       {legalTab && <LegalDocsModal initialTab={legalTab} onClose={() => setLegalTab(null)} />}
