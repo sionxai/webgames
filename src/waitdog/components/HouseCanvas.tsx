@@ -11,7 +11,10 @@ import {
   WAITDOG_ART_ASSETS,
   type DogMotionId,
 } from "../constants/artAssets";
-import type { WaitdogUiView } from "../services/waitdogSim";
+import type {
+  OwnerClickMoveTarget,
+  WaitdogUiView,
+} from "../services/waitdogSim";
 import type {
   BarrierPlacement,
   EncounterCueKind,
@@ -20,14 +23,16 @@ import type {
   Visibility,
 } from "../types";
 
-interface HouseCanvasProps {
+export type GroundMoveTarget = OwnerClickMoveTarget;
+
+export interface HouseCanvasProps {
   view: WaitdogUiView;
   lastSeenRoom: RoomId | null;
   disabled: boolean;
   compact: boolean;
   encounter: EncounterPublicView | null;
-  onRoomSelect: (room: RoomId) => void;
-  onComputer: () => void;
+  onGroundMove: (target: GroundMoveTarget) => void;
+  onInteract: () => void;
 }
 
 interface RoomRect {
@@ -61,7 +66,8 @@ type ArtLoadState =
 
 const WIDTH = 900;
 const HEIGHT = 900;
-const POSITION_TWEEN_MS = 520;
+const DOG_POSITION_TWEEN_MS = 520;
+const OWNER_POSITION_TWEEN_MS = 96;
 const COMPUTER_LOCATION = { room: "living" as const, x: 0.82, y: 0.2 };
 
 const ROOMS: Record<RoomId, RoomRect> = {
@@ -89,11 +95,9 @@ const ROOMS: Record<RoomId, RoomRect> = {
 };
 
 const ROOM_ORDER: RoomId[] = ["living", "kitchen", "toilet"];
-const ROOM_MOVE_LABELS: Record<RoomId, string> = {
-  living: "생활방",
-  kitchen: "부엌",
-  toilet: "화장실",
-};
+const DOG_HIT_RADIUS = 92;
+const CUE_HIT_RADIUS = 126;
+const COMPUTER_HIT_RADIUS = 88;
 
 const clampCoordinate = (value: number): number =>
   Math.max(0, Math.min(1, value));
@@ -113,6 +117,30 @@ const spatialPoint = (room: RoomId, x: number, y: number): Point => {
       clampCoordinate(x) * (rect.width - horizontalPadding * 2),
     y: rect.y + topPadding +
       clampCoordinate(y) * (rect.height - topPadding - bottomPadding),
+  };
+};
+
+const groundTargetAt = (point: Point): GroundMoveTarget | null => {
+  const room = ROOM_ORDER.find((roomId) => {
+    const rect = ROOMS[roomId];
+    return point.x >= rect.x && point.x <= rect.x + rect.width &&
+      point.y >= rect.y && point.y <= rect.y + rect.height;
+  });
+  if (!room) return null;
+  const rect = ROOMS[room];
+  const horizontalPadding = Math.min(72, rect.width * 0.15);
+  const topPadding = Math.min(100, rect.height * 0.2);
+  const bottomPadding = Math.min(54, rect.height * 0.12);
+  return {
+    room,
+    x: clampCoordinate(
+      (point.x - rect.x - horizontalPadding) /
+        (rect.width - horizontalPadding * 2),
+    ),
+    y: clampCoordinate(
+      (point.y - rect.y - topPadding) /
+        (rect.height - topPadding - bottomPadding),
+    ),
   };
 };
 
@@ -459,6 +487,29 @@ const cueCopy: Record<EncounterCueKind, string> = {
   flee: "거리 확보",
 };
 
+const cueIcon: Record<EncounterCueKind, string> = {
+  potty: "◌",
+  overexcited: "↯",
+  recall: "⌁",
+  settle: "○",
+  bark: "!",
+  whine: "♪",
+  anxiety: "≈",
+  biteWarning: "!",
+  flee: "➜",
+};
+
+const cuePoint = (
+  encounter: EncounterPublicView,
+  fallbackDogPoint: Point | null,
+): Point => encounter.cue.anchor
+  ? spatialPoint(
+    encounter.cue.room,
+    encounter.cue.anchor.x,
+    encounter.cue.anchor.y,
+  )
+  : fallbackDogPoint ?? centerOf(encounter.cue.room);
+
 const drawCueEffect = (
   context: CanvasRenderingContext2D,
   encounter: EncounterPublicView,
@@ -466,13 +517,7 @@ const drawCueEffect = (
   now: number,
   reducedMotion: boolean,
 ) => {
-  const point = encounter.cue.anchor
-    ? spatialPoint(
-      encounter.cue.room,
-      encounter.cue.anchor.x,
-      encounter.cue.anchor.y,
-    )
-    : fallbackDogPoint ?? centerOf(encounter.cue.room);
+  const point = cuePoint(encounter, fallbackDogPoint);
   const pulse = reducedMotion ? 0 : Math.sin(now / 180) * 8;
   context.save();
   context.lineWidth = encounter.safetyLevel === "high" ? 7 : 5;
@@ -550,13 +595,7 @@ const drawMasksAndSpotlight = (
     context.fillRect(rect.x, rect.y, rect.width, rect.height);
   }
   if (encounter) {
-    const point = encounter.cue.anchor
-      ? spatialPoint(
-        encounter.cue.room,
-        encounter.cue.anchor.x,
-        encounter.cue.anchor.y,
-      )
-      : fallbackDogPoint ?? centerOf(encounter.cue.room);
+    const point = cuePoint(encounter, fallbackDogPoint);
     context.save();
     context.fillStyle = "rgba(24, 37, 40, 0.2)";
     context.beginPath();
@@ -569,6 +608,31 @@ const drawMasksAndSpotlight = (
     context.strokeRect(rect.x + 5, rect.y + 5, rect.width - 10, rect.height - 10);
     context.restore();
   }
+};
+
+const drawGroundMarker = (
+  context: CanvasRenderingContext2D,
+  target: GroundMoveTarget,
+  now: number,
+  reducedMotion: boolean,
+) => {
+  const point = spatialPoint(target.room, target.x, target.y);
+  const pulse = reducedMotion ? 0 : (Math.sin(now / 170) + 1) * 4;
+  context.save();
+  context.strokeStyle = "#4f78c6";
+  context.fillStyle = "rgba(255, 255, 255, 0.82)";
+  context.lineWidth = 5;
+  context.beginPath();
+  context.arc(point.x, point.y, 17 + pulse, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  context.beginPath();
+  context.moveTo(point.x - 10, point.y);
+  context.lineTo(point.x + 10, point.y);
+  context.moveTo(point.x, point.y - 10);
+  context.lineTo(point.x, point.y + 10);
+  context.stroke();
+  context.restore();
 };
 
 const drawRoomLabels = (
@@ -618,8 +682,8 @@ export function HouseCanvas({
   disabled,
   compact,
   encounter,
-  onRoomSelect,
-  onComputer,
+  onGroundMove,
+  onInteract,
 }: HouseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const reducedMotionRef = useRef(false);
@@ -631,6 +695,10 @@ export function HouseCanvas({
   const dogTransitionRef = useRef<PositionTransition | null>(null);
   const ownerTransitionRef = useRef<PositionTransition | null>(null);
   const [artLoad, setArtLoad] = useState<ArtLoadState>({ status: "loading" });
+  const [groundMarker, setGroundMarker] = useState<GroundMoveTarget | null>(
+    null,
+  );
+  const interaction = view.interaction;
 
   useEffect(() => {
     let active = true;
@@ -670,6 +738,34 @@ export function HouseCanvas({
   }, []);
 
   useEffect(() => {
+    if (groundMarker === null) return;
+    if (encounter !== null && interaction.encounterReady) {
+      setGroundMarker(null);
+      return;
+    }
+    if (
+      view.ownerSpatial.moving ||
+      view.ownerSpatial.room !== groundMarker.room
+    ) return;
+    if (
+      Math.hypot(
+        view.ownerSpatial.x - groundMarker.x,
+        view.ownerSpatial.y - groundMarker.y,
+      ) <= 0.035
+    ) {
+      setGroundMarker(null);
+    }
+  }, [
+    encounter,
+    groundMarker,
+    interaction.encounterReady,
+    view.ownerSpatial.moving,
+    view.ownerSpatial.room,
+    view.ownerSpatial.x,
+    view.ownerSpatial.y,
+  ]);
+
+  useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const update = () => {
       reducedMotionRef.current = media.matches;
@@ -697,7 +793,7 @@ export function HouseCanvas({
           from: currentDog,
           to: nextDog,
           startedAt,
-          duration: POSITION_TWEEN_MS,
+          duration: DOG_POSITION_TWEEN_MS,
         };
       }
     }
@@ -717,7 +813,7 @@ export function HouseCanvas({
         from: currentOwner,
         to: nextOwner,
         startedAt,
-        duration: POSITION_TWEEN_MS,
+        duration: OWNER_POSITION_TWEEN_MS,
       };
     }
 
@@ -743,6 +839,14 @@ export function HouseCanvas({
       view.environmentPlacements.barriers.forEach((barrier) =>
         drawBarrier(context, barrier)
       );
+      if (groundMarker) {
+        drawGroundMarker(
+          context,
+          groundMarker,
+          now,
+          reducedMotionRef.current,
+        );
+      }
 
       if (ownerTransitionRef.current) {
         ownerPositionRef.current = positionDuring(ownerTransitionRef.current, now);
@@ -819,28 +923,96 @@ export function HouseCanvas({
     };
     animationFrame = window.requestAnimationFrame(draw);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [artLoad, encounter, lastSeenRoom, view]);
+  }, [artLoad, encounter, groundMarker, lastSeenRoom, view]);
 
   const handlePointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (disabled) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const bounds = canvas.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) * (canvas.width / bounds.width);
-    const y = (event.clientY - bounds.top) * (canvas.height / bounds.height);
-    const room = ROOM_ORDER.find((roomId) => {
-      const rect = ROOMS[roomId];
-      return x >= rect.x && x <= rect.x + rect.width &&
-        y >= rect.y && y <= rect.y + rect.height;
-    });
-    if (room) onRoomSelect(room);
+    const point = {
+      x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
+      y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
+    };
+    const currentDogPoint = view.visibility === "seen"
+      ? dogPositionRef.current
+      : null;
+    const currentCuePoint = encounter
+      ? cuePoint(encounter, currentDogPoint)
+      : null;
+    const computerPoint = spatialPoint(
+      COMPUTER_LOCATION.room,
+      COMPUTER_LOCATION.x,
+      COMPUTER_LOCATION.y,
+    );
+    const hits = (target: Point, radius: number) =>
+      Math.hypot(point.x - target.x, point.y - target.y) <= radius;
+
+    if (
+      encounter !== null &&
+      currentCuePoint !== null &&
+      hits(
+        { x: currentCuePoint.x, y: currentCuePoint.y - 64 },
+        CUE_HIT_RADIUS,
+      )
+    ) {
+      if (interaction.encounterReady) {
+        onInteract();
+        return;
+      }
+      const cueTarget: GroundMoveTarget = encounter.cue.anchor
+        ? {
+          room: encounter.cue.room,
+          x: encounter.cue.anchor.x,
+          y: encounter.cue.anchor.y,
+        }
+        : view.visibility === "seen" &&
+            view.spatial.room === encounter.cue.room &&
+            view.spatial.x !== null &&
+            view.spatial.y !== null
+        ? {
+          room: encounter.cue.room,
+          x: view.spatial.x,
+          y: view.spatial.y,
+        }
+        : { room: encounter.cue.room, x: 0.5, y: 0.5 };
+      setGroundMarker(cueTarget);
+      onGroundMove(cueTarget);
+      return;
+    }
+
+    if (
+      hits(
+        { x: computerPoint.x, y: computerPoint.y - 38 },
+        COMPUTER_HIT_RADIUS,
+      )
+    ) {
+      if (interaction.nearbyTarget === "computer") {
+        onInteract();
+        return;
+      }
+      const computerTarget: GroundMoveTarget = { ...COMPUTER_LOCATION };
+      setGroundMarker(computerTarget);
+      onGroundMove(computerTarget);
+      return;
+    }
+
+    if (
+      currentDogPoint !== null &&
+      hits(
+        { x: currentDogPoint.x, y: currentDogPoint.y - 48 },
+        DOG_HIT_RADIUS,
+      )
+    ) {
+      onInteract();
+      return;
+    }
+    const target = groundTargetAt(point);
+    if (!target) return;
+    setGroundMarker(target);
+    onGroundMove(target);
   };
 
-  const computer = spatialPoint(
-    COMPUTER_LOCATION.room,
-    COMPUTER_LOCATION.x,
-    COMPUTER_LOCATION.y,
-  );
   const placementSummary = [
     view.environmentPlacements.padPlacement ? "패드 1개" : null,
     view.environmentPlacements.barriers.length > 0
@@ -852,6 +1024,15 @@ export function HouseCanvas({
     : view.visibility === "heard"
     ? "강아지는 보이지 않고 소리만 들립니다."
     : "강아지가 보이지 않습니다.";
+  const publicDogPoint = dogPoint(view);
+  const publicCuePoint = encounter
+    ? cuePoint(encounter, publicDogPoint)
+    : null;
+  const proximityPrompt = encounter
+    ? interaction.encounterReady
+      ? "[E] 관찰"
+      : "가까이 가기"
+    : null;
 
   return (
     <section className={`house-card${compact ? " is-compact" : ""}`} aria-labelledby="house-title">
@@ -861,7 +1042,7 @@ export function HouseCanvas({
           <h2 id="house-title">하우스 뷰</h2>
         </div>
         <span className="click-hint">
-          {encounter ? "신호 위치를 확인하세요" : "방을 눌러 보호자 이동"}
+          클릭 이동 · 가까운 대상 E
         </span>
       </div>
       <div className="canvas-stage">
@@ -872,42 +1053,37 @@ export function HouseCanvas({
           role="img"
           tabIndex={0}
           aria-disabled={disabled}
-          aria-label={`생활방, 부엌, 화장실 평면도. ${dogLabel} ${placementSummary || "배치 아이템 없음"}.`}
+          aria-label={`생활방, 부엌, 화장실 평면도. WASD 또는 바닥 클릭으로 이동합니다. ${dogLabel} ${placementSummary || "배치 아이템 없음"}.`}
           onPointerUp={handlePointer}
         />
-        {!compact && (view.work.state === "idle" || view.work.state === "moving") && (
-          <button
-            className="computer-hotspot"
-            type="button"
+        <span className="canvas-control-hint" aria-hidden="true">
+          <kbd>WASD</kbd>
+          이동
+        </span>
+        {encounter && publicCuePoint && (
+          <span
+            className={`canvas-cue-beacon safety-${encounter.safetyLevel}`}
             style={{
-              left: `${computer.x / WIDTH * 100}%`,
-              top: `${computer.y / HEIGHT * 100}%`,
+              left: `${publicCuePoint.x / WIDTH * 100}%`,
+              top: `${(publicCuePoint.y - 58) / HEIGHT * 100}%`,
             }}
-            disabled={disabled || view.work.state === "moving"}
-            aria-label="컴퓨터 앞으로 이동"
-            onClick={onComputer}
+            aria-hidden="true"
           >
-            <span aria-hidden="true">⌨</span>
-            {view.work.state === "moving" ? "이동 중" : "업무"}
-          </button>
+            {cueIcon[encounter.cue.kind]}
+          </span>
+        )}
+        {proximityPrompt && (
+          <span
+            className={`proximity-prompt${interaction.encounterReady ? " is-ready" : ""}`}
+            role="status"
+            title={interaction.encounterDistance === null
+              ? undefined
+              : `신호까지 거리 ${interaction.encounterDistance.toFixed(2)}`}
+          >
+            {proximityPrompt}
+          </span>
         )}
       </div>
-      {!compact && (
-        <div className="room-shortcuts" role="group" aria-label="보호자 방 이동">
-          {ROOM_ORDER.map((room) => (
-            <button
-              type="button"
-              key={room}
-              disabled={disabled}
-              aria-pressed={view.ownerSpatial.room === room &&
-                !view.ownerSpatial.moving}
-              onClick={() => onRoomSelect(room)}
-            >
-              {ROOM_MOVE_LABELS[room]}
-            </button>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

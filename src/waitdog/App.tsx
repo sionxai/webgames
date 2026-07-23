@@ -3,8 +3,15 @@ import { BottomNav, type LifestyleSurface } from "./components/BottomNav";
 import { CampaignEnd } from "./components/CampaignEnd";
 import { ControlPanel } from "./components/ControlPanel";
 import { DayReview } from "./components/DayReview";
+import {
+  DirectControls,
+  type DirectMoveVector,
+} from "./components/DirectControls";
 import { EncounterPanel } from "./components/EncounterPanel";
-import { HouseCanvas } from "./components/HouseCanvas";
+import {
+  HouseCanvas,
+  type GroundMoveTarget,
+} from "./components/HouseCanvas";
 import { LifestyleDialog } from "./components/LifestyleDialog";
 import { MorningPlan } from "./components/MorningPlan";
 import { TopBar, type GameSpeed } from "./components/TopBar";
@@ -29,6 +36,7 @@ import {
 import {
   createSim,
   type ItemPlacementTarget,
+  type OwnerEncounterAction,
   type WaitdogSnapshot,
   type WaitdogUiSim,
   type WaitdogUiView,
@@ -85,6 +93,52 @@ interface AdvanceResult {
 
 type PlaceableItemId = PadItemId | BarrierItemId;
 type PlacementPreset = "a" | "b";
+
+interface DirectInputActions {
+  interact: () => void;
+  selectContextAction: (index: number) => void;
+  praise: () => void;
+  treat: () => void;
+  work: () => void;
+  openSurface: (surface: LifestyleSurface) => void;
+  closeSurface: () => void;
+}
+
+const DIRECT_CONTROL_STEP_MS = 64;
+const PERSISTENCE_TRAILING_MS = 240;
+const ZERO_DIRECT_VECTOR: DirectMoveVector = { dx: 0, dy: 0 };
+const MOVE_KEY_VECTORS: Readonly<Record<string, DirectMoveVector>> = {
+  KeyW: { dx: 0, dy: -1 },
+  ArrowUp: { dx: 0, dy: -1 },
+  KeyS: { dx: 0, dy: 1 },
+  ArrowDown: { dx: 0, dy: 1 },
+  KeyA: { dx: -1, dy: 0 },
+  ArrowLeft: { dx: -1, dy: 0 },
+  KeyD: { dx: 1, dy: 0 },
+  ArrowRight: { dx: 1, dy: 0 },
+};
+const DIRECT_ACTION_CODES = new Set([
+  "KeyE",
+  "Digit1",
+  "Digit2",
+  "Digit3",
+  "Space",
+  "KeyQ",
+  "KeyR",
+  "KeyB",
+  "KeyM",
+  "KeyC",
+  "KeyU",
+]);
+
+const isEditableGameTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof HTMLElement)) return false;
+  const tagName = target.tagName;
+  return target.isContentEditable ||
+    tagName === "INPUT" ||
+    tagName === "TEXTAREA" ||
+    tagName === "SELECT";
+};
 
 const freshBootstrap = (storageMessage: string | null): BootstrapState => {
   const sim = createSim(SIMULATION_SEED);
@@ -295,6 +349,7 @@ export default function App() {
   const speedRef = useRef(speed);
   const settingsRef = useRef(settings);
   const resourcesRef = useRef(resources);
+  const hypothesesRef = useRef(hypotheses);
   const surfaceRef = useRef(openSurface);
   const externalClockRef = useRef(false);
   const automationRemainderRef = useRef(0);
@@ -305,11 +360,21 @@ export default function App() {
   const syncSequenceRef = useRef(0);
   const syncedUidRef = useRef<string | null>(null);
   const retryCloudSyncRef = useRef<() => void>(() => undefined);
+  const heldMoveKeysRef = useRef<Set<string>>(new Set());
+  const virtualMoveRef = useRef<DirectMoveVector>(ZERO_DIRECT_VECTOR);
+  const clickMoveTargetRef = useRef<GroundMoveTarget | null>(null);
+  const directInputActionsRef = useRef<DirectInputActions | null>(null);
+  const persistenceTimerRef = useRef<number | null>(null);
+  const persistencePendingRef = useRef(false);
+  const persistProfileRef = useRef<
+    (silent: boolean, suppressCloudPush: boolean) => void
+  >(() => undefined);
   phaseRef.current = phase;
   viewRef.current = view;
   speedRef.current = speed;
   settingsRef.current = settings;
   resourcesRef.current = resources;
+  hypothesesRef.current = hypotheses;
   surfaceRef.current = openSurface;
 
   const sim = simRef.current;
@@ -323,7 +388,24 @@ export default function App() {
     settings.infinite,
   );
 
+  const clearDirectMovement = () => {
+    heldMoveKeysRef.current.clear();
+    virtualMoveRef.current = ZERO_DIRECT_VECTOR;
+    clickMoveTargetRef.current = null;
+  };
+
+  const flushPendingPersistence = (silent: boolean) => {
+    if (!persistencePendingRef.current) return;
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
+    persistencePendingRef.current = false;
+    persistProfileRef.current(silent, false);
+  };
+
   const commitPhase = (next: CampaignPhase) => {
+    if (next !== "live") clearDirectMovement();
     phaseRef.current = next;
     setPhase(next);
   };
@@ -360,6 +442,11 @@ export default function App() {
     }
 
     skipNextSaveEffectRef.current = true;
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+      persistenceTimerRef.current = null;
+    }
+    persistencePendingRef.current = false;
     hasMeaningfulLocalRef.current = true;
     simRef.current = next.sim;
     phaseRef.current = next.phase;
@@ -370,6 +457,7 @@ export default function App() {
     surfaceRef.current = null;
     externalClockRef.current = false;
     automationRemainderRef.current = 0;
+    clearDirectMovement();
     setPhase(next.phase);
     setView(nextView);
     setSpeed(next.settings.speed);
@@ -471,6 +559,7 @@ export default function App() {
   }, []);
 
   const commitSurface = (next: LifestyleSurface | null) => {
+    if (next !== null) clearDirectMovement();
     surfaceRef.current = next;
     setOpenSurface(next);
     setSurfaceFeedback(null);
@@ -562,6 +651,157 @@ export default function App() {
   }, [ended, phase, speed]);
 
   useEffect(() => {
+    const directControlTick = () => {
+      const current = viewRef.current;
+      if (
+        phaseRef.current !== "live" ||
+        surfaceRef.current !== null ||
+        current.minuteOfDay >= DAY_END_MINUTE ||
+        !current.interaction.directControlEnabled
+      ) {
+        clearDirectMovement();
+        return;
+      }
+
+      let dx = 0;
+      let dy = 0;
+      const heldKeys = heldMoveKeysRef.current;
+      for (const code of heldKeys) {
+        const vector = MOVE_KEY_VECTORS[code];
+        if (!vector) continue;
+        dx += vector.dx;
+        dy += vector.dy;
+      }
+
+      if (heldKeys.size === 0) {
+        dx = virtualMoveRef.current.dx;
+        dy = virtualMoveRef.current.dy;
+      }
+
+      const magnitude = Math.hypot(dx, dy);
+      let result: LifestyleActionResult | null = null;
+      if (magnitude > 0) {
+        clickMoveTargetRef.current = null;
+        result = simRef.current.moveOwnerBy({
+          dx: dx / magnitude,
+          dy: dy / magnitude,
+        });
+      } else if (clickMoveTargetRef.current !== null) {
+        result = simRef.current.stepOwnerToward(clickMoveTargetRef.current);
+      }
+
+      if (result === null) return;
+      if (!result.ok) {
+        if (clickMoveTargetRef.current !== null) {
+          clickMoveTargetRef.current = null;
+        }
+        return;
+      }
+
+      const next = simRef.current.getDogView();
+      const clickTarget = clickMoveTargetRef.current;
+      if (
+        clickTarget !== null &&
+        (
+          (
+            next.activeEncounter !== null &&
+            next.interaction.encounterReady
+          ) ||
+          (
+            next.ownerSpatial.room === clickTarget.room &&
+            Math.hypot(
+                next.ownerSpatial.x - clickTarget.x,
+                next.ownerSpatial.y - clickTarget.y,
+              ) <= 0.001
+          )
+        )
+      ) {
+        clickMoveTargetRef.current = null;
+      }
+      commitView(next);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const actions = directInputActionsRef.current;
+      if (!actions || event.isComposing) return;
+
+      if (
+        surfaceRef.current !== null &&
+        event.code === "Escape" &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey
+      ) {
+        event.preventDefault();
+        actions.closeSurface();
+        return;
+      }
+      if (
+        surfaceRef.current !== null ||
+        isEditableGameTarget(event.target) ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        phaseRef.current !== "live"
+      ) return;
+
+      if (MOVE_KEY_VECTORS[event.code]) {
+        event.preventDefault();
+        clickMoveTargetRef.current = null;
+        heldMoveKeysRef.current.add(event.code);
+        return;
+      }
+
+      if (!DIRECT_ACTION_CODES.has(event.code)) return;
+      event.preventDefault();
+      if (event.repeat) return;
+
+      if (event.code === "KeyE") actions.interact();
+      else if (event.code === "Digit1") actions.selectContextAction(0);
+      else if (event.code === "Digit2") actions.selectContextAction(1);
+      else if (event.code === "Digit3") actions.selectContextAction(2);
+      else if (event.code === "Space") actions.praise();
+      else if (event.code === "KeyQ") actions.treat();
+      else if (event.code === "KeyR") actions.work();
+      else if (event.code === "KeyB") actions.openSurface("bag");
+      else if (event.code === "KeyM") actions.openSurface("petMart");
+      else if (event.code === "KeyC") actions.openSurface("clinic");
+      else if (event.code === "KeyU") actions.openSurface("upgrade");
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (!MOVE_KEY_VECTORS[event.code]) return;
+      const released = heldMoveKeysRef.current.delete(event.code);
+      if (released) event.preventDefault();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") clearDirectMovement();
+    };
+
+    const intervalId = window.setInterval(
+      directControlTick,
+      DIRECT_CONTROL_STEP_MS,
+    );
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keyup", handleKeyUp);
+    window.addEventListener("blur", clearDirectMovement);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+      window.removeEventListener("blur", clearDirectMovement);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+      );
+      clearDirectMovement();
+    };
+  }, []);
+
+  useEffect(() => {
     if (
       phaseRef.current !== "live" ||
       settingsRef.current.lifestyle.tutorialStarted ||
@@ -587,15 +827,55 @@ export default function App() {
     const renderGameToText = () => {
       const current = viewRef.current;
       const encounter = current.activeEncounter;
-      const stageOptions = encounter === null
-        ? []
-        : encounter.stage === "cause" || encounter.stage === "cue"
-        ? encounter.causeChoices
-        : encounter.stage === "response"
-        ? encounter.responseChoices
-        : encounter.stage === "reinforcement"
-        ? encounter.reinforcementChoices
-        : [];
+      const availableActions: string[] = [];
+      if (
+        phaseRef.current === "live" &&
+        current.minuteOfDay < DAY_END_MINUTE
+      ) {
+        if (surfaceRef.current !== null) {
+          availableActions.push("Esc:close-surface");
+        } else {
+          if (current.interaction.directControlEnabled) {
+            availableActions.push(
+              "WASD/ArrowKeys:move",
+              "ground-click:move",
+            );
+          }
+          if (current.work.alert !== null) {
+            availableActions.push(
+              "1:interrupt-work",
+              "2:continue-work",
+            );
+          } else if (encounter !== null) {
+            if (
+              encounter.stage === "cause" ||
+              encounter.stage === "cue"
+            ) {
+              availableActions.push("E:observe-nearby-cue");
+            } else if (encounter.stage === "response") {
+              availableActions.push(
+                ...encounter.responseChoices.slice(0, 3).map(
+                  (_, index) => `${index + 1}:response`,
+                ),
+              );
+            } else if (encounter.stage === "reinforcement") {
+              availableActions.push("Space:praise", "Q:treat");
+            }
+          } else {
+            if (current.interaction.nearbyTarget === "computer") {
+              availableActions.push("E/R:work");
+            } else {
+              availableActions.push("R:work-when-near-computer");
+            }
+            availableActions.push(
+              "B:bag",
+              "M:pet-mart",
+              "C:clinic",
+              "U:upgrade",
+            );
+          }
+        }
+      }
       const dogPosition = current.visibility === "seen" &&
           current.spatial.room !== null &&
           current.spatial.x !== null &&
@@ -616,6 +896,7 @@ export default function App() {
         : automaticPause ?? (speedRef.current === 0 ? "manual" : null);
       return JSON.stringify({
         mode: phaseRef.current,
+        inputMode: "direct-keyboard-mouse-touch",
         coordinateSystem:
           "room-normalized coordinates: origin top-left, x right, y down, range 0..1",
         day: current.day,
@@ -643,6 +924,8 @@ export default function App() {
           moving: current.ownerSpatial.moving,
         },
         ownerDogOverlap: current.ownerDogOverlap,
+        interaction: current.interaction,
+        availableActions,
         encounter: encounter === null
           ? null
           : {
@@ -652,8 +935,11 @@ export default function App() {
             stage: encounter.stage,
             cue: encounter.cue,
             publicClues: encounter.publicClues,
-            currentOptions: stageOptions,
-            selectedCauseId: encounter.selectedCauseId,
+            ...(encounter.stage === "response"
+              ? { currentOptions: encounter.responseChoices }
+              : encounter.stage === "reinforcement"
+              ? { currentOptions: encounter.reinforcementChoices }
+              : {}),
             selectedResponseId: encounter.selectedResponseId,
             hint: encounter.hint,
             safetyLevel: encounter.safetyLevel,
@@ -673,8 +959,10 @@ export default function App() {
         work: current.work,
         visiblePlacements: current.environmentPlacements,
         nextTask: encounter === null
-          ? "다음 생활 미션을 시작하거나 컴퓨터에서 업무 블록을 진행하세요."
-          : "현재 미션의 공개 단서를 보고 한 가지 선택지를 고르세요.",
+          ? "WASD 또는 바닥 클릭으로 이동해 미션 신호나 컴퓨터에 접근하세요."
+          : current.interaction.encounterReady
+          ? "가까운 신호에 맞는 단축 행동을 실행하세요."
+          : "WASD 또는 바닥 클릭으로 신호 가까이 이동하세요.",
       });
     };
 
@@ -700,27 +988,20 @@ export default function App() {
     };
   }, []);
 
-  useEffect(() => {
-    if (skipNextSaveEffectRef.current) {
-      skipNextSaveEffectRef.current = false;
-      initialPersistencePendingRef.current = false;
-      return;
-    }
-
-    const wasInitialPersistence = initialPersistencePendingRef.current;
-    initialPersistencePendingRef.current = false;
+  persistProfileRef.current = (silent, suppressCloudPush) => {
     const previousPayload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
     try {
+      const currentView = viewRef.current;
       const result = saveProfile(window.localStorage, {
-        day: view.day,
-        phase,
+        day: currentView.day,
+        phase: phaseRef.current,
         simSnapshot: simRef.current.serialize(),
-        ownerResources: resources,
-        hypotheses,
-        settings,
+        ownerResources: resourcesRef.current,
+        hypotheses: hypothesesRef.current,
+        settings: settingsRef.current,
       });
       if (!result.ok) {
-        if (!storageNoticeRef.current) {
+        if (!silent && !storageNoticeRef.current) {
           storageNoticeRef.current = true;
           setSecondaryFeedback(STORAGE_SAVE_MESSAGE);
         }
@@ -729,7 +1010,7 @@ export default function App() {
 
       const payload = window.localStorage.getItem(WAITDOG_PROFILE_KEY);
       if (
-        wasInitialPersistence ||
+        suppressCloudPush ||
         payload === null ||
         payload === previousPayload
       ) return;
@@ -741,18 +1022,72 @@ export default function App() {
           WAITDOG_LOCAL_SAVED_AT_KEY,
           String(savedAt),
         );
-        setLocalSavedAt(savedAt);
+        if (!silent) setLocalSavedAt(savedAt);
       } catch {
         // Companion metadata failure must not interrupt the existing local save.
       }
       waitdogCloudSave.push(payload);
     } catch {
-      if (!storageNoticeRef.current) {
+      if (!silent && !storageNoticeRef.current) {
         storageNoticeRef.current = true;
         setSecondaryFeedback(STORAGE_SAVE_MESSAGE);
       }
     }
+  };
+
+  useEffect(() => {
+    if (skipNextSaveEffectRef.current) {
+      skipNextSaveEffectRef.current = false;
+      initialPersistencePendingRef.current = false;
+      if (persistenceTimerRef.current !== null) {
+        window.clearTimeout(persistenceTimerRef.current);
+        persistenceTimerRef.current = null;
+      }
+      persistencePendingRef.current = false;
+      return;
+    }
+
+    const wasInitialPersistence = initialPersistencePendingRef.current;
+    initialPersistencePendingRef.current = false;
+    if (wasInitialPersistence) {
+      persistProfileRef.current(false, true);
+      return;
+    }
+
+    if (persistenceTimerRef.current !== null) {
+      window.clearTimeout(persistenceTimerRef.current);
+    }
+    persistencePendingRef.current = true;
+    persistenceTimerRef.current = window.setTimeout(() => {
+      persistenceTimerRef.current = null;
+      flushPendingPersistence(false);
+    }, PERSISTENCE_TRAILING_MS);
   }, [hypotheses, phase, resources, settings, view]);
+
+  useEffect(() => {
+    const flushForExit = () => {
+      flushPendingPersistence(true);
+      void waitdogCloudSave.flush();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushForExit();
+    };
+    window.addEventListener("pagehide", flushForExit, true);
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange,
+      true,
+    );
+    return () => {
+      window.removeEventListener("pagehide", flushForExit, true);
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange,
+        true,
+      );
+      flushForExit();
+    };
+  }, []);
 
   useEffect(() => {
     const locked = openSurface !== null;
@@ -783,25 +1118,27 @@ export default function App() {
     }
   };
 
-  const selectEncounterCause = (choiceId: string) => {
+  const performDirectEncounterAction = (action: OwnerEncounterAction) => {
     runLifestyle(
-      () => simRef.current.selectEncounterCause(choiceId),
+      () => simRef.current.performEncounterAction(action),
       setEncounterFeedback,
     );
+  };
+
+  const observeEncounter = () => {
+    performDirectEncounterAction({ type: "observe" });
   };
 
   const selectEncounterResponse = (choiceId: string) => {
-    runLifestyle(
-      () => simRef.current.selectEncounterResponse(choiceId),
-      setEncounterFeedback,
-    );
+    performDirectEncounterAction({ type: "response", choiceId });
   };
 
   const selectEncounterReinforcement = (choiceId: string) => {
-    runLifestyle(
-      () => simRef.current.selectEncounterReinforcement(choiceId),
-      setEncounterFeedback,
-    );
+    if (choiceId !== "praise" && choiceId !== "treat") {
+      setEncounterFeedback("사용할 수 없는 보상입니다.");
+      return;
+    }
+    performDirectEncounterAction({ type: "reinforcement", choiceId });
   };
 
   const requestEncounterHint = () => {
@@ -836,12 +1173,18 @@ export default function App() {
     });
   };
 
-  const moveOwnerToRoom = (room: RoomId) => {
-    runLifestyle(
-      () => simRef.current.moveOwnerTo({ room, x: 0.5, y: 0.56 }),
-      setSecondaryFeedback,
-      `${room === "living" ? "생활방" : room === "kitchen" ? "부엌" : "화장실"}으로 이동합니다.`,
-    );
+  const handleGroundMove = (target: GroundMoveTarget) => {
+    clickMoveTargetRef.current = target;
+    setSecondaryFeedback(null);
+  };
+
+  const handleVirtualMove = (vector: DirectMoveVector) => {
+    if (vector.dx === 0 && vector.dy === 0) {
+      virtualMoveRef.current = ZERO_DIRECT_VECTOR;
+      return;
+    }
+    clickMoveTargetRef.current = null;
+    virtualMoveRef.current = vector;
   };
 
   const moveToComputer = () => {
@@ -889,6 +1232,49 @@ export default function App() {
     }
     syncAfterCommand();
     setWorkFeedback("업무를 이어갑니다. 다음 15분 블록을 시작하세요.");
+  };
+
+  const handleNearbyInteraction = () => {
+    const current = viewRef.current;
+    if (current.activeEncounter !== null) {
+      observeEncounter();
+      return;
+    }
+    if (current.interaction.nearbyTarget === "computer") {
+      performWorkBlock();
+      return;
+    }
+    setSecondaryFeedback(
+      "신호나 컴퓨터 가까이 이동한 뒤 E를 눌러 주세요.",
+    );
+  };
+
+  const selectContextAction = (index: number) => {
+    const current = viewRef.current;
+    if (current.work.alert !== null) {
+      if (index === 0) resolveWorkAlert("interrupt");
+      else if (index === 1) resolveWorkAlert("continue");
+      return;
+    }
+    const encounter = current.activeEncounter;
+    if (encounter?.stage !== "response") {
+      if (encounter !== null) {
+        setEncounterFeedback("먼저 신호 가까이에서 E로 관찰해 주세요.");
+      }
+      return;
+    }
+    const choice = encounter.responseChoices[index];
+    if (choice) selectEncounterResponse(choice.id);
+  };
+
+  const openShortcutSurface = (surface: LifestyleSurface) => {
+    const current = viewRef.current;
+    if (
+      current.activeEncounter !== null ||
+      current.work.alert !== null ||
+      current.minuteOfDay >= DAY_END_MINUTE
+    ) return;
+    commitSurface(surface);
   };
 
   const updateStoreCategory = (category: CatalogCategory) => {
@@ -1103,6 +1489,16 @@ export default function App() {
     setCloudConflict(null);
   };
 
+  directInputActionsRef.current = {
+    interact: handleNearbyInteraction,
+    selectContextAction,
+    praise: () => selectEncounterReinforcement("praise"),
+    treat: () => selectEncounterReinforcement("treat"),
+    work: performWorkBlock,
+    openSurface: openShortcutSurface,
+    closeSurface: () => commitSurface(null),
+  };
+
   const cloudSaveUi = (
     <aside className="waitdog-cloud-save" aria-label="클라우드 저장 상태">
       {cloudState === "offline" || cloudState === "error" ? (
@@ -1200,7 +1596,11 @@ export default function App() {
 
   const missionBlocked = view.work.state === "working" ||
     view.work.state === "alert";
-  const controlsDisabled = ended || activeEncounter !== null ||
+  const directControlsDisabled = ended ||
+    openSurface !== null ||
+    !view.interaction.directControlEnabled;
+  const lifestyleControlsDisabled = ended ||
+    activeEncounter !== null ||
     view.work.alert !== null;
 
   return (
@@ -1226,11 +1626,11 @@ export default function App() {
         <HouseCanvas
           view={view}
           lastSeenRoom={lastSeenRoom}
-          disabled={controlsDisabled}
+          disabled={directControlsDisabled}
           compact={activeEncounter !== null}
           encounter={activeEncounter}
-          onRoomSelect={moveOwnerToRoom}
-          onComputer={moveToComputer}
+          onGroundMove={handleGroundMove}
+          onInteract={handleNearbyInteraction}
         />
 
         <aside className="priority-rail" aria-label="현재 우선 행동">
@@ -1238,7 +1638,7 @@ export default function App() {
             <EncounterPanel
               encounter={activeEncounter}
               feedback={encounterFeedback}
-              onSelectCause={selectEncounterCause}
+              onObserve={observeEncounter}
               onSelectResponse={selectEncounterResponse}
               onSelectReinforcement={selectEncounterReinforcement}
               onRequestHint={requestEncounterHint}
@@ -1283,7 +1683,7 @@ export default function App() {
 
               <ControlPanel
                 blocked={view.blocked}
-                disabled={controlsDisabled}
+                disabled={lifestyleControlsDisabled}
                 feedback={secondaryFeedback}
                 onWalk={handleWalk}
                 onWater={handleWater}
@@ -1293,6 +1693,14 @@ export default function App() {
           )}
         </aside>
       </div>
+
+      <DirectControls
+        disabled={directControlsDisabled}
+        onMove={handleVirtualMove}
+        onInteract={handleNearbyInteraction}
+        onPraise={() => selectEncounterReinforcement("praise")}
+        onTreat={() => selectEncounterReinforcement("treat")}
+      />
 
       <BottomNav
         active={openSurface}

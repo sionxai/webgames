@@ -2147,6 +2147,561 @@ assert(
   "W3 timeline leaked hidden or heard details",
 );
 
+const directContractAssertionStart = assertionCount;
+const closeEnough = (
+  first: number,
+  second: number,
+  tolerance = 1e-9,
+): boolean => Math.abs(first - second) <= tolerance;
+
+// C1: fixed axis/diagonal steps and invalid/opposite input rejection.
+const directAxis = createSim(10_001);
+const directAxisStart = directAxis.getFullState().ownerSpatial;
+assert(
+  directAxis.moveOwnerBy({ dx: 1, dy: 0 }).ok,
+  "C1 positive axis direct step was rejected",
+);
+const directAxisAfter = directAxis.getFullState().ownerSpatial;
+assert(
+  closeEnough(
+      Math.hypot(
+        directAxisAfter.x - directAxisStart.x,
+        directAxisAfter.y - directAxisStart.y,
+      ),
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+    ) &&
+    directAxisAfter.y === directAxisStart.y,
+  "C1 axis direct step did not use the fixed balance distance",
+);
+assert(
+  directAxis.moveOwnerBy({ dx: -1, dy: 0 }).ok &&
+    closeEnough(
+      directAxis.getFullState().ownerSpatial.x,
+      directAxisStart.x,
+    ),
+  "C1 opposite axis step did not deterministically return to the start",
+);
+
+const directDiagonal = createSim(10_002);
+const directDiagonalStart = directDiagonal.getFullState().ownerSpatial;
+assert(
+  directDiagonal.moveOwnerBy({ dx: 1, dy: 1 }).ok,
+  "C1 diagonal direct step was rejected",
+);
+const directDiagonalAfter = directDiagonal.getFullState().ownerSpatial;
+const directDiagonalDeltaX =
+  directDiagonalAfter.x - directDiagonalStart.x;
+const directDiagonalDeltaY =
+  directDiagonalAfter.y - directDiagonalStart.y;
+assert(
+  closeEnough(
+      Math.hypot(directDiagonalDeltaX, directDiagonalDeltaY),
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+    ) &&
+    closeEnough(directDiagonalDeltaX, directDiagonalDeltaY),
+  "C1 diagonal input was not normalized to the fixed step distance",
+);
+const beforeZeroVector = directDiagonal.serialize();
+assert(
+  !directDiagonal.moveOwnerBy({ dx: 0, dy: 0 }).ok &&
+    JSON.stringify(directDiagonal.serialize()) ===
+      JSON.stringify(beforeZeroVector),
+  "C1 canceled opposite inputs did not reject as an atomic zero vector",
+);
+assert(
+  !directDiagonal.moveOwnerBy({ dx: Number.NaN, dy: 0 }).ok &&
+    !directDiagonal.moveOwnerBy({ dx: 1.01, dy: 0 }).ok &&
+    !directDiagonal.moveOwnerBy({ dx: 0, dy: -1.01 }).ok,
+  "C1 non-finite or out-of-range direct input was accepted",
+);
+const subnormalDiagonal = createSim(10_003);
+const subnormalStart = subnormalDiagonal.getFullState().ownerSpatial;
+assert(
+  subnormalDiagonal.moveOwnerBy({
+    dx: Number.MIN_VALUE,
+    dy: Number.MIN_VALUE,
+  }).ok &&
+    closeEnough(
+      Math.hypot(
+        subnormalDiagonal.getFullState().ownerSpatial.x - subnormalStart.x,
+        subnormalDiagonal.getFullState().ownerSpatial.y - subnormalStart.y,
+      ),
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+    ),
+  "C1 subnormal finite diagonal input escaped normalization",
+);
+
+// C2: room bounds, doorway roundtrip, and deterministic direct traces.
+const wallBounded = createSim(10_101);
+for (let step = 0; step < 10; step += 1) {
+  if (!wallBounded.moveOwnerBy({ dx: 0, dy: 1 }).ok) {
+    throw new Error("CONTRACT FAIL: C2 setup could not reach a non-door wall");
+  }
+}
+let wallBlocked = false;
+for (let step = 0; step < 20; step += 1) {
+  if (!wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
+    wallBlocked = true;
+    break;
+  }
+}
+const wallPosition = wallBounded.getFullState().ownerSpatial;
+assert(
+  wallBlocked &&
+    wallPosition.room === "living" &&
+    wallPosition.x === BALANCE.SPATIAL.MAX_COORDINATE &&
+    closeEnough(wallPosition.y, 0.5),
+  "C2 direct movement crossed or escaped a wall outside a doorway",
+);
+const wallStableBefore = wallBounded.serialize();
+assert(
+  !wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok &&
+    JSON.stringify(wallBounded.serialize()) ===
+      JSON.stringify(wallStableBefore),
+  "C2 repeated boundary input jittered or mutated the clamped state",
+);
+
+const doorRoundtrip = createSim(10_102);
+for (
+  let step = 0;
+  step < 20 && doorRoundtrip.getFullState().ownerSpatial.room === "living";
+  step += 1
+) {
+  if (!doorRoundtrip.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
+    throw new Error("CONTRACT FAIL: C2 direct doorway approach was blocked");
+  }
+}
+const kitchenEntry = BALANCE.SPATIAL.TRANSITION.living.kitchen.entry;
+assert(
+  doorRoundtrip.getFullState().ownerSpatial.room === "kitchen" &&
+    doorRoundtrip.getFullState().ownerSpatial.x === kitchenEntry.x &&
+    doorRoundtrip.getFullState().ownerSpatial.y === kitchenEntry.y,
+  "C2 living-to-kitchen direct movement did not reuse the doorway entry",
+);
+const livingEntry = BALANCE.SPATIAL.TRANSITION.kitchen.living.entry;
+assert(
+  doorRoundtrip.moveOwnerBy({ dx: -1, dy: 0 }).ok &&
+    doorRoundtrip.getFullState().ownerSpatial.room === "living" &&
+    doorRoundtrip.getFullState().ownerSpatial.x === livingEntry.x &&
+    doorRoundtrip.getFullState().ownerSpatial.y === livingEntry.y,
+  "C2 kitchen-to-living direct doorway roundtrip failed",
+);
+
+const directTraceA = createSim(10_103);
+const directTraceB = createSim(10_103);
+const deterministicDirectInputs = [
+  { dx: -0.4, dy: 0.8 },
+  { dx: 1, dy: 0 },
+  { dx: 0.25, dy: -0.75 },
+  { dx: -1, dy: -1 },
+  { dx: 0, dy: 1 },
+];
+for (const input of deterministicDirectInputs) {
+  directTraceA.moveOwnerBy(input);
+  directTraceB.moveOwnerBy(input);
+}
+assert(
+  JSON.stringify(directTraceA.serialize()) ===
+    JSON.stringify(directTraceB.serialize()),
+  "C2 identical direct input traces were not deterministic",
+);
+
+// C3: encounter-time direct movement remains enabled without advancing time.
+const encounterDirect = createSim(10_201);
+assert(
+  encounterDirect.startEncounter("potty").ok,
+  "C3 encounter setup failed",
+);
+const encounterDirectStartedAt =
+  encounterDirect.getFullState().absoluteMinute;
+const encounterDirectOwnerBefore =
+  encounterDirect.getFullState().ownerSpatial;
+assert(
+  encounterDirect.getDogView().interaction.directControlEnabled &&
+    encounterDirect.moveOwnerBy({ dx: -1, dy: 0 }).ok,
+  "C3 active encounter disabled direct axis movement",
+);
+const encounterDirectAfterAxis = encounterDirect.getFullState();
+assert(
+  encounterDirectAfterAxis.absoluteMinute === encounterDirectStartedAt &&
+    encounterDirectAfterAxis.ownerSpatial.x <
+      encounterDirectOwnerBefore.x &&
+    encounterDirectAfterAxis.ownerSpatial.activity === "responding" &&
+    !encounterDirectAfterAxis.ownerSpatial.moving,
+  "C3 direct encounter step advanced time or left an invalid activity",
+);
+assert(
+  encounterDirect.stepOwnerToward({
+    room: "living",
+    x: 0.7,
+    y: 0.72,
+  }).ok &&
+    encounterDirect.getFullState().absoluteMinute ===
+      encounterDirectStartedAt &&
+    encounterDirect.getFullState().ownerSpatial.activity === "responding",
+  "C3 encounter click step advanced game time or lost responding state",
+);
+
+// C4: proximity gates encounter actions atomically and progresses in range.
+const proximityEncounter = createSim(10_301);
+assert(
+  proximityEncounter.startEncounter("potty").ok,
+  "C4 proximity encounter setup failed",
+);
+const publicBeforeObserve = proximityEncounter.getDogView();
+assert(
+  !publicBeforeObserve.interaction.encounterReady &&
+    publicBeforeObserve.interaction.encounterDistance !== null &&
+    publicBeforeObserve.interaction.encounterDistance >
+      BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS &&
+    publicBeforeObserve.interaction.nearbyTarget === null,
+  "C4 out-of-range encounter interaction was reported ready",
+);
+assert(
+  Object.keys(publicBeforeObserve.interaction).sort().join(",") ===
+    [
+      "directControlEnabled",
+      "encounterDistance",
+      "encounterReady",
+      "nearbyTarget",
+    ].sort().join(",") &&
+    !("hiddenCauseId" in publicBeforeObserve.activeEncounter!),
+  "C4 public interaction shape changed or exposed a hidden cause field",
+);
+const outsideActionBefore = proximityEncounter.serialize();
+const outsideAction = proximityEncounter.performEncounterAction({
+  type: "observe",
+});
+assert(
+  !outsideAction.ok &&
+    outsideAction.reason !== null &&
+    JSON.stringify(proximityEncounter.serialize()) ===
+      JSON.stringify(outsideActionBefore),
+  "C4 out-of-range encounter action was not an atomic rejection",
+);
+
+const proximityCue = proximityEncounter.getDogView().activeEncounter?.cue;
+if (proximityCue?.anchor === null || proximityCue === undefined) {
+  throw new Error("CONTRACT FAIL: C4 setup lacked an anchored cue");
+}
+let proximitySteps = 0;
+while (
+  !proximityEncounter.getDogView().interaction.encounterReady &&
+  proximitySteps < 100
+) {
+  const result = proximityEncounter.stepOwnerToward({
+    room: proximityCue.room,
+    x: proximityCue.anchor.x,
+    y: proximityCue.anchor.y,
+  });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: C4 cue approach failed: ${result.reason}`);
+  }
+  proximitySteps += 1;
+}
+const readyInteraction = proximityEncounter.getDogView().interaction;
+assert(
+  proximitySteps > 0 &&
+    readyInteraction.encounterReady &&
+    readyInteraction.encounterDistance !== null &&
+    readyInteraction.encounterDistance <=
+      BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS &&
+    readyInteraction.nearbyTarget === "encounter" &&
+    proximityEncounter.getFullState().absoluteMinute ===
+      outsideActionBefore.absoluteMinute,
+  "C4 fixed click steps did not reach the cue with frozen game time",
+);
+const privateEncounter =
+  proximityEncounter.serialize().encounterDirector.active;
+if (privateEncounter === null) {
+  throw new Error("CONTRACT FAIL: C4 active encounter disappeared");
+}
+const proximityDefinition = ENCOUNTER_DEFINITIONS.find((definition) =>
+  definition.id === privateEncounter.encounterId
+);
+const correctCause = proximityDefinition?.causes.find((cause) =>
+  cause.id === privateEncounter.hiddenCauseId
+);
+if (correctCause === undefined) {
+  throw new Error("CONTRACT FAIL: C4 hidden cause lacked a response");
+}
+assert(
+  proximityEncounter.performEncounterAction({ type: "observe" }).ok &&
+    proximityEncounter.getDogView().activeEncounter?.stage === "response",
+  "C4 in-range observe did not internally confirm the hidden cause",
+);
+assert(
+  proximityEncounter.performEncounterAction({
+    type: "response",
+    choiceId: correctCause.correctResponseId,
+  }).ok &&
+    proximityEncounter.getDogView().activeEncounter?.stage ===
+      "reinforcement",
+  "C4 in-range response did not advance to reinforcement",
+);
+const economyBeforeReinforcement =
+  proximityEncounter.getFullState().economy;
+assert(
+  proximityEncounter.performEncounterAction({
+    type: "reinforcement",
+    choiceId: "praise",
+  }).ok &&
+    proximityEncounter.getDogView().activeEncounter?.stage === "outcome" &&
+    proximityEncounter.getFullState().economy.carePoints ===
+      economyBeforeReinforcement.carePoints + 1,
+  "C4 in-range reinforcement did not complete the encounter economy",
+);
+
+const encounterSafetyDistance =
+  BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS +
+  BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS +
+  BALANCE.LIFESTYLE.OWNER.SAFETY_GAP;
+assert(
+  BALANCE.LIFESTYLE.OWNER.INTERACTION_RADIUS === 0.12 &&
+    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS >= 0.18 &&
+    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS <= 0.2 &&
+    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS >
+      encounterSafetyDistance,
+  "C4 encounter proximity was not separated safely from the computer radius",
+);
+
+const whineProximity = createSim(10_302);
+assert(
+  whineProximity.startEncounter("whine").ok &&
+    whineProximity.getDogView().activeEncounter?.cue.anchor === null &&
+    !whineProximity.getDogView().interaction.encounterReady,
+  "C4 null-anchor whine did not start outside interaction range",
+);
+let whineApproachSteps = 0;
+while (
+  !whineProximity.getDogView().interaction.encounterReady &&
+  whineApproachSteps < 100
+) {
+  const state = whineProximity.getFullState();
+  const result = whineProximity.stepOwnerToward({
+    room: state.spatial.room,
+    x: state.spatial.x,
+    y: state.spatial.y,
+  });
+  if (!result.ok) {
+    throw new Error(
+      `CONTRACT FAIL: C4 whine approach failed: ${result.reason}`,
+    );
+  }
+  if (whineProximity.getFullState().ownerDogOverlap) {
+    throw new Error(
+      "CONTRACT FAIL: C4 whine approach overlapped owner and dog",
+    );
+  }
+  whineApproachSteps += 1;
+}
+const whineReadyView = whineProximity.getDogView();
+const whineReadyState = whineProximity.getFullState();
+const whineOwnerDogDistance = Math.hypot(
+  whineReadyState.ownerSpatial.x - whineReadyState.spatial.x,
+  whineReadyState.ownerSpatial.y - whineReadyState.spatial.y,
+);
+assert(
+  whineApproachSteps > 0 &&
+    whineReadyView.interaction.encounterReady &&
+    whineReadyView.interaction.encounterDistance !== null &&
+    closeEnough(
+      whineReadyView.interaction.encounterDistance,
+      whineOwnerDogDistance,
+    ) &&
+    whineOwnerDogDistance >= encounterSafetyDistance - 1e-9 &&
+    !whineReadyState.ownerDogOverlap,
+  "C4 whine could not become ready while preserving owner/dog safety",
+);
+assert(
+  whineProximity.performEncounterAction({ type: "observe" }).ok &&
+    whineProximity.getDogView().activeEncounter?.stage === "response",
+  "C4 ready null-anchor whine did not advance observe to response",
+);
+
+// C5: every successful direct step preserves owner/dog separation.
+const directOverlap = createSim(10_401);
+for (let step = 0; step < 24; step += 1) {
+  const state = directOverlap.getFullState();
+  const result = directOverlap.moveOwnerBy({
+    dx: state.spatial.x - state.ownerSpatial.x,
+    dy: state.spatial.y - state.ownerSpatial.y,
+  });
+  if (!result.ok) {
+    throw new Error(
+      `CONTRACT FAIL: C5 collision approach failed: ${result.reason}`,
+    );
+  }
+  assert(
+    !directOverlap.getFullState().ownerDogOverlap &&
+      !directOverlap.getDogView().ownerDogOverlap,
+    `C5 owner/dog footprints overlapped after direct step ${step + 1}`,
+  );
+}
+
+// C6: click stepping follows the existing toilet-living-kitchen route.
+const clickRoute = createSim(10_501, {
+  owner: { room: "toilet", focusLocked: false },
+});
+const clickTarget = { room: "kitchen" as const, x: 0.4, y: 0.4 };
+const clickStartedAt = clickRoute.getFullState().absoluteMinute;
+const clickFirstBefore = clickRoute.getFullState().ownerSpatial;
+assert(
+  clickRoute.stepOwnerToward(clickTarget).ok,
+  "C6 first click step was rejected",
+);
+const clickFirstAfter = clickRoute.getFullState().ownerSpatial;
+assert(
+  closeEnough(
+    Math.hypot(
+      clickFirstAfter.x - clickFirstBefore.x,
+      clickFirstAfter.y - clickFirstBefore.y,
+    ),
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+  ),
+  "C6 click movement did not use the fixed direct step",
+);
+const clickRoomTrace = ["toilet"];
+let clickRouteSteps = 1;
+while (clickRouteSteps < 180) {
+  const ownerSpatial = clickRoute.getFullState().ownerSpatial;
+  if (
+    ownerSpatial.room === clickTarget.room &&
+    ownerSpatial.x === clickTarget.x &&
+    ownerSpatial.y === clickTarget.y
+  ) {
+    break;
+  }
+  const result = clickRoute.stepOwnerToward(clickTarget);
+  if (!result.ok) {
+    throw new Error(
+      `CONTRACT FAIL: C6 routed click step failed: ${result.reason}`,
+    );
+  }
+  const room = clickRoute.getFullState().ownerSpatial.room;
+  if (clickRoomTrace[clickRoomTrace.length - 1] !== room) {
+    clickRoomTrace.push(room);
+  }
+  clickRouteSteps += 1;
+}
+const clickRouteFinal = clickRoute.getFullState();
+assert(
+  clickRoomTrace.join(",") === "toilet,living,kitchen" &&
+    clickRouteFinal.ownerSpatial.room === clickTarget.room &&
+    clickRouteFinal.ownerSpatial.x === clickTarget.x &&
+    clickRouteFinal.ownerSpatial.y === clickTarget.y,
+  "C6 click stepping bypassed the living-room transition route",
+);
+assert(
+  clickRouteFinal.absoluteMinute === clickStartedAt &&
+    clickRouteFinal.ownerSpatial.activity === "idle" &&
+    !clickRouteFinal.ownerSpatial.moving &&
+    !clickRouteFinal.ownerDogOverlap,
+  "C6 click route advanced time or left an invalid final owner state",
+);
+
+// C7: nearby work snaps to the exact hotspot and retains block invariants.
+const nearbyWork = createSim(10_601);
+const farWorkBefore = nearbyWork.serialize();
+assert(
+  !nearbyWork.performWorkBlock("direct-work").ok &&
+    JSON.stringify(nearbyWork.serialize()) === JSON.stringify(farWorkBefore),
+  "C7 work started outside the computer interaction radius",
+);
+assert(
+  nearbyWork.moveOwnerBy({ dx: 1, dy: -1 }).ok &&
+    nearbyWork.moveOwnerBy({ dx: 1, dy: -1 }).ok &&
+    nearbyWork.getDogView().interaction.nearbyTarget === "computer" &&
+    nearbyWork.getDogView().work.state === "ready",
+  "C7 direct movement did not expose the nearby computer target",
+);
+const nearbyWorkStartedAt = nearbyWork.getFullState().absoluteMinute;
+const nearbyWorkMoney = nearbyWork.getFullState().economy.money;
+assert(
+  nearbyWork.performWorkBlock("direct-work").ok,
+  "C7 nearby computer work block was rejected",
+);
+const nearbyWorkAfterBlock = nearbyWork.getFullState();
+const computerHotspot = BALANCE.LIFESTYLE.OWNER.HOTSPOT.computer;
+assert(
+  nearbyWorkAfterBlock.ownerSpatial.room === computerHotspot.room &&
+    nearbyWorkAfterBlock.ownerSpatial.x === computerHotspot.x &&
+    nearbyWorkAfterBlock.ownerSpatial.y === computerHotspot.y &&
+    nearbyWorkAfterBlock.ownerSpatial.activity === "working",
+  "C7 work did not snap the owner to the exact computer hotspot",
+);
+assert(
+  nearbyWorkAfterBlock.work.progress === 25 &&
+    nearbyWorkAfterBlock.absoluteMinute ===
+      nearbyWorkStartedAt +
+        BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES &&
+    nearbyWorkAfterBlock.economy.money === nearbyWorkMoney,
+  "C7 first nearby work block changed the 25 percent/time/pay invariant",
+);
+const activeWorkBeforeDirect = nearbyWork.serialize();
+assert(
+  !nearbyWork.moveOwnerBy({ dx: -1, dy: 0 }).ok &&
+    !nearbyWork.getDogView().interaction.directControlEnabled &&
+    JSON.stringify(nearbyWork.serialize()) ===
+      JSON.stringify(activeWorkBeforeDirect),
+  "C7 direct movement mutated an active work block",
+);
+assert(
+  nearbyWork.performWorkBlock("direct-work").ok &&
+    nearbyWork.getFullState().work.progress === 50 &&
+    nearbyWork.getFullState().work.alert !== null,
+  "C7 second block did not preserve the existing work alert",
+);
+const alertWorkBeforeDirect = nearbyWork.serialize();
+assert(
+  !nearbyWork.stepOwnerToward({
+    room: "living",
+    x: 0.5,
+    y: 0.5,
+  }).ok &&
+    !nearbyWork.getDogView().interaction.directControlEnabled &&
+    JSON.stringify(nearbyWork.serialize()) ===
+      JSON.stringify(alertWorkBeforeDirect),
+  "C7 click movement mutated a pending work alert",
+);
+
+// C8: direct state roundtrips without adding held input or derived view data.
+const directSnapshot = clickRoute.serialize();
+const directSnapshotRecord =
+  directSnapshot as unknown as Record<string, unknown>;
+assert(
+  directSnapshot.version === 3 &&
+    !("interaction" in directSnapshotRecord) &&
+    !("heldInput" in directSnapshotRecord) &&
+    !("directControlEnabled" in directSnapshotRecord),
+  "C8 snapshot persisted direct input or derived interaction state",
+);
+const directRestored = createSim(0);
+directRestored.restore(directSnapshot);
+assert(
+  JSON.stringify(directRestored.serialize()) ===
+    JSON.stringify(directSnapshot) &&
+    JSON.stringify(directRestored.getDogView().interaction) ===
+      JSON.stringify(clickRoute.getDogView().interaction),
+  "C8 routed direct-control snapshot did not restore identically",
+);
+const activeDirectSnapshot = encounterDirect.serialize();
+const activeDirectRestored = createSim(1);
+activeDirectRestored.restore(activeDirectSnapshot);
+assert(
+  JSON.stringify(activeDirectRestored.serialize()) ===
+      JSON.stringify(activeDirectSnapshot) &&
+    JSON.stringify(activeDirectRestored.getDogView().interaction) ===
+      JSON.stringify(encounterDirect.getDogView().interaction) &&
+    activeDirectRestored.getFullState().ownerSpatial.activity ===
+      "responding",
+  "C8 active-encounter direct state did not roundtrip identically",
+);
+assert(
+  assertionCount - directContractAssertionStart >= 50,
+  "C1-C8 direct-control contract contains fewer than 50 assertions",
+);
+
 assert(assertionCount >= 25, "contract contains fewer than 25 assertions");
 
 console.log(`CONTRACT OK ${assertionCount} assertions`);

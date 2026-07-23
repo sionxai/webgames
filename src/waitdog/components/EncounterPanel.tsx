@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import type { EncounterChoice, EncounterPublicView } from "../types";
 
-interface EncounterPanelProps {
+export interface EncounterPanelProps {
   encounter: EncounterPublicView;
   feedback: string | null;
-  onSelectCause: (choiceId: string) => void;
+  onObserve: () => void;
   onSelectResponse: (choiceId: string) => void;
   onSelectReinforcement: (choiceId: string) => void;
   onRequestHint: () => void;
@@ -12,13 +12,48 @@ interface EncounterPanelProps {
   onDismiss: () => void;
 }
 
+interface ChoicePresentation {
+  icon: string;
+  verb: string;
+}
+
+const RESPONSE_PRESENTATION: Record<string, ChoicePresentation> = {
+  "potty-guide-pad": { icon: "◎", verb: "패드 안내" },
+  "potty-check-calmly": { icon: "↗", verb: "동선 열기" },
+  "potty-punish": { icon: "▲", verb: "큰소리" },
+  "excited-pause": { icon: "Ⅱ", verb: "잠깐 멈춤" },
+  "excited-rest": { icon: "◒", verb: "매트 휴식" },
+  "excited-space": { icon: "↔", verb: "거리 늘리기" },
+  "recall-short": { icon: "⌁", verb: "한 번 부르기" },
+  "recall-cheerful": { icon: "☀", verb: "밝게 기다리기" },
+  "recall-space": { icon: "↷", verb: "정면 비키기" },
+  "settle-mat": { icon: "▱", verb: "매트 기다림" },
+  "settle-dim": { icon: "◐", verb: "자극 낮추기" },
+  "settle-near": { icon: "○", verb: "조용히 곁에" },
+  "bark-acknowledge": { icon: "✓", verb: "소리 확인" },
+  "bark-distance": { icon: "↔", verb: "문과 거리" },
+  "bark-redirect": { icon: "⌕", verb: "냄새 찾기" },
+  "whine-quiet": { icon: "♡", verb: "조용히 관심" },
+  "whine-check": { icon: "☑", verb: "필요 확인" },
+  "whine-observe": { icon: "✎", verb: "기록·문의" },
+  "anxiety-gradual": { icon: "⋯", verb: "천천히 연습" },
+  "anxiety-safe-room": { icon: "⌂", verb: "숨을 공간" },
+  "anxiety-consult": { icon: "✚", verb: "전문가 확인" },
+  "bite-trade": { icon: "⇄", verb: "안전한 교환" },
+  "bite-stop": { icon: "■", verb: "접촉 멈춤" },
+  "bite-force": { icon: "!", verb: "붙잡기" },
+  "flee-quiet": { icon: "♩", verb: "소리 줄이기" },
+  "flee-crouch": { icon: "⌄", verb: "몸 낮춰 부르기" },
+  "flee-stop": { icon: "■", verb: "추격 멈춤" },
+};
+
 const STAGE_LABELS: Record<EncounterPublicView["stage"], string> = {
-  cue: "단서",
-  cause: "원인 찾기",
-  response: "대응 고르기",
-  reinforcement: "마무리 보상",
-  result: "결과",
-  outcome: "결과",
+  cue: "관찰",
+  cause: "관찰",
+  response: "대응",
+  reinforcement: "보상",
+  result: "완료",
+  outcome: "완료",
 };
 
 const STAGE_ORDER: EncounterPublicView["stage"][] = [
@@ -38,31 +73,79 @@ const safetyCopy = (encounter: EncounterPublicView): string | null => {
   return null;
 };
 
-function ChoiceFieldset({
-  legend,
+const fallbackPresentation = (
+  choice: EncounterChoice,
+): ChoicePresentation => ({
+  icon: "•",
+  verb: choice.label.split(/\s+/).slice(0, 2).join(" "),
+});
+
+function ResponseChoices({
   choices,
   selectedId,
   onSelect,
 }: {
-  legend: string;
   choices: readonly EncounterChoice[];
   selectedId: string | null;
   onSelect: (choiceId: string) => void;
 }) {
   return (
-    <fieldset className="encounter-choices">
-      <legend>{legend}</legend>
+    <fieldset className="encounter-choices quick-response-choices">
+      <legend>대응 선택</legend>
       <div>
-        {choices.map((choice, index) => (
+        {choices.slice(0, 3).map((choice, index) => {
+          const presentation = RESPONSE_PRESENTATION[choice.id] ??
+            fallbackPresentation(choice);
+          return (
+            <button
+              type="button"
+              key={choice.id}
+              className={selectedId === choice.id ? "is-selected" : ""}
+              aria-label={`${index + 1}. ${choice.label}`}
+              aria-pressed={selectedId === choice.id}
+              title={choice.label}
+              onClick={() => onSelect(choice.id)}
+            >
+              <span className="choice-key" aria-hidden="true">
+                {index + 1}
+              </span>
+              <span className="choice-icon" aria-hidden="true">
+                {presentation.icon}
+              </span>
+              <strong>{presentation.verb}</strong>
+            </button>
+          );
+        })}
+      </div>
+    </fieldset>
+  );
+}
+
+function ReinforcementChoices({
+  choices,
+  onSelect,
+}: {
+  choices: readonly EncounterChoice[];
+  onSelect: (choiceId: string) => void;
+}) {
+  const keyFor = (choiceId: string) => choiceId === "praise" ? "Space" : "Q";
+  const labelFor = (choiceId: string) => choiceId === "praise" ? "칭찬" : "간식";
+  return (
+    <fieldset className="encounter-choices reinforcement-choices">
+      <legend>마무리</legend>
+      <div>
+        {choices.filter((choice) =>
+          choice.id === "praise" || choice.id === "treat"
+        ).map((choice) => (
           <button
             type="button"
             key={choice.id}
-            className={selectedId === choice.id ? "is-selected" : ""}
-            aria-pressed={selectedId === choice.id}
+            aria-label={`${keyFor(choice.id)} 키. ${choice.label}`}
+            title={choice.label}
             onClick={() => onSelect(choice.id)}
           >
-            <span aria-hidden="true">{index + 1}</span>
-            {choice.label}
+            <kbd>{keyFor(choice.id)}</kbd>
+            <strong>{labelFor(choice.id)}</strong>
           </button>
         ))}
       </div>
@@ -73,7 +156,7 @@ function ChoiceFieldset({
 export function EncounterPanel({
   encounter,
   feedback,
-  onSelectCause,
+  onObserve,
   onSelectResponse,
   onSelectReinforcement,
   onRequestHint,
@@ -91,8 +174,7 @@ export function EncounterPanel({
 
   useEffect(() => {
     if (
-      encounter.stage === "outcome" ||
-      encounter.stage === "result" ||
+      encounter.stage !== "response" ||
       encounter.hint !== null
     ) return;
     const timeout = window.setTimeout(() => idleHintRef.current(), 8_000);
@@ -106,6 +188,10 @@ export function EncounterPanel({
       encounter.stage === "result" ? "outcome" : encounter.stage,
     ),
   );
+  const isObserveStage = encounter.stage === "cause" ||
+    encounter.stage === "cue";
+  const isOutcomeStage = encounter.stage === "outcome" ||
+    encounter.stage === "result";
 
   return (
     <section
@@ -155,35 +241,36 @@ export function EncounterPanel({
         </p>
       )}
 
-      {encounter.stage !== "outcome" && encounter.stage !== "result" && (
-        <section className="cue-card" aria-labelledby="cue-title">
-          <span aria-hidden="true" className="cue-icon">●</span>
-          <div>
-            <h3 id="cue-title">{encounter.cue.label}</h3>
-            <ul>
-              {encounter.publicClues.map((clue) => (
-                <li key={clue}>{clue}</li>
-              ))}
-            </ul>
-          </div>
-        </section>
+      {isObserveStage && (
+        <button
+          className="encounter-observe"
+          type="button"
+          aria-label={`E 키로 관찰. ${encounter.cue.label}`}
+          title={encounter.cue.label}
+          onClick={onObserve}
+        >
+          <kbd>E</kbd>
+          <strong>관찰</strong>
+        </button>
       )}
 
-      {(encounter.stage === "cause" || encounter.stage === "cue") && (
-        <ChoiceFieldset
-          legend="이 행동의 원인은 무엇일까요?"
-          choices={encounter.causeChoices}
-          selectedId={encounter.selectedCauseId}
-          onSelect={(choiceId) => {
-            setInputRevision((revision) => revision + 1);
-            onSelectCause(choiceId);
-          }}
-        />
+      {!isObserveStage && !isOutcomeStage && (
+        <div
+          className="observed-cue"
+          aria-label={`관찰 단서: ${
+            encounter.publicClues.join(" ") || encounter.cue.label
+          }`}
+          title={encounter.publicClues.join(" · ") || encounter.cue.label}
+        >
+          <span aria-hidden="true">✓</span>
+          <strong className="observed-cue__text">
+            {encounter.publicClues[0] ?? encounter.cue.label}
+          </strong>
+        </div>
       )}
 
       {encounter.stage === "response" && (
-        <ChoiceFieldset
-          legend="지금 가장 안전하고 도움이 되는 대응은?"
+        <ResponseChoices
           choices={encounter.responseChoices}
           selectedId={encounter.selectedResponseId}
           onSelect={(choiceId) => {
@@ -194,10 +281,8 @@ export function EncounterPanel({
       )}
 
       {encounter.stage === "reinforcement" && (
-        <ChoiceFieldset
-          legend="좋은 선택을 어떻게 마무리할까요?"
+        <ReinforcementChoices
           choices={encounter.reinforcementChoices}
-          selectedId={null}
           onSelect={(choiceId) => {
             setInputRevision((revision) => revision + 1);
             onSelectReinforcement(choiceId);
@@ -205,7 +290,7 @@ export function EncounterPanel({
         />
       )}
 
-      {encounter.hint && (
+      {encounter.hint && !isObserveStage && !isOutcomeStage && (
         <aside className="encounter-hint" role="note">
           <strong>관찰 힌트</strong>
           <span>{encounter.hint}</span>
@@ -218,8 +303,7 @@ export function EncounterPanel({
         </p>
       )}
 
-      {encounter.stage !== "outcome" && encounter.stage !== "result" &&
-        encounter.hint === null && (
+      {encounter.stage === "response" && encounter.hint === null && (
         <button
           className="hint-button"
           type="button"
@@ -228,23 +312,23 @@ export function EncounterPanel({
             onRequestHint();
           }}
         >
-          힌트 요청
+          힌트
         </button>
       )}
 
-      {(encounter.stage === "outcome" || encounter.stage === "result") &&
-        encounter.outcome && (
+      {isOutcomeStage && encounter.outcome && (
         <div
           className={encounter.outcome.success
             ? "encounter-outcome is-success"
             : "encounter-outcome"}
           aria-live="polite"
+          aria-label={encounter.outcome.success
+            ? "미션 완료"
+            : "미션 결과를 다시 확인하세요"}
         >
           <span className="outcome-mark" aria-hidden="true">
             {encounter.outcome.success ? "✓" : "!"}
           </span>
-          <h3>{encounter.outcome.success ? "차분하게 해결했어요" : "다시 살펴볼 점이 있어요"}</h3>
-          <p>{encounter.outcome.message}</p>
           {encounter.outcome.safetyMessage && (
             <p className="outcome-safety">{encounter.outcome.safetyMessage}</p>
           )}
@@ -259,7 +343,7 @@ export function EncounterPanel({
             </div>
           </dl>
           <button className="primary-action" type="button" onClick={onDismiss}>
-            결과 확인
+            확인
           </button>
         </div>
       )}
