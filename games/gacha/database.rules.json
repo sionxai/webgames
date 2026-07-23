@@ -30,7 +30,7 @@
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
         "$mailId": {
-          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.isObject() &&\n                newData.child('title').isString() && newData.child('title').val().length <= 120 &&\n                newData.child('message').isString() && newData.child('message').val().length <= 1000 &&\n                newData.child('createdAt').isNumber() && newData.child('expiresAt').isNumber() &&\n                newData.child('type').isString() && newData.child('read').isBoolean()\n              ) ||\n              (data.exists() && !newData.exists())\n            ))\n          )",
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren() &&\n                newData.child('title').isString() && newData.child('title').val().length <= 120 &&\n                newData.child('message').isString() && newData.child('message').val().length <= 1000 &&\n                newData.child('createdAt').isNumber() && newData.child('expiresAt').isNumber() &&\n                newData.child('type').isString() && newData.child('read').isBoolean()\n              ) ||\n              (data.exists() && !newData.exists())\n            ))\n          )",
           ".validate": "newData.hasChildren(['title','message','createdAt','expiresAt','type','read'])"
         }
       }
@@ -40,7 +40,7 @@
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
         "$mailId": {
-          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.isObject()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
         }
       }
     },
@@ -49,7 +49,7 @@
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
         "$mailId": {
-          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.isObject()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
+          ".write": "auth != null && (\n            root.child('users').child(auth.uid).child('role').val() === 'admin' ||\n            (auth.uid === $uid && (\n              (!data.exists() && newData.hasChildren()) ||\n              (data.exists() && !newData.exists())\n            ))\n          )"
         }
       }
     },
