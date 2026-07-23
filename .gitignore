@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+games/*/node_modules/
+games/*/.next/
+games/*/.env*
+games/*/functions/node_modules/
 
 # Build output
 dist/
@@ -21,3 +25,6 @@ tmp/
 
 # Logs
 *.log
+
+# Firebase deploy cache (bakara)
+games/*/.firebase/

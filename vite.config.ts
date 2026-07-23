@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { staticGamesPlugin } from './plugins/staticGamesPlugin';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), staticGamesPlugin()],
   server: {
     port: 3000,
     open: false
