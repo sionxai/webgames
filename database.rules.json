@@ -121,8 +121,15 @@
     "portal": {
       "users": {
         "$uid": {
-          ".read": "auth != null && auth.uid === $uid",
-          ".write": "auth != null && auth.uid === $uid"
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.hasChildren(['nickname', 'nicknameLower', 'updatedAt']) && newData.child('nickname').isString() && newData.child('nickname').val().length >= 2 && newData.child('nickname').val().length <= 12 && newData.child('nicknameLower').isString() && newData.child('updatedAt').isNumber()"
+        }
+      },
+      "nicknames": {
+        "$name": {
+          ".read": "auth != null",
+          ".write": "auth != null && (!data.exists() || data.val() === auth.uid) && (!newData.exists() || newData.val() === auth.uid)"
         }
       },
       "saves": {

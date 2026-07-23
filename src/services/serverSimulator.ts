@@ -70,278 +70,48 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
-  const keys = Object.keys(value);
-  return keys.length === expectedKeys.length && expectedKeys.every(key => key in value);
-}
-
-function isNonNegativeInteger(value: unknown, maximum = Number.MAX_SAFE_INTEGER): value is number {
-  return (
-    typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= 0
-    && value <= maximum
-  );
-}
-
-function isUniqueArray<T>(value: T[]): boolean {
-  return new Set(value).size === value.length;
-}
-
-function isStrictCatalystMap(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const catalystIds = CATALYST_DEFINITIONS.map(definition => definition.id);
-  return (
-    hasExactKeys(value, catalystIds)
-    && catalystIds.every(id => isNonNegativeInteger(value[id]))
-  );
-}
-
-function isStrictUpgradeMap(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  const upgradeIds = PERMANENT_UPGRADES.map(upgrade => upgrade.id);
-  return (
-    hasExactKeys(value, upgradeIds)
-    && PERMANENT_UPGRADES.every(upgrade => (
-      isNonNegativeInteger(value[upgrade.id], upgrade.maxLevel)
-    ))
-  );
-}
-
-function isStrictForgeRunRecord(value: unknown, controller: ForgeController): boolean {
-  if (!isRecord(value)) return false;
-  const seriesId = value.seriesId;
-  return (
-    hasExactKeys(value, [
-      'weaponId',
-      'seriesId',
-      'level',
-      'weaponAttempts',
-      'repairCount',
-      'adRestoreCount',
-      'controller',
-      'achievedAt',
-      'isPure'
-    ])
-    && typeof value.weaponId === 'string'
-    && value.weaponId.length > 0
-    && typeof seriesId === 'string'
-    && SWORD_SERIES_LIST.some(series => series.id === seriesId)
-    && isNonNegativeInteger(value.level, MAX_ENHANCE_LEVEL)
-    && isNonNegativeInteger(value.weaponAttempts)
-    && isNonNegativeInteger(value.repairCount)
-    && isNonNegativeInteger(value.adRestoreCount)
-    && value.controller === controller
-    && typeof value.achievedAt === 'number'
-    && Number.isFinite(value.achievedAt)
-    && value.achievedAt >= 0
-    && typeof value.isPure === 'boolean'
-  );
-}
-
-function isStrictBestRecords(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ['human', 'agent'])) return false;
-  return (
-    (value.human === null || isStrictForgeRunRecord(value.human, 'human'))
-    && (value.agent === null || isStrictForgeRunRecord(value.agent, 'agent'))
-  );
-}
-
-function isStrictTranscendence(value: unknown): boolean {
-  if (!isRecord(value) || !hasExactKeys(value, ['godblood', 'end'])) return false;
-  return (['godblood', 'end'] as const).every(relicId => {
-    const relic = value[relicId];
+function isStructurallyEqualJson(left: unknown, right: unknown): boolean {
+  if (left === right) {
     return (
-      isRecord(relic)
-      && hasExactKeys(relic, ['relics', 'shards'])
-      && isNonNegativeInteger(relic.relics)
-      && isNonNegativeInteger(relic.shards, TRANSCENDENCE_THRESHOLDS[relicId] - 1)
+      left === null
+      || typeof left === 'string'
+      || typeof left === 'boolean'
+      || (typeof left === 'number' && Number.isFinite(left))
     );
-  });
-}
-
-function isStrictBossEncounter(value: unknown, weaponId: string, currentLevel: number): boolean {
-  const expectedBagSize = getBossBagSizeForLevel(currentLevel);
-  if (value === null) return expectedBagSize === null || currentLevel === MAX_ENHANCE_LEVEL;
-  if (!isRecord(value) || expectedBagSize === null) return false;
-  if (!hasExactKeys(value, ['weaponId', 'bagSize', 'cursor', 'bossSlot', 'cycle', 'active'])) {
-    return false;
   }
-  if (
-    value.weaponId !== weaponId
-    || value.bagSize !== expectedBagSize
-    || !isNonNegativeInteger(value.cursor, expectedBagSize)
-    || !isNonNegativeInteger(value.bossSlot, expectedBagSize)
-    || value.bossSlot < 1
-    || !isNonNegativeInteger(value.cycle)
-    || value.cycle < 1
-  ) {
-    return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((item, index) => isStructurallyEqualJson(item, right[index]))
+    );
   }
-  if (value.active === null) return true;
-  const active = value.active;
-  if (!isRecord(active)) return false;
-  const boss = BOSS_LIST.find(candidate => candidate.milestone === active.levelSnapshot);
+  if (!isRecord(left) || !isRecord(right)) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
   return (
-    hasExactKeys(active, ['encounterId', 'weaponId', 'levelSnapshot', 'bossId', 'revealedAt'])
-    && typeof active.encounterId === 'string'
-    && active.encounterId.length > 0
-    && active.weaponId === weaponId
-    && active.levelSnapshot === currentLevel
-    && boss !== undefined
-    && active.bossId === boss.id
-    && typeof active.revealedAt === 'number'
-    && Number.isFinite(active.revealedAt)
-    && active.revealedAt >= 0
-    && value.cursor === value.bossSlot
-  );
-}
-
-function isStrictCurrentWeapon(value: unknown, currentLevel: number): boolean {
-  if (!isRecord(value)) return false;
-  if (!hasExactKeys(value, [
-    'weaponId',
-    'ordinal',
-    'enhanceAttempts',
-    'repairCount',
-    'adRestoreCount',
-    'failCountsByTargetLevel',
-    'progressCharges',
-    'bossEncounter',
-    'claimedRareBossStages',
-    'endShardFirstAttemptGranted'
-  ])) {
-    return false;
-  }
-  const failCounts = value.failCountsByTargetLevel;
-  const progressCharges = value.progressCharges;
-  const rareBossStages = value.claimedRareBossStages;
-  return (
-    typeof value.weaponId === 'string'
-    && value.weaponId.length > 0
-    && isNonNegativeInteger(value.ordinal)
-    && value.ordinal >= 1
-    && isNonNegativeInteger(value.enhanceAttempts)
-    && isNonNegativeInteger(value.repairCount)
-    && isNonNegativeInteger(value.adRestoreCount)
-    && Array.isArray(failCounts)
-    && failCounts.length === MAX_ENHANCE_LEVEL + 1
-    && failCounts.every(count => isNonNegativeInteger(count))
-    && isRecord(progressCharges)
-    && hasExactKeys(progressCharges, ['tempered', 'awakened'])
-    && isNonNegativeInteger(progressCharges.tempered, PROGRESS_CHARGE_CAPS.tempered)
-    && isNonNegativeInteger(progressCharges.awakened, PROGRESS_CHARGE_CAPS.awakened)
-    && isStrictBossEncounter(value.bossEncounter, value.weaponId, currentLevel)
-    && Array.isArray(rareBossStages)
-    && rareBossStages.every(stage => stage === 18 || stage === 19)
-    && isUniqueArray(rareBossStages)
-    && typeof value.endShardFirstAttemptGranted === 'boolean'
-  );
-}
-
-function isStoredHumanProfileV3(value: Record<string, unknown>): boolean {
-  if (!hasExactKeys(value, [
-    'schemaVersion',
-    'userId',
-    'nickname',
-    'controller',
-    'bestRecords',
-    'gold',
-    'essences',
-    'currentSeriesId',
-    'currentLevel',
-    'currentCrackCount',
-    'consecutiveFailCount',
-    'maxLevelReached',
-    'totalEnhanceAttempts',
-    'totalDestroyedCount',
-    'adRestoredCountThisRun',
-    'isPureRun',
-    'runStartTime',
-    'claimedBossMilestonesThisRun',
-    'catalystInventory',
-    'catalystPity',
-    'discoveredCatalysts',
-    'activeCatalystCharges',
-    'currentWeapon',
-    'transcendence',
-    'upgrades',
-    'unlockedSwords',
-    'unlockedAchievements'
-  ])) {
-    return false;
-  }
-  const currentLevel = value.currentLevel;
-  const claimedMilestones = value.claimedBossMilestonesThisRun;
-  const discoveredCatalysts = value.discoveredCatalysts;
-  const unlockedSwords = value.unlockedSwords;
-  const unlockedAchievements = value.unlockedAchievements;
-  const validMilestones = new Set(BOSS_LIST.map(boss => boss.milestone));
-  const validCatalystIds = new Set(CATALYST_DEFINITIONS.map(definition => definition.id));
-  const currentWeapon = value.currentWeapon;
-  const failCounts = isRecord(currentWeapon) && Array.isArray(currentWeapon.failCountsByTargetLevel)
-    ? currentWeapon.failCountsByTargetLevel
-    : null;
-  const expectedConsecutiveFailCount = (
-    typeof currentLevel === 'number'
-    && currentLevel < MAX_ENHANCE_LEVEL
-    && failCounts
-  )
-    ? failCounts[currentLevel + 1]
-    : 0;
-  return (
-    value.schemaVersion === SCHEMA_VERSION
-    && value.controller === 'human'
-    && typeof value.userId === 'string'
-    && value.userId.length > 0
-    && typeof value.nickname === 'string'
-    && value.nickname.length > 0
-    && typeof value.currentSeriesId === 'string'
-    && SWORD_SERIES_LIST.some(series => series.id === value.currentSeriesId)
-    && isNonNegativeInteger(currentLevel, MAX_ENHANCE_LEVEL)
-    && isNonNegativeInteger(value.currentCrackCount, 3)
-    && isNonNegativeInteger(value.consecutiveFailCount)
-    && value.consecutiveFailCount === expectedConsecutiveFailCount
-    && isNonNegativeInteger(value.maxLevelReached, MAX_ENHANCE_LEVEL)
-    && value.maxLevelReached >= currentLevel
-    && isNonNegativeInteger(value.totalEnhanceAttempts)
-    && isNonNegativeInteger(value.totalDestroyedCount)
-    && isNonNegativeInteger(value.adRestoredCountThisRun)
-    && typeof value.gold === 'number'
-    && Number.isFinite(value.gold)
-    && value.gold >= 0
-    && typeof value.essences === 'number'
-    && Number.isFinite(value.essences)
-    && value.essences >= 0
-    && typeof value.isPureRun === 'boolean'
-    && typeof value.runStartTime === 'number'
-    && Number.isFinite(value.runStartTime)
-    && value.runStartTime >= 0
-    && isStrictBestRecords(value.bestRecords)
-    && Array.isArray(claimedMilestones)
-    && claimedMilestones.every(milestone => (
-      typeof milestone === 'number' && validMilestones.has(milestone)
+    leftKeys.length === rightKeys.length
+    && leftKeys.every(key => (
+      Object.prototype.hasOwnProperty.call(right, key)
+      && isStructurallyEqualJson(left[key], right[key])
     ))
-    && isUniqueArray(claimedMilestones)
-    && isStrictCatalystMap(value.catalystInventory)
-    && isStrictCatalystMap(value.catalystPity)
-    && Array.isArray(discoveredCatalysts)
-    && discoveredCatalysts.every(id => (
-      typeof id === 'string' && validCatalystIds.has(id as CatalystId)
-    ))
-    && isUniqueArray(discoveredCatalysts)
-    && isStrictCatalystMap(value.activeCatalystCharges)
-    && isStrictCurrentWeapon(value.currentWeapon, currentLevel)
-    && isStrictTranscendence(value.transcendence)
-    && isStrictUpgradeMap(value.upgrades)
-    && Array.isArray(unlockedSwords)
-    && unlockedSwords.every(item => typeof item === 'string')
-    && unlockedSwords.includes('kingdom_0')
-    && isUniqueArray(unlockedSwords)
-    && Array.isArray(unlockedAchievements)
-    && unlockedAchievements.every(item => typeof item === 'string')
-    && isUniqueArray(unlockedAchievements)
   );
+}
+
+function isCanonicalCloudProfile(
+  parsedProfile: Record<string, unknown>,
+  migratedProfile: UserGameProfile
+): boolean {
+  const canonicalMigratedProfile: UserGameProfile = {
+    ...migratedProfile,
+    upgrades: Object.fromEntries(
+      Object.keys(DEFAULT_UPGRADES).map(upgradeId => (
+        [upgradeId, migratedProfile.upgrades[upgradeId]]
+      ))
+    )
+  };
+  return isStructurallyEqualJson(parsedProfile, canonicalMigratedProfile);
 }
 
 function readString(value: unknown, fallback: string): string {
@@ -712,7 +482,11 @@ export class ServerSimulator {
     };
   }
 
-  private migrateProfile(savedProfile: Record<string, unknown>, defaults: UserGameProfile): UserGameProfile {
+  private migrateProfile(
+    savedProfile: Record<string, unknown>,
+    defaults: UserGameProfile,
+    allowEncounterCreation = true
+  ): UserGameProfile {
     const savedSeriesId = savedProfile.currentSeriesId;
     const currentSeriesId = typeof savedSeriesId === 'string'
       && SWORD_SERIES_LIST.some(series => series.id === savedSeriesId)
@@ -724,7 +498,10 @@ export class ServerSimulator {
       SWORD_STAGES.length - 1
     );
     const savedWeapon = isRecord(savedProfile.currentWeapon) ? savedProfile.currentWeapon : null;
-    const weaponId = savedWeapon ? readString(savedWeapon.weaponId, createUniqueId('weapon')) : createUniqueId('weapon');
+    const savedWeaponId = savedWeapon?.weaponId;
+    const weaponId = typeof savedWeaponId === 'string' && savedWeaponId.length > 0
+      ? savedWeaponId
+      : createUniqueId('weapon');
     const ordinal = savedWeapon ? Math.max(1, readNonNegativeInteger(savedWeapon.ordinal, 1)) : 1;
     const failCountsByTargetLevel = readFailCountsByTargetLevel(
       savedWeapon?.failCountsByTargetLevel ?? savedWeapon?.targetFailCounts ?? savedProfile.failCountsByTargetLevel,
@@ -744,7 +521,11 @@ export class ServerSimulator {
       endShardFirstAttemptGranted: readBoolean(savedWeapon?.endShardFirstAttemptGranted, false)
     };
 
-    if (!currentWeapon.bossEncounter && getBossBagSizeForLevel(currentLevel) !== null) {
+    if (
+      allowEncounterCreation
+      && !currentWeapon.bossEncounter
+      && getBossBagSizeForLevel(currentLevel) !== null
+    ) {
       currentWeapon.bossEncounter = this.createBossEncounterState(weaponId, currentLevel, 1);
     }
 
@@ -867,11 +648,42 @@ export class ServerSimulator {
     if (parsedProfile.schemaVersion !== SCHEMA_VERSION) {
       throw new TypeError(`클라우드 forge 프로필 스키마 ${SCHEMA_VERSION}만 적용할 수 있습니다.`);
     }
-    if (!isStoredHumanProfileV3(parsedProfile)) {
-      throw new TypeError('클라우드 forge 프로필의 필수 진행 정보가 올바르지 않습니다.');
+    if (parsedProfile.controller !== 'human') {
+      throw new TypeError('클라우드 forge 사람 프로필만 적용할 수 있습니다.');
     }
 
-    const migratedProfile = this.migrateProfile(parsedProfile, this.createDefaultProfile());
+    const savedLevel = parsedProfile.currentLevel;
+    const savedWeapon = parsedProfile.currentWeapon;
+    if (
+      typeof savedLevel !== 'number'
+      || !Number.isSafeInteger(savedLevel)
+      || savedLevel < 0
+      || savedLevel >= SWORD_STAGES.length
+    ) {
+      throw new TypeError('클라우드 forge 프로필의 현재 강화 단계가 올바르지 않습니다.');
+    }
+    if (
+      !isRecord(savedWeapon)
+      || typeof savedWeapon.weaponId !== 'string'
+      || savedWeapon.weaponId.length === 0
+    ) {
+      throw new TypeError('클라우드 forge 프로필의 현재 무기 식별자가 올바르지 않습니다.');
+    }
+    if (
+      getBossBagSizeForLevel(savedLevel) !== null
+      && this.readEncounter(savedWeapon.bossEncounter, savedWeapon.weaponId) === null
+    ) {
+      throw new TypeError('클라우드 forge 프로필의 보스 조우 기록이 올바르지 않습니다.');
+    }
+
+    const migratedProfile = this.migrateProfile(
+      parsedProfile,
+      cloneProfile(this.profile),
+      false
+    );
+    if (!isCanonicalCloudProfile(parsedProfile, migratedProfile)) {
+      throw new TypeError('클라우드 forge 프로필이 현재 저장 구조와 일치하지 않습니다.');
+    }
     localStorage.setItem(this.storageKey, payload);
     this.profile = migratedProfile;
     this.humanProfileSaveListeners.forEach(listener => listener(payload));

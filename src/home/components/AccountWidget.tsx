@@ -1,53 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Dice5 } from 'lucide-react';
 import {
   initPortalAuth,
-  linkGoogle,
-  signOutPortal,
   subscribePortalAuth,
   type PortalAuthState,
 } from '../../lib/portalAuth';
+import {
+  subscribeProfile,
+  type PortalProfile,
+} from '../../lib/portalProfile';
+import { AccountPanel } from './AccountPanel';
 
 const initialState: PortalAuthState = { status: 'loading', user: null };
 
 export function AccountWidget() {
   const [authState, setAuthState] = useState<PortalAuthState>(initialState);
-  const [pendingAction, setPendingAction] = useState<'link' | 'sign-out' | null>(null);
-  const [actionMessage, setActionMessage] = useState('');
+  const [profile, setProfile] = useState<PortalProfile | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    const unsubscribe = subscribePortalAuth(setAuthState);
+    const unsubscribeAuth = subscribePortalAuth(setAuthState);
+    const unsubscribeProfile = subscribeProfile(setProfile);
     initPortalAuth();
-    return unsubscribe;
+    return () => {
+      unsubscribeProfile();
+      unsubscribeAuth();
+    };
   }, []);
 
-  const handleGoogleLink = async () => {
-    if (pendingAction) {
-      return;
-    }
-
-    setPendingAction('link');
-    setActionMessage('');
-    const linked = await linkGoogle();
-    if (!linked) {
-      setActionMessage('Google 계정 연결에 실패했습니다.');
-    }
-    setPendingAction(null);
-  };
-
-  const handleSignOut = async () => {
-    if (pendingAction) {
-      return;
-    }
-
-    setPendingAction('sign-out');
-    setActionMessage('');
-    const signedOut = await signOutPortal();
-    if (!signedOut) {
-      setActionMessage('로그아웃에 실패했습니다.');
-    }
-    setPendingAction(null);
-  };
+  const closePanel = useCallback(() => {
+    setPanelOpen(false);
+  }, []);
 
   if (authState.status === 'loading') {
     return (
@@ -73,51 +57,43 @@ export function AccountWidget() {
     );
   }
 
-  if (authState.status === 'guest') {
-    const guestName = `게스트-${authState.user.uid.slice(0, 4)}`;
-    return (
-      <div className="account-widget" aria-label="게스트 계정">
-        <span className="account-widget__identity" title={guestName}>
-          <Dice5 size={16} aria-hidden="true" />
-          <span className="account-widget__name">{guestName}</span>
-        </span>
-        <button
-          type="button"
-          className="account-widget__button"
-          onClick={handleGoogleLink}
-          disabled={pendingAction !== null}
-          aria-label={`${guestName} Google 계정 연결`}
-        >
-          Google 연결
-        </button>
-        <span className="account-widget__sr-only" role="status" aria-live="polite">
-          {actionMessage}
-        </span>
-      </div>
-    );
-  }
-
-  const accountName = authState.user.displayName?.trim()
-    || authState.user.email?.split('@')[0]
-    || '연결된 계정';
+  const fallbackName = authState.status === 'guest'
+    ? `게스트-${authState.user.uid.slice(0, 4)}`
+    : authState.user.displayName?.trim()
+      || authState.user.email?.split('@')[0]
+      || '연결된 계정';
+  const displayName = profile?.nickname || fallbackName;
 
   return (
-    <div className="account-widget" aria-label="Google 연결 계정">
-      <span className="account-widget__identity" title={accountName}>
-        <span className="account-widget__name">{accountName}</span>
-      </span>
+    <>
       <button
+        ref={triggerRef}
         type="button"
-        className="account-widget__button account-widget__button--muted"
-        onClick={handleSignOut}
-        disabled={pendingAction !== null}
-        aria-label={`${accountName} 로그아웃`}
+        className="account-widget account-widget--trigger"
+        onClick={() => setPanelOpen(true)}
+        aria-label={`${displayName} 계정 메뉴 열기`}
+        aria-haspopup="dialog"
+        aria-expanded={panelOpen}
+        title={displayName}
       >
-        로그아웃
+        <span className="account-widget__identity">
+          {authState.status === 'guest' && (
+            <Dice5 size={16} aria-hidden="true" />
+          )}
+          <span className="account-widget__name">{displayName}</span>
+        </span>
+        <span className="account-widget__chevron" aria-hidden="true">▾</span>
       </button>
-      <span className="account-widget__sr-only" role="status" aria-live="polite">
-        {actionMessage}
-      </span>
-    </div>
+
+      {panelOpen && (
+        <AccountPanel
+          authState={authState}
+          displayName={displayName}
+          profile={profile}
+          triggerRef={triggerRef}
+          onClose={closePanel}
+        />
+      )}
+    </>
   );
 }
