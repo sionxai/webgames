@@ -92,13 +92,13 @@ a:focus-visible {
   margin: 0;
 }
 
-.nolja-logo {
+.hanpan-logo {
   display: inline-flex;
   align-items: center;
   gap: 10px;
 }
 
-.nolja-logo__mark {
+.hanpan-logo__mark {
   display: block;
   width: 38px;
   height: 38px;
@@ -106,11 +106,11 @@ a:focus-visible {
   box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35);
 }
 
-.nolja-logo__word {
-  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
-  font-size: 1.85rem;
-  font-weight: 800;
-  letter-spacing: -0.015em;
+.hanpan-logo__word {
+  font-family: 'Noto Sans KR', system-ui, -apple-system, sans-serif;
+  font-size: 1.7rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
   line-height: 1;
   background: linear-gradient(100deg, #FFB020 10%, #FF8A3D 55%, #FF6B4A 95%);
   -webkit-background-clip: text;
@@ -131,14 +131,14 @@ a:focus-visible {
 }
 
 @media (min-width: 760px) {
-  .nolja-logo__mark {
+  .hanpan-logo__mark {
     width: 46px;
     height: 46px;
     border-radius: 13px;
   }
 
-  .nolja-logo__word {
-    font-size: 2.2rem;
+  .hanpan-logo__word {
+    font-size: 2rem;
   }
 }
 
