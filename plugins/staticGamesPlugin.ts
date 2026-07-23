@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { copyFile, mkdir, readdir, realpath, stat } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import type { Plugin, ResolvedConfig } from 'vite';
 
@@ -91,6 +91,21 @@ function matchesGlob(pathname: string, pattern: string): boolean {
   return new RegExp(expression).test(pathname);
 }
 
+const PORTAL_NAV_TAG = '<script src="/hanpan-nav.js" defer></script>';
+
+/**
+ * 게임 HTML에 포털 복귀 버튼 스크립트를 넣는다.
+ * 게임 원본 파일은 건드리지 않고 서빙·복사 시점에만 주입하므로,
+ * 외부 게임을 재빌드하거나 교체해도 버튼이 유지된다.
+ */
+function withPortalNav(html: string): string {
+  if (html.includes('/hanpan-nav.js')) return html;
+  if (html.includes('</body>')) {
+    return html.replace('</body>', `  ${PORTAL_NAV_TAG}\n</body>`);
+  }
+  return `${html}\n${PORTAL_NAV_TAG}\n`;
+}
+
 async function copyDirectory(
   sourceDirectory: string,
   targetDirectory: string,
@@ -109,7 +124,11 @@ async function copyDirectory(
     if (entry.isDirectory()) {
       await copyDirectory(sourcePath, targetPath, exclude, relativePath);
     } else if (entry.isFile()) {
-      await copyFile(sourcePath, targetPath);
+      if (extname(entry.name).toLowerCase() === '.html') {
+        await writeFile(targetPath, withPortalNav(await readFile(sourcePath, 'utf8')), 'utf8');
+      } else {
+        await copyFile(sourcePath, targetPath);
+      }
     }
   }
 }
@@ -205,11 +224,22 @@ export function staticGamesPlugin(): Plugin {
             return;
           }
 
+          const extension = extname(canonicalFilePath).toLowerCase();
           response.statusCode = 200;
           response.setHeader(
             'Content-Type',
-            MIME_TYPES[extname(canonicalFilePath).toLowerCase()] ?? 'application/octet-stream'
+            MIME_TYPES[extension] ?? 'application/octet-stream'
           );
+
+          // HTML은 포털 복귀 버튼을 주입해야 하므로 스트리밍 대신 본문을 조립한다.
+          if (extension === '.html') {
+            const html = withPortalNav(await readFile(canonicalFilePath, 'utf8'));
+            const body = Buffer.from(html, 'utf8');
+            response.setHeader('Content-Length', body.byteLength);
+            response.end(request.method === 'HEAD' ? undefined : body);
+            return;
+          }
+
           response.setHeader('Content-Length', fileStats.size);
           if (request.method === 'HEAD') {
             response.end();
