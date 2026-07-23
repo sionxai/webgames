@@ -16,6 +16,8 @@ import { AlertTriangle, ArrowRight, Coins, Gem, RotateCcw, ShieldCheck, Tv, Wren
 interface EnhancePanelProps {
   profile: UserGameProfile;
   readOnly?: boolean;
+  density: 'simple' | 'detail';
+  onDensityChange: (density: 'simple' | 'detail') => void;
   onAttemptEnhance: () => EnhanceAttemptResult | null;
   onRepairCrack: () => void;
   onAdRestore: () => void;
@@ -57,6 +59,8 @@ function getDisplayedRates(preview: EnhancePreview) {
 export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   profile,
   readOnly = false,
+  density,
+  onDensityChange,
   onAttemptEnhance,
   onRepairCrack,
   onAdRestore,
@@ -68,6 +72,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
   const [lastResult, setLastResult] = useState<EnhanceAttemptResult | null>(null);
   const [notice, setNotice] = useState<PanelNotice | null>(null);
   const [isEnhancing, setIsEnhancing] = useState(false);
+  const [isSeriesExpanded, setIsSeriesExpanded] = useState(false);
   const [confirmation, setConfirmation] = useState<ConfirmationKind | null>(null);
   const enhanceTimerRef = useRef<number | null>(null);
   const confirmButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -116,6 +121,9 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
     && profile.currentCrackCount === 0
     && profile.currentWeapon.enhanceAttempts === 0;
   const blueprintLevel = profile.upgrades.ancient_blueprint || 0;
+  const unlockedSeriesCount = SWORD_SERIES_LIST.filter(
+    option => blueprintLevel >= option.requiredBlueprintLevel
+  ).length;
 
   let enhanceDisabledReason: string | null = null;
   if (readOnly) enhanceDisabledReason = 'AI 관전 전용 화면에서는 직접 강화할 수 없습니다.';
@@ -252,7 +260,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
 
   return (
     <section
-      className="enhance-panel"
+      className={`enhance-panel forge-density-${density}`}
       aria-labelledby="forge-workbench-title"
       aria-describedby={readOnly ? 'forge-workbench-readonly' : undefined}
     >
@@ -261,7 +269,27 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
           <span className="section-kicker">FORGE WORKBENCH</span>
           <h2 id="forge-workbench-title">강화 설계대</h2>
         </div>
-        <span className="series-badge">{series.name}</span>
+        <div className="forge-density-header-actions">
+          <span className="series-badge">{series.name}</span>
+          <div className="forge-density-toggle" role="group" aria-label="강화 패널 표시">
+            <button
+              type="button"
+              className="forge-density-toggle-option"
+              aria-pressed={density === 'simple'}
+              onClick={() => onDensityChange('simple')}
+            >
+              간단히
+            </button>
+            <button
+              type="button"
+              className="forge-density-toggle-option"
+              aria-pressed={density === 'detail'}
+              onClick={() => onDensityChange('detail')}
+            >
+              자세히
+            </button>
+          </div>
+        </div>
       </div>
 
       {readOnly && (
@@ -296,8 +324,23 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         </div>
       </div>
 
+      {canSelectSeries && unlockedSeriesCount >= 2 && (
+        <button
+          type="button"
+          className="forge-density-series-toggle"
+          aria-expanded={isSeriesExpanded}
+          aria-controls="series-selector-title"
+          onClick={() => setIsSeriesExpanded(expanded => !expanded)}
+        >
+          계열 변경 {isSeriesExpanded ? '▾' : '▸'}
+        </button>
+      )}
+
       {canSelectSeries && (
-        <div className="series-selector" aria-labelledby="series-selector-title">
+        <div
+          className={isSeriesExpanded ? 'series-selector forge-density-series-expanded' : 'series-selector'}
+          aria-labelledby="series-selector-title"
+        >
           <div className="series-selector__heading">
             <div>
               <small>NEW SWORD BLUEPRINT</small>
@@ -330,7 +373,11 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
         </div>
       )}
 
-      <div className={profile.currentCrackCount > 0 ? 'crack-status has-cracks' : 'crack-status'}>
+      <div className={profile.currentCrackCount > 0
+        ? 'crack-status has-cracks forge-density-risk-expanded'
+        : 'crack-status'}
+      >
+        <span className="forge-density-crack-chip">균열 {profile.currentCrackCount}/3</span>
         <div>
           <small>검의 균열</small>
           <strong>{profile.currentCrackCount} / 3</strong>
@@ -363,7 +410,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
       )}
 
       {(profile.currentLevel >= 5 || progressCharges.tempered > 0 || progressCharges.awakened > 0) && (
-        <div className="progress-charge-card">
+        <div className="progress-charge-card forge-density-detail-only">
           <div className="progress-charge-card__heading">
             <div>
               <small>WEAPON-BOUND CHARGES</small>
@@ -394,12 +441,15 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
           <strong>{lastResult.success ? '강화 성공' : '강화 결과'}</strong>
           <span>{lastResult.message}</span>
           {lastResult.progressChargeSpent && lastResult.progressChargeId && (
-            <small className="forge-result__progress">
+            <small className="forge-result__progress forge-density-result-detail">
               {lastResult.progressChargeId === 'tempered' ? '제련의 불씨' : '심연의 인장'} 1회 소모 · 잔여 {lastResult.progressChargesRemaining}회
             </small>
           )}
           {lastResult.transcendenceRewards.map((reward, index) => (
-            <small key={`${reward.source}:${index}`} className="forge-result__transcendence">
+            <small
+              key={`${reward.source}:${index}`}
+              className="forge-result__transcendence forge-density-result-detail"
+            >
               초월 보상 · {reward.relicId === 'godblood' ? '신혈' : '종말'} 조각 +{reward.shardsGained}
               {reward.relicsGained > 0 ? ` · 성유물 +${reward.relicsGained}` : ''}
             </small>
@@ -449,19 +499,21 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
             <div className="odds-cell odds-cell--success">
               <small>성공 확률</small>
               <strong>{displayedRates.success.toFixed(1)}%</strong>
-              <span>{preview.isProtected ? <><ShieldCheck size={13} aria-hidden="true" /> 초반 보호 적용</> : `연속 실패 +${preview.failBonus.toFixed(1)}%p`}</span>
+              <span className={preview.isProtected ? 'forge-density-protection' : 'forge-density-fail-bonus'}>
+                {preview.isProtected ? <><ShieldCheck size={13} aria-hidden="true" /> 초반 보호 적용</> : `연속 실패 +${preview.failBonus.toFixed(1)}%p`}
+              </span>
             </div>
-            <div className="odds-cell">
+            <div className="odds-cell forge-density-secondary">
               <small>단계 유지</small>
               <strong>{displayedRates.keep.toFixed(1)}%</strong>
               <span>균열 저항 감소분 포함</span>
             </div>
-            <div className="odds-cell odds-cell--risk">
+            <div className="odds-cell odds-cell--risk forge-density-secondary">
               <small>균열 발생</small>
               <strong>{displayedRates.crack.toFixed(1)}%</strong>
               <span>3번째 균열은 파괴</span>
             </div>
-            <div className="odds-cell odds-cell--drop">
+            <div className="odds-cell odds-cell--drop forge-density-secondary">
               <small>단계 하락</small>
               <strong>{displayedRates.drop.toFixed(1)}%</strong>
               <span>최종 4분포 합계 100.0%</span>
@@ -469,6 +521,10 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
           </div>
 
           <div className="forge-cta-stack">
+            <div className="forge-density-cost-summary">
+              <span>강화 비용 {preview.cost.toLocaleString()} G</span>
+              <span>보유 골드 {Math.floor(profile.gold).toLocaleString()} G</span>
+            </div>
             <button
               type="button"
               className="primary-forge-cta"
@@ -499,6 +555,9 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
                   <strong>{estimatedSellValue.toLocaleString()} G</strong>
                   <span>골드만 받고 새 검으로 교체합니다.</span>
                 </div>
+                <p className="forge-density-sale-summary">
+                  지금 매각하면 {estimatedSellValue.toLocaleString()} G · 예상 정수 {estimatedEssences.toLocaleString()}
+                </p>
                 <button
                   type="button"
                   className="sell-cta"
@@ -508,7 +567,7 @@ export const EnhancePanel: React.FC<EnhancePanelProps> = ({
                   {canSell ? '매각 확인' : '+0 매각 불가'}
                 </button>
               </div>
-              <div className="economy-choice economy-choice--extract">
+              <div className="economy-choice economy-choice--extract forge-density-detail-only">
                 <div className="economy-choice__icon" aria-hidden="true"><Gem size={18} /></div>
                 <div>
                   <small>ESSENCE EXTRACTION · 새 런</small>

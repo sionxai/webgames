@@ -3786,3 +3786,200 @@ button:disabled {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.forge-density-header-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.forge-density-toggle {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding: 2px;
+  background: #151210;
+  border: 1px solid #44382f;
+  border-radius: 999px;
+}
+
+.forge-density-toggle-option {
+  min-height: 27px;
+  padding: 4px 8px;
+  color: #8f8379;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  font-size: 0.61rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.forge-density-toggle-option[aria-pressed='true'] {
+  color: #fff0d7;
+  background: #734027;
+  box-shadow: inset 0 0 0 1px #a76138;
+}
+
+.forge-density-cost-summary,
+.forge-density-sale-summary,
+.forge-density-crack-chip,
+.forge-density-series-toggle {
+  display: none;
+}
+
+.forge-density-simple {
+  gap: 8px;
+  padding: 11px;
+}
+
+.forge-density-simple .sword-comparison {
+  min-height: 88px;
+  padding-block: 7px;
+}
+
+.forge-density-simple .forge-density-detail-only,
+.forge-density-simple .forge-density-result-detail,
+.forge-density-simple .forge-density-secondary,
+.forge-density-simple .forge-density-fail-bonus {
+  display: none;
+}
+
+.forge-density-simple .enhance-odds {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.forge-density-simple .odds-cell--success {
+  min-height: 82px;
+  align-items: center;
+  border: 0;
+  text-align: center;
+}
+
+.forge-density-simple .odds-cell--success strong {
+  font-size: 1.52rem;
+  line-height: 1.05;
+}
+
+.forge-density-simple .forge-density-protection {
+  padding: 3px 7px;
+  background: rgba(93, 187, 149, 0.12);
+  border: 1px solid rgba(142, 215, 185, 0.42);
+  border-radius: 999px;
+}
+
+.forge-density-simple .forge-density-cost-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 3px;
+  color: #c8b8a7;
+  font-size: 0.65rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.forge-density-simple .forge-density-cost-summary span {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.forge-density-simple .economy-choice--sell {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px;
+  min-height: 52px;
+  padding-block: 7px;
+}
+
+.forge-density-simple .economy-choice--sell > .economy-choice__icon,
+.forge-density-simple .economy-choice--sell > div:nth-child(2) {
+  display: none;
+}
+
+.forge-density-simple .forge-density-sale-summary {
+  display: block;
+  min-width: 0;
+  margin: 0;
+  color: #b9d8c6;
+  font-size: 0.65rem;
+  font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.forge-density-simple .series-selector {
+  display: none;
+}
+
+.forge-density-simple .series-selector.forge-density-series-expanded {
+  display: grid;
+}
+
+.forge-density-simple .series-selector > p {
+  display: none;
+}
+
+.forge-density-simple .forge-density-series-toggle {
+  display: block;
+  justify-self: start;
+  padding: 4px 2px;
+  color: #c8a7d8;
+  background: transparent;
+  border: 0;
+  font-size: 0.66rem;
+  font-weight: 800;
+}
+
+.forge-density-simple .crack-status:not(.forge-density-risk-expanded) {
+  display: inline-flex;
+  min-height: 0;
+  align-self: flex-start;
+  padding: 4px 8px;
+  background: #171513;
+  border-radius: 999px;
+}
+
+.forge-density-simple .crack-status:not(.forge-density-risk-expanded) > :not(.forge-density-crack-chip) {
+  display: none;
+}
+
+.forge-density-simple .crack-status:not(.forge-density-risk-expanded) .forge-density-crack-chip {
+  display: inline-flex;
+  color: #b2a79d;
+  font-size: 0.61rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 480px) {
+  .forge-density-header-actions {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .forge-density-toggle-option {
+    min-height: 25px;
+    padding-inline: 7px;
+  }
+
+  .forge-density-simple .forge-density-cost-summary {
+    gap: 5px;
+    font-size: 0.59rem;
+  }
+
+  .forge-density-simple .economy-choice--sell {
+    grid-template-columns: minmax(0, 1fr) 78px;
+    padding-inline: 7px;
+  }
+}
+
+@media (min-width: 900px) and (orientation: landscape) {
+  .forge-main--game .forge-density-header-actions,
+  .forge-main--game .forge-density-sale-summary {
+    min-width: 0;
+  }
+}
