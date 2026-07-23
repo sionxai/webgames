@@ -77,10 +77,18 @@ a:focus-visible {
   padding: 22px 2px 6px;
 }
 
+.portal-header__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
 .portal-brand {
   display: flex;
   align-items: center;
   gap: 11px;
+  min-width: 0;
 }
 
 .portal-brand__mark {
@@ -117,6 +125,108 @@ a:focus-visible {
   margin: 10px 0 0;
   color: var(--forge-muted);
   font-size: 0.86rem;
+}
+
+.account-widget {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 38px;
+  max-width: 50%;
+  padding: 5px 6px 5px 10px;
+  border: 1px solid var(--forge-border);
+  border-radius: 12px;
+  background: var(--forge-surface);
+  color: var(--forge-muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.account-widget__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--forge-text);
+}
+
+.account-widget__identity svg {
+  flex: 0 0 auto;
+  color: var(--forge-amber);
+}
+
+.account-widget__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-widget__button {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--forge-border-strong);
+  border-radius: 8px;
+  background: var(--forge-amber);
+  color: var(--forge-bg);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.1;
+  cursor: pointer;
+}
+
+.account-widget__button--muted {
+  background: var(--forge-surface-raised);
+  color: var(--forge-muted);
+}
+
+.account-widget__button:hover:not(:disabled) {
+  border-color: var(--forge-amber-bright);
+  color: var(--forge-text);
+}
+
+.account-widget__button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.account-widget--loading {
+  justify-content: center;
+  width: 38px;
+  padding: 5px;
+}
+
+.account-widget--badge {
+  padding: 6px 10px;
+  color: var(--forge-faint);
+  background: var(--forge-surface);
+}
+
+.account-widget__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--forge-border-strong);
+  border-top-color: var(--forge-amber);
+  border-radius: 50%;
+  animation: account-widget-spin 0.8s linear infinite;
+}
+
+.account-widget__sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@keyframes account-widget-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* ---------- Main ---------- */
@@ -458,12 +568,71 @@ a.game-card:hover {
 }
 
 @media (max-width: 560px) {
+  .portal-header__top {
+    gap: 6px;
+  }
+
+  .portal-brand {
+    flex: 1 1 auto;
+    gap: 7px;
+  }
+
+  .portal-brand > div {
+    min-width: 0;
+  }
+
+  .portal-brand__mark {
+    flex: 0 0 auto;
+    width: 34px;
+    height: 34px;
+    border-radius: 10px;
+  }
+
+  .portal-eyebrow {
+    font-size: 0.5rem;
+    letter-spacing: 0.1em;
+  }
+
+  .portal-brand h1 {
+    font-size: 1.08rem;
+  }
+
+  .account-widget {
+    flex: 0 1 auto;
+    gap: 4px;
+    min-height: 34px;
+    max-width: 56%;
+    padding: 4px;
+    font-size: 0.66rem;
+  }
+
+  .account-widget__identity {
+    gap: 4px;
+  }
+
+  .account-widget__button {
+    padding: 5px 6px;
+    font-size: 0.64rem;
+  }
+
+  .account-widget--loading {
+    width: 34px;
+  }
+
+  .account-widget--badge {
+    padding: 5px 7px;
+  }
+
   .value-strip {
     grid-template-columns: 1fr;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .account-widget__spinner {
+    animation: none;
+  }
+
   .hero-card,
   .game-card {
     transition: none;

@@ -15,13 +15,14 @@ import {
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-functions.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAiWYAFsDFivmWBoJzbziWN9jAZt9gME-U",
-  authDomain: "gacha-870fa.firebaseapp.com",
-  projectId: "gacha-870fa",
-  storageBucket: "gacha-870fa.firebasestorage.app",
-  messagingSenderId: "464289315548",
-  appId: "1:464289315548:web:ed4d78970c7d4298b09219",
-  databaseURL: "https://gacha-870fa-default-rtdb.asia-southeast1.firebasedatabase.app/"
+  apiKey: "AIzaSyCc4Gjh0N3wzCxqAEEQkrsX8AlI7UNBGR0",
+  authDomain: "webgames-66ccf.firebaseapp.com",
+  databaseURL: "https://webgames-66ccf-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "webgames-66ccf",
+  storageBucket: "webgames-66ccf.firebasestorage.app",
+  messagingSenderId: "539839465670",
+  appId: "1:539839465670:web:b6bdf12a8d14d067e2efc7",
+  measurementId: "G-94XVFXT33H"
 };
 
 const app = initializeApp(firebaseConfig);

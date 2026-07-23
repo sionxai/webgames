@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { GAMES, GameEntry } from './games';
 import { LegalDocsModal } from '../components/portal/LegalDocsModal';
 import { Bot, Gamepad2, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
+import { AccountWidget } from './components/AccountWidget';
 
 function GameCard({ game }: { game: GameEntry }) {
   if (game.status === 'coming-soon') {
@@ -50,14 +51,17 @@ export function HomePage() {
   return (
     <div className="portal">
       <header className="portal-header">
-        <div className="portal-brand">
-          <span className="portal-brand__mark" aria-hidden="true">
-            <Gamepad2 size={22} />
-          </span>
-          <div>
-            <p className="portal-eyebrow">INSTANT WEB GAMES</p>
-            <h1>WEBGAMES</h1>
+        <div className="portal-header__top">
+          <div className="portal-brand">
+            <span className="portal-brand__mark" aria-hidden="true">
+              <Gamepad2 size={22} />
+            </span>
+            <div>
+              <p className="portal-eyebrow">INSTANT WEB GAMES</p>
+              <h1>WEBGAMES</h1>
+            </div>
           </div>
+          <AccountWidget />
         </div>
         <p className="portal-tagline">설치·가입 없이 브라우저에서 바로 즐기는 웹게임 모음</p>
       </header>
