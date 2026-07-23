@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { GAMES, GameEntry } from './games';
 import { LegalDocsModal } from '../components/portal/LegalDocsModal';
-import { Bot, Gamepad2, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
+import { NoljaLogo } from './components/NoljaLogo';
+import { Bot, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
 import { AccountWidget } from './components/AccountWidget';
 
 function GameCard({ game }: { game: GameEntry }) {
@@ -52,15 +53,10 @@ export function HomePage() {
     <div className="portal">
       <header className="portal-header">
         <div className="portal-header__top">
-          <div className="portal-brand">
-            <span className="portal-brand__mark" aria-hidden="true">
-              <Gamepad2 size={22} />
-            </span>
-            <div>
-              <p className="portal-eyebrow">INSTANT WEB GAMES</p>
-              <h1>WEBGAMES</h1>
-            </div>
-          </div>
+          <h1 className="portal-brand">
+            <NoljaLogo className="portal-brand__logo" />
+            <span className="portal-brand__sr">nolja — 웹게임 모음</span>
+          </h1>
           <AccountWidget />
         </div>
         <p className="portal-tagline">설치·가입 없이 브라우저에서 바로 즐기는 웹게임 모음</p>
@@ -148,7 +144,7 @@ export function HomePage() {
             개인정보처리방침
           </button>
         </div>
-        <p className="portal-footer__copy">© 2026 WEBGAMES. All rights reserved.</p>
+        <p className="portal-footer__copy">© 2026 nolja. All rights reserved.</p>
       </footer>
 
       {legalTab && <LegalDocsModal initialTab={legalTab} onClose={() => setLegalTab(null)} />}

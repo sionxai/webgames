@@ -89,6 +89,57 @@ a:focus-visible {
   align-items: center;
   gap: 11px;
   min-width: 0;
+  margin: 0;
+}
+
+.nolja-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nolja-logo__mark {
+  display: block;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  box-shadow: 0 4px 16px rgba(249, 115, 22, 0.35);
+}
+
+.nolja-logo__word {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  font-size: 1.85rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+  line-height: 1;
+  background: linear-gradient(100deg, #FFB020 10%, #FF8A3D 55%, #FF6B4A 95%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 로고는 그래픽이라 검색엔진·스크린리더용 텍스트를 따로 둔다 */
+.portal-brand__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (min-width: 760px) {
+  .nolja-logo__mark {
+    width: 46px;
+    height: 46px;
+    border-radius: 13px;
+  }
+
+  .nolja-logo__word {
+    font-size: 2.2rem;
+  }
 }
 
 .portal-brand__mark {
