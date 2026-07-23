@@ -67,6 +67,7 @@ export function createCloudSave(gameId: GameId, schema: number): {
   const device = createDeviceId();
   let state: CloudSaveState = 'idle';
   let uid: string | null = null;
+  let googleAccountActive = false;
   let authUnsubscribe: (() => void) | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingPayload: string | null = null;
@@ -100,17 +101,18 @@ export function createCloudSave(gameId: GameId, schema: number): {
     accountEpoch += 1;
     pullGeneration += 1;
     uid = nextUid;
+    googleAccountActive = nextUid !== null;
     pendingPayload = null;
     lastSuccessfulPayload = null;
     lastPulledRecord = null;
     comparisonLoading = false;
     comparisonPending = false;
     requiresPull = nextUid !== null;
-    activeWrite = null;
   }
 
   function handleAuthState(authState: PortalAuthState): void {
     if (authState.status !== 'google') {
+      googleAccountActive = false;
       if (uid !== null) {
         resetForAccount(null);
       }
@@ -119,6 +121,7 @@ export function createCloudSave(gameId: GameId, schema: number): {
     }
 
     const nextUid = authState.user.uid;
+    googleAccountActive = true;
     if (uid !== nextUid) {
       resetForAccount(nextUid);
       setState('loading');
@@ -158,7 +161,11 @@ export function createCloudSave(gameId: GameId, schema: number): {
     }
 
     if (activeWrite) {
-      await activeWrite;
+      const precedingWrite = activeWrite;
+      await precedingWrite;
+      if (activeWrite === precedingWrite) {
+        activeWrite = null;
+      }
       if (pendingPayload !== null && pendingPayload !== lastSuccessfulPayload) {
         await writePending();
       }
@@ -166,6 +173,7 @@ export function createCloudSave(gameId: GameId, schema: number): {
     }
 
     const activeUid = uid;
+    const activeAccountEpoch = accountEpoch;
     const payload = pendingPayload;
     if (payload === null || payload === lastSuccessfulPayload) {
       if (payload === lastSuccessfulPayload) {
@@ -177,6 +185,11 @@ export function createCloudSave(gameId: GameId, schema: number): {
 
     pendingPayload = null;
     setState('loading');
+    const isCurrentWrite = (): boolean => (
+      googleAccountActive
+      && uid === activeUid
+      && accountEpoch === activeAccountEpoch
+    );
     const write = (async () => {
       try {
         const target = saveRef(activeUid);
@@ -186,20 +199,24 @@ export function createCloudSave(gameId: GameId, schema: number): {
           schema,
           device,
         });
+        if (!isCurrentWrite()) {
+          return;
+        }
         const snapshot = await get(target);
+        if (!isCurrentWrite()) {
+          return;
+        }
         const stored = snapshot.val() as unknown;
         if (!isCloudSaveRecord(stored) || stored.schema !== schema) {
           throw new Error('Cloud save response was invalid.');
         }
-        if (uid !== activeUid) {
-          return;
-        }
 
         lastSuccessfulPayload = payload;
         lastPulledRecord = stored;
+        comparisonPending = false;
         setState('synced');
       } catch {
-        if (uid === activeUid) {
+        if (isCurrentWrite()) {
           pendingPayload ??= payload;
           setState(failureState());
         }
@@ -248,7 +265,8 @@ export function createCloudSave(gameId: GameId, schema: number): {
     lastSuccessfulPayload = null;
     setState('loading');
     const isCurrentPull = (): boolean => (
-      uid === activeUid
+      googleAccountActive
+      && uid === activeUid
       && accountEpoch === activeAccountEpoch
       && pullGeneration === activePullGeneration
     );

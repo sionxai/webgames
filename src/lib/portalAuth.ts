@@ -147,6 +147,13 @@ export function subscribePortalAuth(listener: PortalAuthListener): Unsubscribe {
   };
 }
 
+/** 현재 로그인 사용자를 다시 읽어 상태를 갱신한다(계정 연결 직후처럼 리스너가 조용한 경우용). */
+function syncCurrentUser(auth: Auth): void {
+  const user = auth.currentUser;
+  if (!user) return;
+  setState({ status: user.isAnonymous ? 'guest' : 'google', user });
+}
+
 export function linkGoogle(): Promise<boolean> {
   initPortalAuth();
 
@@ -168,6 +175,9 @@ export function linkGoogle(): Promise<boolean> {
     const provider = new GoogleAuthProvider();
     try {
       await linkWithPopup(user, provider);
+      // 익명 계정에 Google을 연결하는 것은 '같은 사용자의 갱신'이라
+      // onAuthStateChanged가 다시 발화하지 않는다. 직접 상태를 새로 읽어 알린다.
+      syncCurrentUser(auth);
       return true;
     } catch (error) {
       if (!isErrorCode(error, 'credential-already-in-use')) {
@@ -176,6 +186,7 @@ export function linkGoogle(): Promise<boolean> {
 
       try {
         await signInWithPopup(auth, provider);
+        syncCurrentUser(auth);
         return true;
       } catch {
         return false;

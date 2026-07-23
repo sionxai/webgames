@@ -84,9 +84,9 @@ export const DEFAULT_FLAGS = Object.freeze({
 });
 
 // Animation GIF URLs
-export const GEAR_SSPLUS_GIF = 'https://firebasestorage.googleapis.com/v0/b/gacha-870fa.firebasestorage.app/o/SS%2B%20item.gif?alt=media&token=d614c7c7-eff3-4509-b1d6-a732b75936c4';
-export const GEAR_SSSPLUS_GIF = 'https://firebasestorage.googleapis.com/v0/b/gacha-870fa.firebasestorage.app/o/SSS%2B%20item.gif?alt=media&token=e8ae9b0c-5891-4653-8c4c-fe2155d6473d';
-export const LEGACY_GEAR_RARE_GIF = 'https://firebasestorage.googleapis.com/v0/b/gacha-870fa.firebasestorage.app/o/Carss%2B.gif?alt=media&token=d668d79b-7740-4986-b32e-11027a0453ac';
+export const GEAR_SSPLUS_GIF = './assets/motion/gear-ssplus.gif';
+export const GEAR_SSSPLUS_GIF = './assets/motion/gear-sssplus.gif';
+export const LEGACY_GEAR_RARE_GIF = './assets/motion/gear-rare.gif';
 export const CHARACTER_SSPLUS_GIF = GEAR_SSPLUS_GIF;
 export const CHARACTER_SSSPLUS_GIF = GEAR_SSSPLUS_GIF;
 export const LEGACY_CHARACTER_RARE_GIF = LEGACY_GEAR_RARE_GIF;
