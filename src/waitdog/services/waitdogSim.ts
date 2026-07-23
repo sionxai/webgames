@@ -1,5 +1,45 @@
 import { BALANCE, ROOMS, SIGNALS } from "../constants/balance";
 import { createRng, type WaitdogRng } from "../core/rng";
+import {
+  advanceEncounterInputSeconds,
+  dismissEncounterOutcome as dismissEncounterOutcomeState,
+  encounterCarePoints,
+  encounterOutcomeDelta,
+  ENCOUNTER_IDS,
+  getEncounterPublicView,
+  isEncounterDirectorState,
+  markEncounterResultApplied,
+  requestEncounterHint as requestEncounterHintState,
+  selectEncounterCause as selectEncounterCauseState,
+  selectEncounterReinforcement as selectEncounterReinforcementState,
+  selectEncounterResponse as selectEncounterResponseState,
+  startEncounterById as startEncounterByIdState,
+  startNextEncounter as startNextEncounterState,
+  createEncounterDirectorState,
+  type EncounterTransition,
+} from "./encounters";
+import {
+  advanceWorkMinutes,
+  awardCarePoints,
+  buySalaryUpgrade as buySalaryUpgradeState,
+  CATALOG,
+  consumeItem,
+  createEconomyState,
+  createEnvironmentState,
+  createWorkState,
+  grantClinicCoupon,
+  isEconomyState,
+  isEnvironmentState,
+  isWorkState,
+  ownerDogFootprintsOverlap,
+  purchaseItem as purchaseCatalogItem,
+  resolveWorkAlert as resolveWorkAlertState,
+  SALARY_UPGRADES,
+  salaryBonusRate,
+  startWorkGig,
+  validateBarrierPlacement,
+  validatePadPlacement,
+} from "./economy";
 import type {
   ActionId,
   ActionUtilityTrace,
@@ -12,13 +52,25 @@ import type {
   DogSpatialWaypoint,
   DogStats,
   DogView,
+  EconomyState,
+  EncounterDirectorState,
+  EncounterId,
+  EncounterPublicView,
+  EnvironmentState,
   EventLog,
   InterventionKind,
   InterventionResult,
   LearningMemory,
+  LifestyleActionResult,
   MatSkill,
   MemoryKey,
   OwnerState,
+  OwnerSpatialState,
+  PadItemId,
+  BarrierItemId,
+  BarrierPlacement,
+  CatalogItemId,
+  SalaryUpgradeId,
   Personality,
   PoopPrediction,
   RoomId,
@@ -27,6 +79,7 @@ import type {
   WaitdogFullState,
   WaitdogSim,
   WaitdogSimOptions,
+  WorkState,
 } from "../types";
 
 interface ScheduledSignal {
@@ -58,15 +111,114 @@ export interface WaitdogUiView extends DogView {
   activePoop: Pick<ActivePoop, "room" | "location"> | null;
   recentEvents: WaitdogUiEvent[];
   poopRevision: number;
+  ownerSpatial: OwnerSpatialState & { radius: number };
+  activeEncounter: EncounterPublicView | null;
+  pausedForEncounter: boolean;
+  work: WaitdogWorkView;
+  economy: WaitdogEconomyView;
+  inventory: WaitdogInventoryView[];
+  catalog: WaitdogCatalogView[];
+  clinic: {
+    couponAvailable: boolean;
+    preventiveVisitCompleted: boolean;
+  };
+  upgrades: WaitdogUpgradeView[];
+  environmentPlacements: EnvironmentState;
+  ownerDogOverlap: boolean;
 }
+
+export interface WaitdogWorkView {
+  state: "idle" | "moving" | "ready" | "working" | "alert" | "complete";
+  progress: number;
+  canStart: boolean;
+  blockMinutes: number;
+  salaryPreview: number;
+  alert: WorkState["alert"];
+  activeGigId: string | null;
+}
+
+export interface WaitdogEconomyView {
+  money: number;
+  carePoints: number;
+  salaryBonusPercent: number;
+}
+
+export interface WaitdogInventoryView {
+  itemId: CatalogItemId;
+  count: number;
+  effectSummary: string;
+}
+
+export interface WaitdogCatalogView {
+  itemId: CatalogItemId;
+  category: string;
+  label: string;
+  price: number;
+  effectSummary: string;
+  unlockCarePoints: number;
+  locked: boolean;
+  coverage?: number;
+  panels?: 1 | 2 | 4;
+}
+
+export interface WaitdogUpgradeView {
+  id: SalaryUpgradeId;
+  label: string;
+  carePointCost: number;
+  bonusPercent: number;
+  purchased: boolean;
+}
+
+export type OwnerMoveTarget =
+  | { room: RoomId; x: number; y: number }
+  | { hotspotId: "computer" | "store" | "clinic" };
+
+export type ItemPlacementTarget =
+  | { room: RoomId; x: number; y: number }
+  | {
+    room: RoomId;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    placementId?: string;
+  };
 
 export interface WaitdogUiSim extends WaitdogSim {
   getDogView(): WaitdogUiView;
   serialize(): WaitdogSnapshot;
   restore(snapshot: unknown): void;
+  startNextEncounter(): LifestyleActionResult;
+  startEncounter(encounterId: EncounterId): LifestyleActionResult;
+  selectEncounterCause(choiceId: string): LifestyleActionResult;
+  selectEncounterResponse(choiceId: string): LifestyleActionResult;
+  selectEncounterReinforcement(choiceId: string): LifestyleActionResult;
+  advanceEncounterInput(seconds: number): LifestyleActionResult;
+  requestEncounterHint(): LifestyleActionResult;
+  dismissEncounterOutcome(): LifestyleActionResult;
+  moveOwnerTo(target: OwnerMoveTarget): LifestyleActionResult;
+  performWorkBlock(gigId?: string): LifestyleActionResult;
+  resolveWorkAlert(choice: "interrupt" | "continue"): LifestyleActionResult;
+  purchaseItem(
+    itemId: CatalogItemId,
+    quantity?: number,
+    transactionId?: string,
+  ): LifestyleActionResult;
+  useItem(
+    itemId: CatalogItemId,
+    quantity?: number,
+    transactionId?: string,
+  ): LifestyleActionResult;
+  placeItem(
+    itemId: PadItemId | BarrierItemId,
+    target: ItemPlacementTarget,
+    transactionId?: string,
+  ): LifestyleActionResult;
+  scheduleClinic(transactionId?: string): LifestyleActionResult;
+  buyUpgrade(upgradeId: SalaryUpgradeId): LifestyleActionResult;
 }
 
-export interface WaitdogSnapshot {
+export interface WaitdogSnapshotV2 {
   version: 2;
   seed: number;
   rngCursor: number;
@@ -102,7 +254,7 @@ export interface WaitdogSnapshot {
 }
 
 export type WaitdogSnapshotV1 = Omit<
-  WaitdogSnapshot,
+  WaitdogSnapshotV2,
   | "version"
   | "spatial"
   | "opportunityRevision"
@@ -110,6 +262,16 @@ export type WaitdogSnapshotV1 = Omit<
 > & {
   version: 1;
 };
+
+export interface WaitdogSnapshot
+  extends Omit<WaitdogSnapshotV2, "version"> {
+  version: 3;
+  ownerSpatial: OwnerSpatialState;
+  encounterDirector: EncounterDirectorState;
+  economy: EconomyState;
+  work: WorkState;
+  environment: EnvironmentState;
+}
 
 const clamp = (value: number): number => {
   if (!Number.isFinite(value)) {
@@ -231,11 +393,20 @@ const SNAPSHOT_V1_KEYS: ReadonlyArray<keyof WaitdogSnapshotV1> = [
   "poopRevision",
 ];
 
-const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
+const SNAPSHOT_V2_KEYS: ReadonlyArray<keyof WaitdogSnapshotV2> = [
   ...SNAPSHOT_V1_KEYS,
   "spatial",
   "opportunityRevision",
   "visibleOpportunityRevision",
+];
+
+const SNAPSHOT_KEYS: ReadonlyArray<keyof WaitdogSnapshot> = [
+  ...SNAPSHOT_V2_KEYS,
+  "ownerSpatial",
+  "encounterDirector",
+  "economy",
+  "work",
+  "environment",
 ];
 
 const invalidSnapshot = (): never => {
@@ -293,6 +464,12 @@ class WaitdogSimulation implements WaitdogUiSim {
   private spatial: DogSpatialState;
   private opportunityRevision = 0;
   private visibleOpportunityRevision = 0;
+  private ownerSpatial: OwnerSpatialState;
+  private encounterDirector: EncounterDirectorState =
+    createEncounterDirectorState();
+  private economy: EconomyState = createEconomyState();
+  private work: WorkState = createWorkState();
+  private environment: EnvironmentState = createEnvironmentState();
 
   constructor(seed: number, opts: WaitdogSimOptions = {}) {
     if (!Number.isFinite(seed)) {
@@ -321,6 +498,20 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.owner = this.normalizeOwner(
       opts.owner ?? { room: "living", focusLocked: false },
     );
+    const ownerPosition = BALANCE.LIFESTYLE.OWNER.INITIAL[this.owner.room];
+    this.ownerSpatial = {
+      room: this.owner.room,
+      x: ownerPosition.x,
+      y: ownerPosition.y,
+      targetRoom: this.owner.room,
+      targetX: ownerPosition.x,
+      targetY: ownerPosition.y,
+      route: [],
+      activity: "idle",
+      destinationActivity: "idle",
+      moving: false,
+      collisionRadius: BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS,
+    };
     this.personality = {
       foodDrive: this.personalityValue(),
       impulsivity: this.personalityValue(),
@@ -333,6 +524,9 @@ class WaitdogSimulation implements WaitdogUiSim {
 
   advanceMinutes(minutes: number): void {
     const requested = requireNonNegative(minutes, "minutes");
+    if (this.encounterDirector.active !== null) {
+      return;
+    }
     const available = Math.max(
       BALANCE.NUMBER.ZERO,
       BALANCE.TIME.DAY_END - this.minuteOfDay,
@@ -348,6 +542,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   feed(volume: number): void {
+    if (this.encounterDirector.active !== null) return;
     const safeVolume = requirePositiveVolume(volume, "volume");
     const variation = this.rng.range(
       -BALANCE.DIGESTION.VARIANCE_MINUTES,
@@ -377,6 +572,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   water(volume = BALANCE.PHYSIOLOGY.WATER_DEFAULT_VOLUME): void {
+    if (this.encounterDirector.active !== null) return;
     const safeVolume = requirePositiveVolume(volume, "volume");
     this.stats.thirst = clamp(
       this.stats.thirst -
@@ -386,6 +582,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   walk(minutes: number): void {
+    if (this.encounterDirector.active !== null) return;
     const duration = this.activityDuration(minutes);
     this.record("walk", this.dogRoom, { minutes: duration });
     this.stats.hunger += duration * BALANCE.PHYSIOLOGY.WALK_HUNGER_PER_MINUTE;
@@ -403,6 +600,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   play(minutes: number): void {
+    if (this.encounterDirector.active !== null) return;
     const duration = this.activityDuration(minutes);
     this.record("play", this.dogRoom, { minutes: duration });
     this.stats.hunger += duration * BALANCE.PHYSIOLOGY.PLAY_HUNGER_PER_MINUTE;
@@ -422,7 +620,18 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   setOwner(owner: OwnerState): void {
+    if (this.encounterDirector.active !== null) return;
+    if (
+      (this.work.active || this.work.alert !== null) &&
+      owner.room !== this.owner.room
+    ) {
+      return;
+    }
+    const previousRoom = this.owner.room;
     this.owner = this.normalizeOwner(owner);
+    if (previousRoom !== this.owner.room) {
+      this.relocateOwnerSpatial(this.owner.room);
+    }
     this.record("ownerState", this.owner.room, {
       focusLocked: this.owner.focusLocked,
       away: this.owner.away,
@@ -430,6 +639,13 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   intervene(kind: InterventionKind): InterventionResult {
+    if (this.encounterDirector.active !== null) {
+      return {
+        kind,
+        interrupted: this.owner.focusLocked,
+        success: false,
+      };
+    }
     const interrupted = this.owner.focusLocked;
     let success = true;
     let attributedTo: ActionId | undefined;
@@ -502,7 +718,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       }
       case "block": {
         this.blocked = !this.blocked;
-        if (this.blocked && this.pendingEatAt !== null) {
+        if (this.isEffectivelyBlocked() && this.pendingEatAt !== null) {
           this.cancelPendingEat();
           this.setBehavior("sniffLeave");
         }
@@ -556,7 +772,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       success,
       interrupted,
       attributedTo: attributedTo ?? null,
-      blocked: this.blocked,
+      blocked: this.isEffectivelyBlocked(),
     });
     if (kind === "cleanup" && success) {
       this.advanceMinutes(BALANCE.TIME.CLEANUP_MINUTES);
@@ -564,9 +780,399 @@ class WaitdogSimulation implements WaitdogUiSim {
     return { kind, interrupted, success, attributedTo };
   }
 
+  startNextEncounter(): LifestyleActionResult {
+    if (this.work.active) {
+      return { ok: false, reason: "진행 중인 업무를 먼저 마쳐야 합니다." };
+    }
+    if (this.work.alert !== null) {
+      return { ok: false, reason: "업무 알림에 먼저 응답해 주세요." };
+    }
+    return this.commitEncounterTransition(
+      startNextEncounterState(this.encounterDirector, this.seed),
+    );
+  }
+
+  startEncounter(encounterId: EncounterId): LifestyleActionResult {
+    if (this.work.active) {
+      return { ok: false, reason: "진행 중인 업무를 먼저 마쳐야 합니다." };
+    }
+    if (this.work.alert !== null) {
+      return { ok: false, reason: "업무 알림에 먼저 응답해 주세요." };
+    }
+    if (!(ENCOUNTER_IDS as readonly unknown[]).includes(encounterId)) {
+      return { ok: false, reason: "알 수 없는 encounter입니다." };
+    }
+    return this.commitEncounterTransition(
+      startEncounterByIdState(this.encounterDirector, encounterId, this.seed),
+    );
+  }
+
+  selectEncounterCause(choiceId: string): LifestyleActionResult {
+    return this.commitEncounterTransition(
+      selectEncounterCauseState(this.encounterDirector, choiceId),
+    );
+  }
+
+  selectEncounterResponse(choiceId: string): LifestyleActionResult {
+    return this.commitEncounterTransition(
+      selectEncounterResponseState(this.encounterDirector, choiceId),
+    );
+  }
+
+  selectEncounterReinforcement(choiceId: string): LifestyleActionResult {
+    const active = this.encounterDirector.active;
+    const treatId = active?.stage === "reinforcement" &&
+        active.requiredReinforcement === "treat"
+      ? this.availableTreatId()
+      : null;
+    if (
+      active?.stage === "reinforcement" &&
+      active.requiredReinforcement === "treat" &&
+      choiceId === "treat" &&
+      treatId === null
+    ) {
+      return {
+        ok: false,
+        reason: "후속 보상에 사용할 간식 재고가 없습니다.",
+      };
+    }
+
+    const transition = selectEncounterReinforcementState(
+      this.encounterDirector,
+      choiceId,
+      active?.stage === "reinforcement" &&
+        active.requiredReinforcement === "treat" &&
+        choiceId === "praise" &&
+        treatId === null,
+    );
+    let inventoryDelta: Partial<EconomyState["inventory"]> = {};
+    if (transition.completedNow && treatId !== null && active !== null) {
+      const consumed = consumeItem(
+        this.economy,
+        treatId,
+        1,
+        `encounter-reward:${active.instanceId}`,
+      );
+      if (!consumed.ok) {
+        return { ok: false, reason: consumed.reason };
+      }
+      this.economy = consumed.state;
+      inventoryDelta = { [treatId]: -1 };
+    }
+    return this.commitEncounterTransition(transition, inventoryDelta);
+  }
+
+  advanceEncounterInput(seconds: number): LifestyleActionResult {
+    return this.commitEncounterTransition(
+      advanceEncounterInputSeconds(this.encounterDirector, seconds),
+    );
+  }
+
+  requestEncounterHint(): LifestyleActionResult {
+    return this.commitEncounterTransition(
+      requestEncounterHintState(this.encounterDirector, this.day),
+    );
+  }
+
+  dismissEncounterOutcome(): LifestyleActionResult {
+    const transition = dismissEncounterOutcomeState(this.encounterDirector);
+    this.encounterDirector = transition.state;
+    if (transition.ok) {
+      this.ownerSpatial.activity = this.work.active ? "working" : "idle";
+      this.ownerSpatial.destinationActivity = this.ownerSpatial.activity;
+      this.record("encounterDismissed", this.dogRoom, {});
+    }
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
+  moveOwnerTo(target: OwnerMoveTarget): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    if (this.work.active) {
+      return { ok: false, reason: "진행 중인 업무를 먼저 마쳐야 합니다." };
+    }
+    if (this.work.alert !== null) {
+      return { ok: false, reason: "업무 알림에 먼저 응답해 주세요." };
+    }
+    if (!isRecord(target)) {
+      return { ok: false, reason: "보호자 목적지가 올바르지 않습니다." };
+    }
+    let destination: { room: RoomId; x: number; y: number };
+    if ("hotspotId" in target) {
+      if (
+        !["computer", "store", "clinic"].includes(
+          target.hotspotId as string,
+        )
+      ) {
+        return { ok: false, reason: "알 수 없는 보호자 목적지입니다." };
+      }
+      destination = BALANCE.LIFESTYLE.OWNER.HOTSPOT[
+        target.hotspotId as keyof typeof BALANCE.LIFESTYLE.OWNER.HOTSPOT
+      ];
+    } else {
+      destination = target;
+    }
+    if (
+      !isRoom(destination.room) ||
+      !isFiniteNumber(destination.x) ||
+      !isFiniteNumber(destination.y) ||
+      destination.x < BALANCE.SPATIAL.MIN_COORDINATE ||
+      destination.x > BALANCE.SPATIAL.MAX_COORDINATE ||
+      destination.y < BALANCE.SPATIAL.MIN_COORDINATE ||
+      destination.y > BALANCE.SPATIAL.MAX_COORDINATE
+    ) {
+      return { ok: false, reason: "보호자 목적지가 올바르지 않습니다." };
+    }
+    this.setOwnerSpatialGoal(
+      destination.room,
+      destination.x,
+      destination.y,
+      "idle",
+    );
+    this.record("ownerMove", this.owner.room, {
+      targetRoom: destination.room,
+      targetX: this.clampCoordinate(destination.x),
+      targetY: this.clampCoordinate(destination.y),
+    });
+    return { ok: true, reason: null };
+  }
+
+  performWorkBlock(
+    gigId = `day-${this.day}-freelance`,
+  ): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    if (!this.ownerAtHotspot("computer")) {
+      return { ok: false, reason: "보호자를 컴퓨터 앞으로 이동시켜 주세요." };
+    }
+    if (this.work.alert !== null) {
+      return { ok: false, reason: "업무 알림에 먼저 응답해 주세요." };
+    }
+    if (
+      this.minuteOfDay + BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES >
+      BALANCE.TIME.DAY_END
+    ) {
+      return { ok: false, reason: "오늘은 업무 한 블록을 마칠 시간이 부족합니다." };
+    }
+    const started = startWorkGig(this.work, gigId);
+    if (!started.ok) {
+      return { ok: false, reason: started.reason };
+    }
+    this.work = started.state;
+    this.ownerSpatial.activity = "working";
+    this.ownerSpatial.destinationActivity = "working";
+    const priorProgress = this.work.progress;
+    this.advanceMinutes(BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES);
+    if (this.work.progress === priorProgress) {
+      return { ok: false, reason: "업무 진행도를 올리지 못했습니다." };
+    }
+    return { ok: true, reason: null };
+  }
+
+  resolveWorkAlert(choice: "interrupt" | "continue"): LifestyleActionResult {
+    if (choice === "continue" && !this.ownerAtHotspot("computer")) {
+      return { ok: false, reason: "컴퓨터 앞에서만 업무를 계속할 수 있습니다." };
+    }
+    const transition = resolveWorkAlertState(this.work, choice);
+    this.work = transition.state;
+    if (transition.ok) {
+      this.ownerSpatial.activity = choice === "continue"
+        ? "working"
+        : "idle";
+      this.ownerSpatial.destinationActivity = this.ownerSpatial.activity;
+      this.record("workAlertResolved", this.owner.room, { choice });
+    }
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
+  purchaseItem(
+    itemId: CatalogItemId,
+    quantity = 1,
+    transactionId?: string,
+  ): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    const transition = purchaseCatalogItem(
+      this.economy,
+      itemId,
+      quantity,
+      transactionId,
+    );
+    this.economy = transition.state;
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
+  useItem(
+    itemId: CatalogItemId,
+    quantity = 1,
+    transactionId?: string,
+  ): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션에서는 상황형 선택지를 사용해 주세요." };
+    }
+    const item = CATALOG.find((candidate) => candidate.id === itemId);
+    if (
+      item === undefined ||
+      item.category === "pad" ||
+      item.category === "barrier" ||
+      item.category === "clinic"
+    ) {
+      return { ok: false, reason: "이 품목은 현재 방식으로 사용할 수 없습니다." };
+    }
+    const transition = consumeItem(
+      this.economy,
+      itemId,
+      quantity,
+      transactionId,
+    );
+    if (!transition.ok) {
+      return { ok: false, reason: transition.reason };
+    }
+    this.economy = transition.state;
+    if (item.category === "food") {
+      this.feed(itemId === "food-comfort" ? 50 : 60);
+      if (itemId === "food-comfort") {
+        this.stats.stress = clamp(this.stats.stress - 4 * quantity);
+      }
+    } else if (item.category === "treat") {
+      this.stats.stress = clamp(this.stats.stress - quantity);
+      this.stats.comfort = clamp(this.stats.comfort + quantity);
+    } else {
+      this.stats.stress = clamp(this.stats.stress - 3 * quantity);
+      this.stats.comfort = clamp(this.stats.comfort + 4 * quantity);
+    }
+    this.clampAll();
+    return { ok: true, reason: null };
+  }
+
+  placeItem(
+    itemId: PadItemId | BarrierItemId,
+    target: ItemPlacementTarget,
+    transactionId?: string,
+  ): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    if (
+      !isRecord(target) ||
+      typeof target.room !== "string" ||
+      !isRoom(target.room) ||
+      !isFiniteNumber(target.x) ||
+      !isFiniteNumber(target.y)
+    ) {
+      return { ok: false, reason: "배치 위치가 올바르지 않습니다." };
+    }
+    const item = CATALOG.find((candidate) => candidate.id === itemId);
+    if (item === undefined) {
+      return { ok: false, reason: "배치할 수 없는 품목입니다." };
+    }
+    if (item.category === "pad" && item.coverage !== undefined) {
+      const placement = {
+        itemId: itemId as PadItemId,
+        room: target.room,
+        x: target.x,
+        y: target.y,
+        coverage: item.coverage,
+      };
+      const validation = validatePadPlacement(
+        placement,
+        this.ownerSpatial,
+        this.spatial,
+      );
+      if (!validation.ok) return validation;
+      const consumed = consumeItem(
+        this.economy,
+        itemId,
+        1,
+        transactionId ?? `place-pad:${this.economy.revision + 1}`,
+      );
+      if (!consumed.ok) return { ok: false, reason: consumed.reason };
+      this.economy = consumed.state;
+      this.environment = {
+        ...this.environment,
+        selectedPadId: placement.itemId,
+        padPlacement: placement,
+      };
+      return { ok: true, reason: null };
+    }
+    if (
+      item.category !== "barrier" ||
+      item.panels === undefined ||
+      !("width" in target)
+    ) {
+      return { ok: false, reason: "칸막이 크기와 위치가 필요합니다." };
+    }
+    const placementId = target.placementId ??
+      `barrier:${this.economy.revision + 1}`;
+    if (
+      this.environment.barriers.some((barrier) =>
+        barrier.id === placementId
+      )
+    ) {
+      return { ok: false, reason: "이미 사용 중인 칸막이 배치 ID입니다." };
+    }
+    const placement: BarrierPlacement = {
+      id: placementId,
+      itemId: itemId as BarrierItemId,
+      room: target.room,
+      x: target.x,
+      y: target.y,
+      width: target.width,
+      height: target.height,
+      panels: item.panels,
+    };
+    const validation = validateBarrierPlacement(
+      placement,
+      this.ownerSpatial,
+      this.spatial,
+      this.environment.barriers,
+    );
+    if (!validation.ok) return validation;
+    const consumed = consumeItem(
+      this.economy,
+      itemId,
+      1,
+      transactionId ?? `place-barrier:${placementId}`,
+    );
+    if (!consumed.ok) return { ok: false, reason: consumed.reason };
+    this.economy = consumed.state;
+    this.environment = {
+      ...this.environment,
+      barriers: [...this.environment.barriers, placement],
+    };
+    this.enforceEnvironmentBarrierBlock();
+    return { ok: true, reason: null };
+  }
+
+  scheduleClinic(transactionId?: string): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    const transition = purchaseCatalogItem(
+      this.economy,
+      "clinic-preventive",
+      1,
+      transactionId,
+    );
+    this.economy = transition.state;
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
+  buyUpgrade(upgradeId: SalaryUpgradeId): LifestyleActionResult {
+    if (this.encounterDirector.active !== null) {
+      return { ok: false, reason: "활성 미션을 먼저 마쳐야 합니다." };
+    }
+    const transition = buySalaryUpgradeState(this.economy, upgradeId);
+    this.economy = transition.state;
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
   serialize(): WaitdogSnapshot {
     return clone({
-      version: 2,
+      version: 3,
       seed: this.seed,
       rngCursor: this.rngCursor,
       day: this.day,
@@ -598,6 +1204,11 @@ class WaitdogSimulation implements WaitdogUiSim {
       spatial: this.spatial,
       opportunityRevision: this.opportunityRevision,
       visibleOpportunityRevision: this.visibleOpportunityRevision,
+      ownerSpatial: this.ownerSpatial,
+      encounterDirector: this.encounterDirector,
+      economy: this.economy,
+      work: this.work,
+      environment: this.environment,
     });
   }
 
@@ -610,8 +1221,10 @@ class WaitdogSimulation implements WaitdogUiSim {
     }
     const restored = this.isValidSnapshot(candidate)
       ? candidate
+      : this.isValidSnapshotV2(candidate)
+      ? this.migrateSnapshotV2(candidate)
       : this.isValidSnapshotV1(candidate)
-      ? this.migrateSnapshotV1(candidate)
+      ? this.migrateSnapshotV2(this.migrateSnapshotV1(candidate))
       : invalidSnapshot();
 
     this.seed = restored.seed;
@@ -649,6 +1262,11 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.spatial = restored.spatial;
     this.opportunityRevision = restored.opportunityRevision;
     this.visibleOpportunityRevision = restored.visibleOpportunityRevision;
+    this.ownerSpatial = restored.ownerSpatial;
+    this.encounterDirector = restored.encounterDirector;
+    this.economy = restored.economy;
+    this.work = restored.work;
+    this.environment = restored.environment;
   }
 
   getDogView(): WaitdogUiView {
@@ -715,6 +1333,19 @@ class WaitdogSimulation implements WaitdogUiSim {
                 : {},
           }
       );
+    const atComputer = this.ownerAtHotspot("computer");
+    const workState: WaitdogWorkView["state"] = this.work.alert !== null
+      ? "alert"
+      : this.work.progress === 100
+      ? "complete"
+      : this.ownerTargetingHotspot("computer") && this.ownerSpatial.moving
+      ? "moving"
+      : this.work.active && this.ownerSpatial.activity === "working"
+      ? "working"
+      : atComputer
+      ? "ready"
+      : "idle";
+    const salaryBonus = salaryBonusRate(this.economy);
     return {
       t: this.absoluteMinute,
       visibility,
@@ -730,10 +1361,68 @@ class WaitdogSimulation implements WaitdogUiSim {
         focusLocked: this.owner.focusLocked,
       },
       roomVisibility,
-      blocked: this.blocked,
+      blocked: this.isEffectivelyBlocked(),
       activePoop,
       recentEvents,
       poopRevision: this.poopRevision,
+      ownerSpatial: {
+        ...clone(this.ownerSpatial),
+        radius: this.ownerSpatial.collisionRadius,
+      },
+      activeEncounter: getEncounterPublicView(this.encounterDirector),
+      pausedForEncounter: this.encounterDirector.active !== null,
+      work: {
+        state: workState,
+        progress: this.work.progress,
+        canStart: this.encounterDirector.active === null &&
+          atComputer &&
+          this.work.alert === null &&
+          !this.work.active &&
+          this.work.progress < 100,
+        blockMinutes: BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES,
+        salaryPreview: Math.round(
+          BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY * (1 + salaryBonus),
+        ),
+        alert: clone(this.work.alert),
+        activeGigId: this.work.activeGigId,
+      },
+      economy: {
+        money: this.economy.money,
+        carePoints: this.economy.carePoints,
+        salaryBonusPercent: Math.round(salaryBonus * 100),
+      },
+      inventory: CATALOG.map((item) => ({
+        itemId: item.id,
+        count: this.economy.inventory[item.id],
+        effectSummary: item.effect,
+      })),
+      catalog: CATALOG.map((item) => ({
+        itemId: item.id,
+        category: item.category,
+        label: item.label,
+        price: item.price,
+        effectSummary: item.effect,
+        unlockCarePoints: item.unlockCarePoints,
+        locked: !this.economy.unlockedItemIds.includes(item.id),
+        ...(item.coverage === undefined ? {} : { coverage: item.coverage }),
+        ...(item.panels === undefined ? {} : { panels: item.panels }),
+      })),
+      clinic: {
+        couponAvailable: this.economy.clinicCouponAvailable,
+        preventiveVisitCompleted: this.economy.preventiveVisitCompleted,
+      },
+      upgrades: SALARY_UPGRADES.map((upgrade) => ({
+        id: upgrade.id,
+        label: upgrade.label,
+        carePointCost: upgrade.carePointCost,
+        bonusPercent: Math.round(upgrade.bonusRate * 100),
+        purchased: this.economy.salaryUpgrades.includes(upgrade.id),
+      })),
+      environmentPlacements: clone(this.environment),
+      ownerDogOverlap: ownerDogFootprintsOverlap(
+        this.ownerSpatial,
+        this.spatial,
+      ),
     };
   }
 
@@ -749,9 +1438,18 @@ class WaitdogSimulation implements WaitdogUiSim {
       memory: this.memory,
       matSkill: this.matSkill,
       matSkillOwnerAway: this.matSkillOwnerAway,
-      blocked: this.blocked,
+      blocked: this.isEffectivelyBlocked(),
       currentAction: this.currentAction,
       spatial: this.spatial,
+      ownerSpatial: this.ownerSpatial,
+      encounterDirector: this.encounterDirector,
+      economy: this.economy,
+      work: this.work,
+      environment: this.environment,
+      ownerDogOverlap: ownerDogFootprintsOverlap(
+        this.ownerSpatial,
+        this.spatial,
+      ),
       opportunityRevision: this.opportunityRevision,
       digestionQueue: this.digestionQueue,
       activePoop: this.activePoop,
@@ -802,6 +1500,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   newDay(): void {
+    if (this.encounterDirector.active !== null) return;
     this.day += BALANCE.NUMBER.ONE;
     this.minuteOfDay = BALANCE.TIME.DAY_START;
     this.absoluteMinute =
@@ -822,6 +1521,22 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.spatial.targetY = this.spatial.y;
     this.spatial.nextActivityAt = this.absoluteMinute +
       BALANCE.SPATIAL.AMBIENT_MIN_INTERVAL_MINUTES;
+    this.ownerSpatial.activity = "idle";
+    this.ownerSpatial.destinationActivity = "idle";
+    this.ownerSpatial.moving = false;
+    this.ownerSpatial.route = [];
+    this.ownerSpatial.targetRoom = this.ownerSpatial.room;
+    this.ownerSpatial.targetX = this.ownerSpatial.x;
+    this.ownerSpatial.targetY = this.ownerSpatial.y;
+    this.work = {
+      ...createWorkState(),
+      paidGigIds: [...this.work.paidGigIds],
+    };
+    if (this.day === 2) {
+      const coupon = grantClinicCoupon(this.economy, this.day);
+      if (coupon.ok) this.economy = coupon.state;
+    }
+    this.separateOwnerAndDog();
     this.record("dayStart", this.dogRoom, { day: this.day });
   }
 
@@ -836,7 +1551,35 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.stats.excitement -= BALANCE.PHYSIOLOGY.EXCITEMENT_RECOVERY_PER_MINUTE;
     this.stats.comfort -= BALANCE.PHYSIOLOGY.COMFORT_DECAY_PER_MINUTE;
 
+    this.advanceOwnerMovement();
     this.advanceSpatialMovement();
+    this.separateOwnerAndDog();
+    this.enforceEnvironmentBarrierBlock();
+    if (this.ownerSpatial.activity === "working" && this.work.active) {
+      const priorProgress = this.work.progress;
+      const transition = advanceWorkMinutes(
+        this.economy,
+        this.work,
+        BALANCE.TIME.TICK_MINUTES,
+      );
+      this.economy = transition.economy;
+      this.work = transition.work;
+      if (this.work.progress !== priorProgress) {
+        this.record("workProgress", this.owner.room, {
+          progress: this.work.progress,
+        });
+      }
+      if (this.work.alert !== null) {
+        this.ownerSpatial.activity = "responding";
+        this.ownerSpatial.destinationActivity = "responding";
+      } else if (transition.completed) {
+        this.ownerSpatial.activity = "idle";
+        this.ownerSpatial.destinationActivity = "idle";
+        this.record("workComplete", this.owner.room, {
+          payout: transition.payout,
+        });
+      }
+    }
     this.startAmbientActivityIfDue();
     this.advancePendingPressure();
     this.completeDigestion();
@@ -867,6 +1610,154 @@ class WaitdogSimulation implements WaitdogUiSim {
       this.currentAction = "idle";
     }
     this.clampAll();
+  }
+
+  private commitEncounterTransition(
+    transition: EncounterTransition,
+    inventoryDelta: Partial<EconomyState["inventory"]> = {},
+  ): LifestyleActionResult {
+    this.encounterDirector = transition.state;
+    if (this.encounterDirector.active !== null) {
+      this.stopOwnerMovement("responding");
+    }
+    if (transition.completedNow) {
+      this.applyEncounterCompletion(inventoryDelta);
+    }
+    return { ok: transition.ok, reason: transition.reason };
+  }
+
+  private applyEncounterCompletion(
+    inventoryDelta: Partial<EconomyState["inventory"]>,
+  ): void {
+    const active = this.encounterDirector.active;
+    if (
+      active === null ||
+      active.stage !== "result" ||
+      active.result === null ||
+      active.resultApplied
+    ) {
+      return;
+    }
+    const delta = encounterOutcomeDelta(active.encounterId);
+    for (
+      const [key, value] of Object.entries(delta.stats) as Array<
+        [keyof DogStats, number]
+      >
+    ) {
+      this.stats[key] = clamp(this.stats[key] + value);
+    }
+    for (
+      const [key, value] of Object.entries(delta.memory) as Array<
+        [MemoryKey, number]
+      >
+    ) {
+      this.changeMemory(key, value);
+    }
+    const points = encounterCarePoints(active.encounterId);
+    const reward = awardCarePoints(
+      this.economy,
+      `day:${this.day}:encounter:${active.encounterId}`,
+      points,
+    );
+    if (reward.ok) this.economy = reward.state;
+    this.encounterDirector = markEncounterResultApplied(
+      this.encounterDirector,
+      reward.ok ? points : 0,
+      reward.ok,
+      inventoryDelta,
+    );
+    this.record("encounterComplete", this.dogRoom, {
+      encounterId: active.encounterId,
+      score: active.result.score,
+      carePointsAwarded: reward.ok ? points : 0,
+    });
+    this.clampAll();
+  }
+
+  private availableTreatId(): CatalogItemId | null {
+    const treatIds: readonly CatalogItemId[] = [
+      "treat-mini",
+      "treat-basic",
+      "treat-lick",
+    ];
+    return treatIds.find((id) => this.economy.inventory[id] > 0) ?? null;
+  }
+
+  private activePoopPoint(): {
+    room: RoomId;
+    x: number;
+    y: number;
+  } | null {
+    if (this.activePoop === null) return null;
+    if (this.activePoop.location === "pad") {
+      const placedPad = this.environment.padPlacement;
+      if (
+        placedPad !== null &&
+        placedPad.room === this.activePoop.room
+      ) {
+        return {
+          room: placedPad.room,
+          x: placedPad.x,
+          y: placedPad.y,
+        };
+      }
+      const target = BALANCE.SPATIAL.TARGET.POOP_PAD;
+      return {
+        room: this.activePoop.room,
+        x: target.x,
+        y: target.y,
+      };
+    }
+    const target = BALANCE.SPATIAL.TARGET.CORNER[this.activePoop.room];
+    return {
+      room: this.activePoop.room,
+      x: target.x,
+      y: target.y,
+    };
+  }
+
+  private barrierCoversPoint(
+    barrier: BarrierPlacement,
+    point: { room: RoomId; x: number; y: number },
+  ): boolean {
+    if (barrier.room !== point.room) return false;
+    const panelReach =
+      BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS *
+      (barrier.panels / 4);
+    return Math.abs(point.x - barrier.x) <=
+        barrier.width / 2 + panelReach &&
+      Math.abs(point.y - barrier.y) <=
+        barrier.height / 2 + panelReach;
+  }
+
+  private environmentBarrierBlocks(): boolean {
+    const points: Array<{ room: RoomId; x: number; y: number }> = [
+      {
+        room: this.spatial.room,
+        x: this.spatial.x,
+        y: this.spatial.y,
+      },
+    ];
+    const poopPoint = this.activePoopPoint();
+    if (poopPoint !== null) points.push(poopPoint);
+    return this.environment.barriers.some((barrier) =>
+      points.some((point) => this.barrierCoversPoint(barrier, point))
+    );
+  }
+
+  private isEffectivelyBlocked(): boolean {
+    return this.blocked || this.environmentBarrierBlocks();
+  }
+
+  private enforceEnvironmentBarrierBlock(): void {
+    if (
+      this.pendingEatAt === null ||
+      !this.environmentBarrierBlocks()
+    ) {
+      return;
+    }
+    this.cancelPendingEat();
+    this.setBehavior("sniffLeave");
   }
 
   private completeDigestion(): void {
@@ -933,11 +1824,18 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   private poop(): void {
+    const placedPad = this.environment.padPlacement?.room === this.dogRoom
+      ? this.environment.padPlacement
+      : null;
     const padChance = BALANCE.DIGESTION.PAD_BASE_CHANCE +
-      this.matSkill.toilet * BALANCE.DIGESTION.PAD_SKILL_FACTOR;
+      this.matSkill.toilet * BALANCE.DIGESTION.PAD_SKILL_FACTOR +
+      (placedPad?.coverage ?? 0);
     const onPad = this.rng.chance(padChance) &&
-      (this.dogRoom === "living" || this.dogRoom === "toilet");
-    let room: RoomId = onPad ? "toilet" : this.dogRoom;
+      (placedPad !== null ||
+        this.dogRoom === "living" || this.dogRoom === "toilet");
+    let room: RoomId = onPad
+      ? placedPad?.room ?? "toilet"
+      : this.dogRoom;
     if (
       !onPad &&
       this.visibilityFor(room) === "seen" &&
@@ -959,7 +1857,9 @@ class WaitdogSimulation implements WaitdogUiSim {
     };
     this.poopRevision += 1;
     this.markOpportunity(room);
-    const poopTarget = onPad
+    const poopTarget = onPad && placedPad !== null
+      ? { room: placedPad.room, x: placedPad.x, y: placedPad.y }
+      : onPad
       ? BALANCE.SPATIAL.TARGET.POOP_PAD
       : BALANCE.SPATIAL.TARGET.CORNER[room];
     this.setSpatialGoal(room, poopTarget.x, poopTarget.y, "poop");
@@ -1000,7 +1900,9 @@ class WaitdogSimulation implements WaitdogUiSim {
         ["waitSkill", this.memory.waitSkill * BALANCE.DECISION.EAT.WAIT_SKILL],
         [
           "block",
-          this.blocked ? BALANCE.DECISION.BLOCK_PENALTY : BALANCE.NUMBER.ZERO,
+          this.isEffectivelyBlocked()
+            ? BALANCE.DECISION.BLOCK_PENALTY
+            : BALANCE.NUMBER.ZERO,
         ],
       ]),
       this.utility("moveToMat", [
@@ -1080,6 +1982,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       this.record("poopApproach", this.dogRoom, {
         completesAt: this.pendingEatAt,
       });
+      this.enforceEnvironmentBarrierBlock();
     }
   }
 
@@ -1100,7 +2003,7 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   private completeEating(): void {
-    if (this.activePoop === null || this.blocked) {
+    if (this.activePoop === null || this.isEffectivelyBlocked()) {
       this.cancelPendingEat();
       return;
     }
@@ -1190,8 +2093,8 @@ class WaitdogSimulation implements WaitdogUiSim {
         return;
       }
       case "watchOwner": {
-        const target = BALANCE.SPATIAL.INITIAL[this.owner.room];
-        this.setSpatialGoal(this.owner.room, target.x, target.y, action);
+        const target = this.safeDogPointNearOwner();
+        this.setSpatialGoal(target.room, target.x, target.y, action);
         return;
       }
       case "flee": {
@@ -1279,8 +2182,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       case "play":
         return BALANCE.SPATIAL.TARGET.PLAY;
       case "followOwner": {
-        const target = BALANCE.SPATIAL.INITIAL[this.owner.room];
-        return { room: this.owner.room, x: target.x, y: target.y };
+        return this.safeDogPointNearOwner();
       }
       case "patrol": {
         const rooms = this.adjacentRooms(this.dogRoom);
@@ -1300,6 +2202,205 @@ class WaitdogSimulation implements WaitdogUiSim {
           x: this.randomCoordinate(),
           y: this.randomCoordinate(),
         };
+    }
+  }
+
+  private setOwnerSpatialGoal(
+    room: RoomId,
+    x: number,
+    y: number,
+    destinationActivity: Exclude<OwnerSpatialState["activity"], "moving">,
+  ): void {
+    const finalTarget: DogSpatialWaypoint = {
+      room,
+      x: this.clampCoordinate(x),
+      y: this.clampCoordinate(y),
+    };
+    const waypoints = this.spatialWaypoints(
+      this.ownerSpatial.room,
+      finalTarget,
+    );
+    const [target, ...route] = waypoints;
+    this.ownerSpatial.targetRoom = target.room;
+    this.ownerSpatial.targetX = target.x;
+    this.ownerSpatial.targetY = target.y;
+    this.ownerSpatial.route = route;
+    this.ownerSpatial.destinationActivity = destinationActivity;
+    this.ownerSpatial.moving =
+      this.ownerSpatial.room !== target.room ||
+      this.ownerSpatial.x !== target.x ||
+      this.ownerSpatial.y !== target.y;
+    this.ownerSpatial.activity = this.ownerSpatial.moving
+      ? "moving"
+      : destinationActivity;
+  }
+
+  private advanceOwnerMovement(): void {
+    if (!this.ownerSpatial.moving) return;
+    if (this.ownerSpatial.room !== this.ownerSpatial.targetRoom) {
+      const transition = this.transitionPoints(
+        this.ownerSpatial.room,
+        this.ownerSpatial.targetRoom,
+      );
+      if (transition === null) {
+        throw new RangeError("owner target must be the same or adjacent room");
+      }
+      if (!this.moveOwnerToward(transition.exit.x, transition.exit.y)) return;
+      this.ownerSpatial.room = this.ownerSpatial.targetRoom;
+      this.owner = { ...this.owner, room: this.ownerSpatial.room };
+      this.ownerSpatial.x = transition.entry.x;
+      this.ownerSpatial.y = transition.entry.y;
+    }
+    if (
+      !this.moveOwnerToward(
+        this.ownerSpatial.targetX,
+        this.ownerSpatial.targetY,
+      )
+    ) {
+      return;
+    }
+    if (this.ownerSpatial.route.length > 0) {
+      const [next, ...route] = this.ownerSpatial.route;
+      this.ownerSpatial.targetRoom = next.room;
+      this.ownerSpatial.targetX = next.x;
+      this.ownerSpatial.targetY = next.y;
+      this.ownerSpatial.route = route;
+      return;
+    }
+    this.ownerSpatial.moving = false;
+    this.ownerSpatial.activity = this.ownerSpatial.destinationActivity;
+  }
+
+  private moveOwnerToward(x: number, y: number): boolean {
+    const deltaX = x - this.ownerSpatial.x;
+    const deltaY = y - this.ownerSpatial.y;
+    const distance = Math.hypot(deltaX, deltaY);
+    if (distance <= BALANCE.LIFESTYLE.OWNER.SPEED_PER_MINUTE) {
+      this.ownerSpatial.x = x;
+      this.ownerSpatial.y = y;
+      return true;
+    }
+    const scale = BALANCE.LIFESTYLE.OWNER.SPEED_PER_MINUTE / distance;
+    this.ownerSpatial.x = this.clampCoordinate(
+      this.ownerSpatial.x + deltaX * scale,
+    );
+    this.ownerSpatial.y = this.clampCoordinate(
+      this.ownerSpatial.y + deltaY * scale,
+    );
+    return false;
+  }
+
+  private stopOwnerMovement(
+    activity: Exclude<OwnerSpatialState["activity"], "moving">,
+  ): void {
+    this.ownerSpatial.targetRoom = this.ownerSpatial.room;
+    this.ownerSpatial.targetX = this.ownerSpatial.x;
+    this.ownerSpatial.targetY = this.ownerSpatial.y;
+    this.ownerSpatial.route = [];
+    this.ownerSpatial.moving = false;
+    this.ownerSpatial.activity = activity;
+    this.ownerSpatial.destinationActivity = activity;
+  }
+
+  private ownerAtHotspot(
+    hotspotId: keyof typeof BALANCE.LIFESTYLE.OWNER.HOTSPOT,
+  ): boolean {
+    return this.ownerStateAtHotspot(this.ownerSpatial, hotspotId);
+  }
+
+  private ownerStateAtHotspot(
+    ownerSpatial: OwnerSpatialState,
+    hotspotId: keyof typeof BALANCE.LIFESTYLE.OWNER.HOTSPOT,
+  ): boolean {
+    const target = BALANCE.LIFESTYLE.OWNER.HOTSPOT[hotspotId];
+    return !ownerSpatial.moving &&
+      ownerSpatial.room === target.room &&
+      Math.hypot(
+          ownerSpatial.x - target.x,
+          ownerSpatial.y - target.y,
+        ) <= 0.01;
+  }
+
+  private ownerTargetingHotspot(
+    hotspotId: keyof typeof BALANCE.LIFESTYLE.OWNER.HOTSPOT,
+  ): boolean {
+    const target = BALANCE.LIFESTYLE.OWNER.HOTSPOT[hotspotId];
+    const finalTarget = this.ownerSpatial.route[
+      this.ownerSpatial.route.length - 1
+    ];
+    return finalTarget !== undefined
+      ? finalTarget.room === target.room &&
+        finalTarget.x === target.x &&
+        finalTarget.y === target.y
+      : this.ownerSpatial.targetRoom === target.room &&
+        this.ownerSpatial.targetX === target.x &&
+        this.ownerSpatial.targetY === target.y;
+  }
+
+  private safeDogPointNearOwner(): DogSpatialWaypoint {
+    const minimumDistance =
+      this.ownerSpatial.collisionRadius +
+      BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS +
+      BALANCE.LIFESTYLE.OWNER.SAFETY_GAP;
+    const directions = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+      [Math.SQRT1_2, Math.SQRT1_2],
+      [-Math.SQRT1_2, Math.SQRT1_2],
+      [Math.SQRT1_2, -Math.SQRT1_2],
+      [-Math.SQRT1_2, -Math.SQRT1_2],
+    ] as const;
+    const candidates = directions
+      .map(([directionX, directionY]) => ({
+        room: this.ownerSpatial.room,
+        x: this.clampCoordinate(
+          this.ownerSpatial.x + directionX * minimumDistance,
+        ),
+        y: this.clampCoordinate(
+          this.ownerSpatial.y + directionY * minimumDistance,
+        ),
+      }))
+      .filter((candidate) =>
+        Math.hypot(
+          candidate.x - this.ownerSpatial.x,
+          candidate.y - this.ownerSpatial.y,
+        ) >= minimumDistance - 1e-9
+      )
+      .sort((first, second) =>
+        Math.hypot(first.x - this.spatial.x, first.y - this.spatial.y) -
+        Math.hypot(second.x - this.spatial.x, second.y - this.spatial.y)
+      );
+    return candidates[0] ?? {
+      room: this.ownerSpatial.room,
+      x: this.clampCoordinate(this.ownerSpatial.x + minimumDistance),
+      y: this.ownerSpatial.y,
+    };
+  }
+
+  private separateOwnerAndDog(): void {
+    if (!ownerDogFootprintsOverlap(this.ownerSpatial, this.spatial)) return;
+    const safePoint = this.safeDogPointNearOwner();
+    this.spatial.room = safePoint.room;
+    this.dogRoom = safePoint.room;
+    this.spatial.x = safePoint.x;
+    this.spatial.y = safePoint.y;
+    if (
+      this.spatial.targetRoom === this.ownerSpatial.room &&
+      Math.hypot(
+        this.spatial.targetX - this.ownerSpatial.x,
+        this.spatial.targetY - this.ownerSpatial.y,
+      ) <
+        this.ownerSpatial.collisionRadius +
+          BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS +
+          BALANCE.LIFESTYLE.OWNER.SAFETY_GAP
+    ) {
+      this.spatial.targetRoom = safePoint.room;
+      this.spatial.targetX = safePoint.x;
+      this.spatial.targetY = safePoint.y;
+      this.spatial.route = [];
+      this.spatial.moving = false;
     }
   }
 
@@ -1442,6 +2543,21 @@ class WaitdogSimulation implements WaitdogUiSim {
     this.dogRoom = room;
   }
 
+  private relocateOwnerSpatial(room: RoomId): void {
+    const position = BALANCE.LIFESTYLE.OWNER.INITIAL[room];
+    this.ownerSpatial.room = room;
+    this.ownerSpatial.x = position.x;
+    this.ownerSpatial.y = position.y;
+    this.ownerSpatial.targetRoom = room;
+    this.ownerSpatial.targetX = position.x;
+    this.ownerSpatial.targetY = position.y;
+    this.ownerSpatial.route = [];
+    this.ownerSpatial.activity = "idle";
+    this.ownerSpatial.destinationActivity = "idle";
+    this.ownerSpatial.moving = false;
+    this.separateOwnerAndDog();
+  }
+
   private stopSpatialActivity(): void {
     this.spatial.activity = "idle";
     this.spatial.targetRoom = this.spatial.room;
@@ -1545,12 +2661,87 @@ class WaitdogSimulation implements WaitdogUiSim {
   private isValidSnapshot(value: unknown): value is WaitdogSnapshot {
     if (!isRecord(value) || !hasExactKeys(value, SNAPSHOT_KEYS)) return false;
     if (
+      value.version !== BALANCE.NUMBER.THREE ||
+      !this.isValidSnapshotBody(value) ||
+      !this.isValidSpatialState(value.spatial, value.dogRoom) ||
+      !this.isValidOwnerSpatialState(
+        value.ownerSpatial,
+        (value.owner as Required<OwnerState>).room,
+      ) ||
+      !isEncounterDirectorState(value.encounterDirector) ||
+      !isEconomyState(value.economy) ||
+      !isWorkState(value.work) ||
+      !isEnvironmentState(value.environment)
+    ) {
+      return false;
+    }
+    const ownerSpatial = value.ownerSpatial as OwnerSpatialState;
+    const spatial = value.spatial as DogSpatialState;
+    const work = value.work as WorkState;
+    const economy = value.economy as EconomyState;
+    const environment = value.environment as EnvironmentState;
+    const salaryGigIds = economy.ledger
+      .filter((entry) => entry.kind === "salary")
+      .map((entry) => entry.id.replace(/^salary:/, ""));
+    const currentGigSalary = work.activeGigId === null
+      ? undefined
+      : economy.ledger.find((entry) =>
+        entry.kind === "salary" &&
+        entry.id === `salary:${work.activeGigId}`
+      );
+    const lastPayoutIsValid = work.progress === 100
+      ? currentGigSalary?.moneyDelta === work.lastPayout
+      : work.lastPayout === 0;
+    const placementLedgerCountsAreValid = CATALOG
+      .filter((item) =>
+        item.category === "pad" || item.category === "barrier"
+      )
+      .every((item) => {
+        const placedCount =
+          (environment.padPlacement?.itemId === item.id ? 1 : 0) +
+          environment.barriers.filter((barrier) =>
+            barrier.itemId === item.id
+          ).length;
+        const consumedCount = -economy.ledger
+          .filter((entry) =>
+            entry.kind === "consume" && entry.itemId === item.id
+          )
+          .reduce((sum, entry) => sum + entry.quantityDelta, 0);
+        return placedCount <= consumedCount;
+      });
+    if (
+      ownerDogFootprintsOverlap(ownerSpatial, spatial) ||
+      (work.active &&
+        !this.ownerStateAtHotspot(ownerSpatial, "computer")) ||
+      (work.alert !== null && work.active) ||
+      salaryGigIds.length !== work.paidGigIds.length ||
+      !salaryGigIds.every((gigId, index) =>
+        work.paidGigIds[index] === gigId
+      ) ||
+      !lastPayoutIsValid ||
+      !placementLedgerCountsAreValid
+    ) {
+      return false;
+    }
+    return this.hasValidOpportunityRevisions(value);
+  }
+
+  private isValidSnapshotV2(value: unknown): value is WaitdogSnapshotV2 {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, SNAPSHOT_V2_KEYS) ||
       value.version !== BALANCE.NUMBER.TWO ||
       !this.isValidSnapshotBody(value) ||
       !this.isValidSpatialState(value.spatial, value.dogRoom)
     ) {
       return false;
     }
+    return this.hasValidOpportunityRevisions(value);
+  }
+
+  private hasValidOpportunityRevisions(
+    value: Record<string, unknown>,
+  ): boolean {
     const log = value.log as EventLog[];
     const opportunityCount = log.filter((event) =>
       this.isImportantOpportunityType(event.type)
@@ -1761,13 +2952,87 @@ class WaitdogSimulation implements WaitdogUiSim {
     );
   }
 
+  private isValidOwnerSpatialState(
+    value: unknown,
+    ownerRoom: RoomId,
+  ): value is OwnerSpatialState {
+    if (
+      !isRecord(value) ||
+      !hasExactKeys(value, [
+        "room",
+        "x",
+        "y",
+        "targetRoom",
+        "targetX",
+        "targetY",
+        "route",
+        "activity",
+        "destinationActivity",
+        "moving",
+        "collisionRadius",
+      ]) ||
+      typeof value.room !== "string" ||
+      !isRoom(value.room) ||
+      value.room !== ownerRoom ||
+      typeof value.targetRoom !== "string" ||
+      !isRoom(value.targetRoom) ||
+      !this.isCoordinate(value.x) ||
+      !this.isCoordinate(value.y) ||
+      !this.isCoordinate(value.targetX) ||
+      !this.isCoordinate(value.targetY) ||
+      !["idle", "moving", "working", "responding"].includes(
+        value.activity as string,
+      ) ||
+      !["idle", "working", "responding"].includes(
+        value.destinationActivity as string,
+      ) ||
+      typeof value.moving !== "boolean" ||
+      value.collisionRadius !==
+        BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS ||
+      !Array.isArray(value.route)
+    ) {
+      return false;
+    }
+    const route = value.route;
+    if (
+      route.length > 1 ||
+      !route.every((waypoint) =>
+        isRecord(waypoint) &&
+        hasExactKeys(waypoint, ["room", "x", "y"]) &&
+        typeof waypoint.room === "string" &&
+        isRoom(waypoint.room) &&
+        this.isCoordinate(waypoint.x) &&
+        this.isCoordinate(waypoint.y)
+      ) ||
+      (value.moving !== (value.activity === "moving")) ||
+      (!value.moving &&
+        (route.length > 0 ||
+          value.room !== value.targetRoom ||
+          value.x !== value.targetX ||
+          value.y !== value.targetY ||
+          value.activity !== value.destinationActivity))
+    ) {
+      return false;
+    }
+    const rooms = [
+      value.room,
+      value.targetRoom,
+      ...route.map((waypoint) => waypoint.room as RoomId),
+    ] as RoomId[];
+    return rooms.every((room, index) =>
+      index === 0 ||
+      room === rooms[index - 1] ||
+      this.adjacent(rooms[index - 1], room)
+    );
+  }
+
   private isCoordinate(value: unknown): value is number {
     return isFiniteNumber(value) &&
       value >= BALANCE.SPATIAL.MIN_COORDINATE &&
       value <= BALANCE.SPATIAL.MAX_COORDINATE;
   }
 
-  private migrateSnapshotV1(snapshot: WaitdogSnapshotV1): WaitdogSnapshot {
+  private migrateSnapshotV1(snapshot: WaitdogSnapshotV1): WaitdogSnapshotV2 {
     const position = BALANCE.SPATIAL.INITIAL[snapshot.dogRoom];
     const opportunityRevision = snapshot.log.filter((event) =>
       this.isImportantOpportunityType(event.type)
@@ -1795,6 +3060,80 @@ class WaitdogSimulation implements WaitdogUiSim {
       },
       opportunityRevision,
       visibleOpportunityRevision,
+    };
+  }
+
+  private migrateSnapshotV2(snapshot: WaitdogSnapshotV2): WaitdogSnapshot {
+    const { version: _version, ...legacy } = snapshot;
+    let economy = createEconomyState();
+    if (snapshot.day >= 2) {
+      const coupon = grantClinicCoupon(economy, snapshot.day);
+      if (coupon.ok) economy = coupon.state;
+    }
+    return {
+      ...legacy,
+      version: 3,
+      ownerSpatial: this.createMigratedOwnerSpatial(snapshot),
+      encounterDirector: createEncounterDirectorState(),
+      economy,
+      work: createWorkState(),
+      environment: createEnvironmentState(),
+    };
+  }
+
+  private createMigratedOwnerSpatial(
+    snapshot: WaitdogSnapshotV2,
+  ): OwnerSpatialState {
+    const initial = BALANCE.LIFESTYLE.OWNER.INITIAL[snapshot.owner.room];
+    const minimumDistance =
+      BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS +
+      BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS +
+      BALANCE.LIFESTYLE.OWNER.SAFETY_GAP;
+    let position: { x: number; y: number } = { ...initial };
+    if (
+      snapshot.spatial.room === snapshot.owner.room &&
+      Math.hypot(
+        position.x - snapshot.spatial.x,
+        position.y - snapshot.spatial.y,
+      ) < minimumDistance
+    ) {
+      const candidates = [
+        {
+          x: this.clampCoordinate(snapshot.spatial.x + minimumDistance),
+          y: snapshot.spatial.y,
+        },
+        {
+          x: this.clampCoordinate(snapshot.spatial.x - minimumDistance),
+          y: snapshot.spatial.y,
+        },
+        {
+          x: snapshot.spatial.x,
+          y: this.clampCoordinate(snapshot.spatial.y + minimumDistance),
+        },
+        {
+          x: snapshot.spatial.x,
+          y: this.clampCoordinate(snapshot.spatial.y - minimumDistance),
+        },
+      ];
+      position = candidates.find((candidate) =>
+        Math.hypot(
+          candidate.x - snapshot.spatial.x,
+          candidate.y - snapshot.spatial.y,
+        ) >= minimumDistance - 1e-9
+      ) ?? initial;
+    }
+    return {
+      room: snapshot.owner.room,
+      x: position.x,
+      y: position.y,
+      targetRoom: snapshot.owner.room,
+      targetX: position.x,
+      targetY: position.y,
+      route: [],
+      activity: "idle",
+      destinationActivity: "idle",
+      moving: false,
+      collisionRadius: BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS,
     };
   }
 

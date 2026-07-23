@@ -1,4 +1,5 @@
 import { BALANCE } from "../constants/balance";
+import type { CatalogCategory } from "../types";
 import type { WaitdogSnapshot } from "./waitdogSim";
 
 export const WAITDOG_PROFILE_KEY = "waitdog_profile_v1";
@@ -54,7 +55,7 @@ interface CampaignSettingsV1 {
   daySummaries: QualitativeDaySummary[];
 }
 
-export interface CampaignSettings {
+interface CampaignSettingsV2 {
   version: 2;
   seed: number;
   speed: 0 | 1 | 2 | 4;
@@ -65,6 +66,18 @@ export interface CampaignSettings {
   filteredObservations: Array<{ time: string; sentence: string }>;
   daySummaries: QualitativeDaySummary[];
   training: TrainingProgress | null;
+}
+
+export interface LifestyleCampaignSettings {
+  tutorialStarted: boolean;
+  selectedStoreCategory: CatalogCategory;
+  lastEncounterResultId: string | null;
+}
+
+export interface CampaignSettings
+  extends Omit<CampaignSettingsV2, "version"> {
+  version: 3;
+  lifestyle: LifestyleCampaignSettings;
 }
 
 export interface WaitdogProfile {
@@ -96,6 +109,14 @@ const TRAINING_STAGES: readonly TrainingStage[] = [
   "cue",
   "reward",
   "complete",
+];
+const CATALOG_CATEGORIES: readonly CatalogCategory[] = [
+  "food",
+  "treat",
+  "pad",
+  "barrier",
+  "shampoo",
+  "clinic",
 ];
 const PHASES: readonly CampaignPhase[] = [
   "morning",
@@ -136,8 +157,15 @@ export const updateOwnerResources = (
   workScore: clampResource(current.workScore + (delta.workScore ?? 0)),
 });
 
+export const createLifestyleCampaignSettings =
+  (): LifestyleCampaignSettings => ({
+    tutorialStarted: false,
+    selectedStoreCategory: "treat",
+    lastEncounterResultId: null,
+  });
+
 export const createCampaignSettings = (seed: number): CampaignSettings => ({
-  version: 2,
+  version: 3,
   seed,
   speed: 1,
   infinite: false,
@@ -147,6 +175,7 @@ export const createCampaignSettings = (seed: number): CampaignSettings => ({
   filteredObservations: [],
   daySummaries: [],
   training: null,
+  lifestyle: createLifestyleCampaignSettings(),
 });
 
 export const recommendedTrainingGoal = (day: number): TrainingGoalId =>
@@ -271,6 +300,7 @@ const SETTINGS_V1_KEYS = [
 ] as const;
 
 const SETTINGS_V2_KEYS = [...SETTINGS_V1_KEYS, "training"] as const;
+const SETTINGS_KEYS = [...SETTINGS_V2_KEYS, "lifestyle"] as const;
 
 const isTrainingProgress = (value: unknown): value is TrainingProgress =>
   isRecord(value) &&
@@ -303,6 +333,23 @@ const isTrainingProgress = (value: unknown): value is TrainingProgress =>
   ((value.stage === "complete") ===
     ((value.completed as number) === (value.target as number))) &&
   typeof value.feedback === "string";
+
+const isLifestyleCampaignSettings = (
+  value: unknown,
+): value is LifestyleCampaignSettings =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "tutorialStarted",
+    "selectedStoreCategory",
+    "lastEncounterResultId",
+  ]) &&
+  typeof value.tutorialStarted === "boolean" &&
+  typeof value.selectedStoreCategory === "string" &&
+  CATALOG_CATEGORIES.includes(
+    value.selectedStoreCategory as CatalogCategory,
+  ) &&
+  (value.lastEncounterResultId === null ||
+    typeof value.lastEncounterResultId === "string");
 
 const hasValidSettingsFields = (value: Record<string, unknown>): boolean =>
   typeof value.seed === "number" &&
@@ -348,12 +395,20 @@ const isSettingsV1 = (value: unknown): value is CampaignSettingsV1 =>
   value.version === 1 &&
   hasValidSettingsFields(value);
 
-const isSettings = (value: unknown): value is CampaignSettings =>
+const isSettingsV2 = (value: unknown): value is CampaignSettingsV2 =>
   isRecord(value) &&
   hasExactKeys(value, SETTINGS_V2_KEYS) &&
   value.version === 2 &&
   hasValidSettingsFields(value) &&
   (value.training === null || isTrainingProgress(value.training));
+
+const isSettings = (value: unknown): value is CampaignSettings =>
+  isRecord(value) &&
+  hasExactKeys(value, SETTINGS_KEYS) &&
+  value.version === 3 &&
+  hasValidSettingsFields(value) &&
+  (value.training === null || isTrainingProgress(value.training)) &&
+  isLifestyleCampaignSettings(value.lifestyle);
 
 const hasValidProfileFields = (value: Record<string, unknown>): boolean =>
   Number.isInteger(value.day) && (value.day as number) >= 1 &&
@@ -394,12 +449,40 @@ const isProfileV1 = (
   hasValidProfileFields(value) &&
   isSettingsV1(value.settings);
 
+const isProfileV2 = (
+  value: unknown,
+): value is Omit<WaitdogProfile, "settings"> & { settings: CampaignSettingsV2 } =>
+  isRecord(value) &&
+  hasExactKeys(value, [
+    "day",
+    "phase",
+    "simSnapshot",
+    "ownerResources",
+    "hypotheses",
+    "settings",
+  ]) &&
+  hasValidProfileFields(value) &&
+  isSettingsV2(value.settings);
+
 export const loadProfile = (storage: StorageAdapter): LoadProfileResult => {
   try {
     const stored = storage.getItem(WAITDOG_PROFILE_KEY);
     if (stored === null) return { ok: true, profile: null };
     const parsed: unknown = JSON.parse(stored);
     if (isProfile(parsed)) return { ok: true, profile: parsed };
+    if (isProfileV2(parsed)) {
+      return {
+        ok: true,
+        profile: {
+          ...parsed,
+          settings: {
+            ...parsed.settings,
+            version: 3,
+            lifestyle: createLifestyleCampaignSettings(),
+          },
+        },
+      };
+    }
     if (isProfileV1(parsed)) {
       return {
         ok: true,
@@ -407,8 +490,9 @@ export const loadProfile = (storage: StorageAdapter): LoadProfileResult => {
           ...parsed,
           settings: {
             ...parsed.settings,
-            version: 2,
+            version: 3,
             training: null,
+            lifestyle: createLifestyleCampaignSettings(),
           },
         },
       };

@@ -12,14 +12,22 @@ import {
   type DogMotionId,
 } from "../constants/artAssets";
 import type { WaitdogUiView } from "../services/waitdogSim";
-import type { DogActivityId, RoomId, Visibility } from "../types";
+import type {
+  BarrierPlacement,
+  EncounterCueKind,
+  EncounterPublicView,
+  RoomId,
+  Visibility,
+} from "../types";
 
 interface HouseCanvasProps {
   view: WaitdogUiView;
   lastSeenRoom: RoomId | null;
-  ownerAway: boolean;
   disabled: boolean;
+  compact: boolean;
+  encounter: EncounterPublicView | null;
   onRoomSelect: (room: RoomId) => void;
+  onComputer: () => void;
 }
 
 interface RoomRect {
@@ -35,12 +43,11 @@ interface Point {
   y: number;
 }
 
-interface RoomTransition {
+interface PositionTransition {
   from: Point;
   to: Point;
   startedAt: number;
   duration: number;
-  movingLeft: boolean;
 }
 
 type ArtImages = {
@@ -54,8 +61,8 @@ type ArtLoadState =
 
 const WIDTH = 900;
 const HEIGHT = 900;
-const POSITION_TWEEN_MS = 680;
-const TRANSIENT_MOTION_MS = 1600;
+const POSITION_TWEEN_MS = 520;
+const COMPUTER_LOCATION = { room: "living" as const, x: 0.82, y: 0.2 };
 
 const ROOMS: Record<RoomId, RoomRect> = {
   living: {
@@ -83,31 +90,18 @@ const ROOMS: Record<RoomId, RoomRect> = {
 
 const ROOM_ORDER: RoomId[] = ["living", "kitchen", "toilet"];
 const ROOM_MOVE_LABELS: Record<RoomId, string> = {
-  living: "생활방으로 이동",
-  kitchen: "부엌으로 이동",
-  toilet: "화장실로 이동",
+  living: "생활방",
+  kitchen: "부엌",
+  toilet: "화장실",
 };
-const TRANSIENT_EVENT_TYPES = new Set([
-  "sniffFloor",
-  "circle",
-  "wander",
-  "poopApproach",
-  "eatPoop",
-]);
+
+const clampCoordinate = (value: number): number =>
+  Math.max(0, Math.min(1, value));
 
 const centerOf = (room: RoomId): Point => {
   const rect = ROOMS[room];
   return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
 };
-
-const dogAnchor = (room: RoomId): Point => {
-  const rect = ROOMS[room];
-  const center = centerOf(room);
-  return { x: center.x, y: center.y + rect.height * 0.1 };
-};
-
-const clampCoordinate = (value: number): number =>
-  Math.max(0, Math.min(1, value));
 
 const spatialPoint = (room: RoomId, x: number, y: number): Point => {
   const rect = ROOMS[room];
@@ -122,8 +116,8 @@ const spatialPoint = (room: RoomId, x: number, y: number): Point => {
   };
 };
 
-const visibleSpatialPoint = (view: WaitdogUiView): Point | null => {
-  const { spatial } = view;
+const dogPoint = (view: WaitdogUiView): Point | null => {
+  const spatial = view.spatial;
   if (
     view.visibility !== "seen" || spatial.room === null ||
     spatial.x === null || spatial.y === null
@@ -131,198 +125,27 @@ const visibleSpatialPoint = (view: WaitdogUiView): Point | null => {
   return spatialPoint(spatial.room, spatial.x, spatial.y);
 };
 
-const visibleTargetPoint = (view: WaitdogUiView): Point | null => {
-  const { spatial } = view;
+const dogTargetPoint = (view: WaitdogUiView): Point | null => {
+  const spatial = view.spatial;
   if (
     view.visibility !== "seen" || spatial.targetRoom === null ||
     spatial.targetX === null || spatial.targetY === null
   ) return null;
-  return spatialPoint(
-    spatial.targetRoom,
-    spatial.targetX,
-    spatial.targetY,
-  );
+  return spatialPoint(spatial.targetRoom, spatial.targetX, spatial.targetY);
 };
 
-const ownerAnchor = (room: RoomId): Point => {
-  const rect = ROOMS[room];
-  const center = centerOf(room);
-  return {
-    x: center.x - rect.width * 0.22,
-    y: center.y + rect.height * 0.1,
-  };
-};
-
-const easeInOut = (progress: number): number =>
-  progress < 0.5
-    ? 2 * progress * progress
-    : 1 - Math.pow(-2 * progress + 2, 2) / 2;
-
-const positionDuring = (transition: RoomTransition, now: number): Point => {
-  const progress = Math.min(1, (now - transition.startedAt) / transition.duration);
-  const eased = easeInOut(progress);
-  return {
-    x: transition.from.x + (transition.to.x - transition.from.x) * eased,
-    y: transition.from.y + (transition.to.y - transition.from.y) * eased,
-  };
-};
-
-const roomFill = (visibility: Visibility): string => {
-  if (visibility === "seen") return "#fff8df";
-  if (visibility === "heard") return "#e9f4e2";
-  return "#4e5961";
-};
-
-const drawFallbackRoom = (
-  context: CanvasRenderingContext2D,
-  room: RoomId,
-  visibility: Visibility,
-) => {
-  const rect = ROOMS[room];
-  context.fillStyle = roomFill(visibility);
-  context.strokeStyle = visibility === "hidden" ? "#364047" : "#2f6258";
-  context.lineWidth = 4;
-  context.fillRect(rect.x, rect.y, rect.width, rect.height);
-  context.strokeRect(rect.x, rect.y, rect.width, rect.height);
-  context.fillStyle = visibility === "hidden" ? "#f6f0df" : "#27483f";
-  context.font = "700 19px sans-serif";
-  context.fillText(rect.label, rect.x + 16, rect.y + 30);
-};
-
-const drawFallbackMat = (context: CanvasRenderingContext2D) => {
-  context.fillStyle = "#ee7d64";
-  context.strokeStyle = "#a4483d";
-  context.lineWidth = 3;
-  context.beginPath();
-  context.roundRect(72, 752, 142, 86, 20);
-  context.fill();
-  context.stroke();
-  context.fillStyle = "#fff8df";
-  context.font = "700 16px sans-serif";
-  context.fillText("매트", 124, 801);
-};
-
-const drawFallbackFence = (context: CanvasRenderingContext2D) => {
-  const boundaryX = ROOMS.living.x + ROOMS.living.width - 8;
-  context.save();
-  context.strokeStyle = "#d95145";
-  context.lineWidth = 7;
-  for (let y = 350; y <= 520; y += 24) {
-    context.beginPath();
-    context.moveTo(boundaryX - 22, y);
-    context.lineTo(boundaryX + 22, y);
-    context.stroke();
-  }
-  context.beginPath();
-  context.moveTo(boundaryX - 12, 336);
-  context.lineTo(boundaryX - 12, 534);
-  context.moveTo(boundaryX + 12, 336);
-  context.lineTo(boundaryX + 12, 534);
-  context.stroke();
-  context.restore();
-};
-
-const drawFallbackOwner = (
-  context: CanvasRenderingContext2D,
-  room: RoomId,
-) => {
-  const point = ownerAnchor(room);
-  context.fillStyle = "#325ea8";
-  context.beginPath();
-  context.arc(point.x, point.y - 58, 18, 0, Math.PI * 2);
-  context.fill();
-  context.fillRect(point.x - 15, point.y - 38, 30, 52);
-};
-
-const drawFallbackDog = (
-  context: CanvasRenderingContext2D,
-  point: Point,
-) => {
-  context.fillStyle = "#dc8b43";
-  context.beginPath();
-  context.ellipse(point.x, point.y - 24, 43, 31, 0, 0, Math.PI * 2);
-  context.fill();
-  context.beginPath();
-  context.arc(point.x + 35, point.y - 50, 27, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = "#6d3e24";
-  context.beginPath();
-  context.ellipse(point.x + 23, point.y - 66, 11, 21, -0.55, 0, Math.PI * 2);
-  context.ellipse(point.x + 49, point.y - 67, 11, 21, 0.55, 0, Math.PI * 2);
-  context.fill();
-};
-
-const poopAnchor = (
-  room: RoomId,
-  location: "pad" | "corner",
+const positionDuring = (
+  transition: PositionTransition,
+  now: number,
 ): Point => {
-  const rect = ROOMS[room];
-  return location === "pad"
-    ? { x: rect.x + rect.width * 0.72, y: rect.y + rect.height * 0.82 }
-    : { x: rect.x + rect.width * 0.16, y: rect.y + rect.height * 0.86 };
-};
-
-const drawFallbackPoop = (
-  context: CanvasRenderingContext2D,
-  room: RoomId,
-  location: "pad" | "corner",
-) => {
-  const point = poopAnchor(room, location);
-  context.fillStyle = "#8d674d";
-  context.beginPath();
-  context.arc(point.x - 9, point.y - 5, 11, 0, Math.PI * 2);
-  context.arc(point.x + 8, point.y - 5, 12, 0, Math.PI * 2);
-  context.arc(point.x, point.y - 18, 10, 0, Math.PI * 2);
-  context.fill();
-};
-
-const drawQuestion = (context: CanvasRenderingContext2D, room: RoomId) => {
-  const center = centerOf(room);
-  context.fillStyle = "rgba(255, 255, 255, 0.92)";
-  context.beginPath();
-  context.arc(center.x, center.y, 30, 0, Math.PI * 2);
-  context.fill();
-  context.fillStyle = "#425058";
-  context.font = "900 36px sans-serif";
-  context.textAlign = "center";
-  context.fillText("?", center.x, center.y + 13);
-  context.textAlign = "start";
-};
-
-const drawSound = (context: CanvasRenderingContext2D) => {
-  const x = WIDTH / 2;
-  const y = 70;
-  context.fillStyle = "rgba(255, 255, 255, 0.92)";
-  context.beginPath();
-  context.arc(x, y, 34, 0, Math.PI * 2);
-  context.fill();
-  context.strokeStyle = "#2f6258";
-  context.lineWidth = 4;
-  for (const radius of [10, 20]) {
-    context.beginPath();
-    context.arc(x - 9, y, radius, -Math.PI / 3, Math.PI / 3);
-    context.stroke();
-  }
-};
-
-const drawRoomLabel = (
-  context: CanvasRenderingContext2D,
-  room: RoomId,
-  visibility: Visibility,
-) => {
-  const rect = ROOMS[room];
-  context.save();
-  context.font = "800 15px sans-serif";
-  const badgeWidth = context.measureText(rect.label).width + 22;
-  context.fillStyle = visibility === "hidden"
-    ? "rgba(44, 54, 58, 0.9)"
-    : "rgba(255, 255, 255, 0.88)";
-  context.beginPath();
-  context.roundRect(rect.x + 10, rect.y + 10, badgeWidth, 28, 9);
-  context.fill();
-  context.fillStyle = visibility === "hidden" ? "#fff8df" : "#27483f";
-  context.fillText(rect.label, rect.x + 21, rect.y + 30);
-  context.restore();
+  const raw = Math.min(1, (now - transition.startedAt) / transition.duration);
+  const progress = raw < 0.5
+    ? 2 * raw * raw
+    : 1 - Math.pow(-2 * raw + 2, 2) / 2;
+  return {
+    x: transition.from.x + (transition.to.x - transition.from.x) * progress,
+    y: transition.from.y + (transition.to.y - transition.from.y) * progress,
+  };
 };
 
 const drawSpriteCell = (
@@ -390,212 +213,423 @@ const drawProp = (
   );
 };
 
-const drawRotatedFence = (
+const drawFallbackFloor = (
   context: CanvasRenderingContext2D,
-  image: HTMLImageElement,
+  roomVisibility: Record<RoomId, Visibility>,
 ) => {
-  const rect = ROOMS.living;
-  const pivot = { x: rect.x + rect.width - 5, y: rect.y + rect.height * 0.5 };
+  context.fillStyle = "#b9dfd2";
+  context.fillRect(0, 0, WIDTH, HEIGHT);
+  for (const room of ROOM_ORDER) {
+    const rect = ROOMS[room];
+    context.fillStyle = roomVisibility[room] === "hidden" ? "#556268" : "#fff8df";
+    context.strokeStyle = "#2f6258";
+    context.lineWidth = 4;
+    context.fillRect(rect.x, rect.y, rect.width, rect.height);
+    context.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  }
+};
+
+const drawComputer = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+) => {
   context.save();
-  context.translate(pivot.x, pivot.y);
-  context.rotate(Math.PI / 2);
-  drawSpriteCell(
-    context,
-    image,
-    PROP_SPRITE_INDEX.fence % SPRITE_GRID.columns,
-    Math.floor(PROP_SPRITE_INDEX.fence / SPRITE_GRID.columns),
-    -92,
-    -42,
-    184,
-    84,
-  );
+  context.fillStyle = "#714a33";
+  context.fillRect(point.x - 66, point.y - 8, 132, 18);
+  context.fillRect(point.x - 54, point.y + 8, 10, 55);
+  context.fillRect(point.x + 44, point.y + 8, 10, 55);
+  context.fillStyle = "#243d52";
+  context.strokeStyle = "#92d8d0";
+  context.lineWidth = 5;
+  context.beginPath();
+  context.roundRect(point.x - 45, point.y - 78, 90, 66, 8);
+  context.fill();
+  context.stroke();
+  context.fillStyle = "#92d8d0";
+  context.font = "800 14px sans-serif";
+  context.textAlign = "center";
+  context.fillText("WORK", point.x, point.y - 40);
   context.restore();
 };
 
-const dogMotionFor = (
+const drawPadPlacement = (
+  context: CanvasRenderingContext2D,
   view: WaitdogUiView,
-  moving: boolean,
-  transient: boolean,
-): DogMotionId => {
+  images: ArtImages | null,
+) => {
+  const pad = view.environmentPlacements.padPlacement;
+  if (pad === null) return;
+  const point = spatialPoint(pad.room, pad.x, pad.y);
+  const rect = ROOMS[pad.room];
+  const coverage = Math.min(rect.width, rect.height) * pad.coverage;
+  context.save();
+  context.fillStyle = "rgba(79, 120, 198, 0.16)";
+  context.strokeStyle = "rgba(79, 120, 198, 0.66)";
+  context.lineWidth = 4;
+  context.setLineDash([10, 8]);
+  context.beginPath();
+  context.arc(point.x, point.y, coverage, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  context.restore();
+  if (images) {
+    drawProp(
+      context,
+      images.props,
+      PROP_SPRITE_INDEX.pad,
+      { x: point.x, y: point.y + 24 },
+      Math.max(80, coverage * 1.25),
+    );
+  } else {
+    context.fillStyle = "#dbeafe";
+    context.strokeStyle = "#4f78c6";
+    context.lineWidth = 3;
+    context.fillRect(point.x - coverage * 0.55, point.y - 18, coverage * 1.1, 36);
+    context.strokeRect(point.x - coverage * 0.55, point.y - 18, coverage * 1.1, 36);
+  }
+};
+
+const barrierCanvasSize = (
+  barrier: BarrierPlacement,
+): { width: number; height: number } => {
+  const room = ROOMS[barrier.room];
+  return {
+    width: Math.max(34, barrier.width * room.width * 0.7),
+    height: Math.max(18, barrier.height * room.height * 0.72),
+  };
+};
+
+const drawBarrier = (
+  context: CanvasRenderingContext2D,
+  barrier: BarrierPlacement,
+) => {
+  const point = spatialPoint(barrier.room, barrier.x, barrier.y);
+  const size = barrierCanvasSize(barrier);
+  context.save();
+  context.fillStyle = "rgba(226, 151, 73, 0.2)";
+  context.strokeStyle = "#a95829";
+  context.lineWidth = 5;
+  context.beginPath();
+  context.roundRect(
+    point.x - size.width / 2,
+    point.y - size.height,
+    size.width,
+    size.height,
+    8,
+  );
+  context.fill();
+  context.stroke();
+  const panelWidth = size.width / barrier.panels;
+  context.lineWidth = 3;
+  for (let index = 1; index < barrier.panels; index += 1) {
+    context.beginPath();
+    context.moveTo(point.x - size.width / 2 + panelWidth * index, point.y - size.height);
+    context.lineTo(point.x - size.width / 2 + panelWidth * index, point.y);
+    context.stroke();
+  }
+  context.fillStyle = "#7c3f22";
+  context.font = "800 13px sans-serif";
+  context.textAlign = "center";
+  context.fillText(`${barrier.panels}P`, point.x, point.y - size.height / 2 + 5);
+  context.restore();
+};
+
+const drawOwner = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+  images: ArtImages | null,
+) => {
+  context.save();
+  context.fillStyle = "rgba(37, 55, 69, 0.16)";
+  context.beginPath();
+  context.ellipse(point.x, point.y, 28, 10, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+  if (images) {
+    const height = 145;
+    const sourceWidth = images.props.naturalWidth / SPRITE_GRID.columns;
+    const sourceHeight = images.props.naturalHeight / SPRITE_GRID.rows;
+    drawProp(
+      context,
+      images.props,
+      PROP_SPRITE_INDEX.owner,
+      point,
+      height * sourceWidth / sourceHeight,
+      height,
+    );
+    return;
+  }
+  context.fillStyle = "#325ea8";
+  context.beginPath();
+  context.arc(point.x, point.y - 80, 17, 0, Math.PI * 2);
+  context.fill();
+  context.fillRect(point.x - 14, point.y - 62, 28, 58);
+};
+
+const dogMotionFor = (view: WaitdogUiView): DogMotionId => {
   const activity = view.spatial.activity;
   if (activity === "zoomies" || activity === "flee") return "fast";
-  if (moving) return "move";
+  if (view.spatial.moving) return "move";
   if (activity === "moveToMat") return "mat";
   if (
     activity === "eatPoop" || activity === "sniffLeave" ||
     activity === "sniffFloor" || activity === "seekFood" ||
-    activity === "seekWater" || transient
-  ) {
-    return "approach";
-  }
+    activity === "seekWater"
+  ) return "approach";
   return "idle";
 };
 
-const ACTIVITY_BUBBLES: Record<DogActivityId, string> = {
-  idle: "잠깐 관찰",
-  rest: "쉬는 중",
-  seekFood: "밥 냄새!",
-  seekWater: "물 마실래",
-  followOwner: "같이 갈래",
-  play: "놀자!",
-  wander: "어디가 좋을까?",
-  patrol: "집 둘러보기",
-  eatPoop: "흔적 발견",
-  moveToMat: "매트로!",
-  watchOwner: "반응 기다리기",
-  flee: "거리를 둘래",
-  sniffLeave: "다른 데로",
-  zoomies: "신난다!",
-  sniffFloor: "킁킁…",
-  circle: "빙글빙글",
-  poop: "자리 잡는 중",
-};
-
-const drawActivityEffects = (
+const drawDog = (
   context: CanvasRenderingContext2D,
   point: Point,
-  activity: DogActivityId,
-  moving: boolean,
-  now: number,
-  flipX: boolean,
-  reducedMotion: boolean,
-) => {
-  context.save();
-  if (moving) {
-    const pulse = reducedMotion ? 0 : Math.sin(now / 160) * 4;
-    const direction = flipX ? 1 : -1;
-    context.fillStyle = "rgba(88, 113, 103, 0.42)";
-    for (let index = 1; index <= 3; index += 1) {
-      context.beginPath();
-      context.ellipse(
-        point.x + direction * (42 + index * 22) + pulse,
-        point.y - 5 + (index % 2) * 12,
-        8,
-        5,
-        direction * -0.35,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
-    }
-  }
-
-  if (activity === "moveToMat") {
-    const ring = reducedMotion ? 52 : 52 + Math.sin(now / 140) * 8;
-    context.strokeStyle = "rgba(239, 127, 104, 0.78)";
-    context.lineWidth = 7;
-    context.beginPath();
-    context.arc(point.x, point.y - 42, ring, 0, Math.PI * 2);
-    context.stroke();
-  }
-
-  const label = ACTIVITY_BUBBLES[activity];
-  context.font = "800 17px sans-serif";
-  const bubbleWidth = Math.min(170, context.measureText(label).width + 30);
-  const bubbleX = Math.max(10, Math.min(WIDTH - bubbleWidth - 10, point.x - bubbleWidth / 2));
-  const bubbleY = Math.max(48, point.y - 150);
-  context.fillStyle = "rgba(255, 255, 255, 0.94)";
-  context.strokeStyle = activity === "moveToMat" ? "#ef7f68" : "#2f6258";
-  context.lineWidth = 3;
-  context.beginPath();
-  context.roundRect(bubbleX, bubbleY, bubbleWidth, 38, 13);
-  context.fill();
-  context.stroke();
-  context.beginPath();
-  context.moveTo(point.x - 8, bubbleY + 38);
-  context.lineTo(point.x, bubbleY + 50);
-  context.lineTo(point.x + 8, bubbleY + 38);
-  context.fill();
-  context.fillStyle = "#203d36";
-  context.textAlign = "center";
-  context.fillText(label, bubbleX + bubbleWidth / 2, bubbleY + 25);
-  context.restore();
-};
-
-const drawDogSprite = (
-  context: CanvasRenderingContext2D,
-  images: ArtImages,
-  point: Point,
-  motionId: DogMotionId,
+  view: WaitdogUiView,
+  images: ArtImages | null,
   now: number,
   reducedMotion: boolean,
-  flipX: boolean,
 ) => {
-  const motion = DOG_MOTIONS[motionId];
-  const image = images[motion.sheet];
-  const frame = reducedMotion
-    ? 0
-    : Math.floor(now / (1000 / motion.fps)) % SPRITE_GRID.columns;
-  const width = ROOMS.living.width * 0.2;
-  const sourceWidth = image.naturalWidth / SPRITE_GRID.columns;
-  const sourceHeight = image.naturalHeight / SPRITE_GRID.rows;
-  const height = width * sourceHeight / sourceWidth;
+  const target = dogTargetPoint(view);
+  const flipX = target !== null && target.x < point.x;
   context.save();
   context.fillStyle = "rgba(75, 57, 39, 0.18)";
   context.beginPath();
-  context.ellipse(point.x, point.y - 4, width * 0.36, height * 0.09, 0, 0, Math.PI * 2);
+  context.ellipse(point.x, point.y - 2, 40, 12, 0, 0, Math.PI * 2);
   context.fill();
   context.restore();
-  drawSpriteCell(
-    context,
-    image,
-    frame,
-    motion.row,
-    point.x - width / 2,
-    point.y - height,
-    width,
-    height,
-    flipX,
-  );
+  if (images) {
+    const motion = DOG_MOTIONS[dogMotionFor(view)];
+    const image = images[motion.sheet];
+    const frame = reducedMotion
+      ? 0
+      : Math.floor(now / (1000 / motion.fps)) % SPRITE_GRID.columns;
+    const width = 110;
+    const sourceWidth = image.naturalWidth / SPRITE_GRID.columns;
+    const sourceHeight = image.naturalHeight / SPRITE_GRID.rows;
+    const height = width * sourceHeight / sourceWidth;
+    drawSpriteCell(
+      context,
+      image,
+      frame,
+      motion.row,
+      point.x - width / 2,
+      point.y - height,
+      width,
+      height,
+      flipX,
+    );
+    return;
+  }
+  context.fillStyle = "#dc8b43";
+  context.beginPath();
+  context.ellipse(point.x, point.y - 28, 42, 29, 0, 0, Math.PI * 2);
+  context.fill();
+  context.beginPath();
+  context.arc(point.x + (flipX ? -34 : 34), point.y - 53, 24, 0, Math.PI * 2);
+  context.fill();
 };
 
-const drawRoomMasks = (
+const drawPoop = (
   context: CanvasRenderingContext2D,
-  roomVisibility: Record<RoomId, Visibility>,
+  view: WaitdogUiView,
+  images: ArtImages | null,
+) => {
+  const poop = view.activePoop;
+  if (poop === null) return;
+  const point = poop.location === "pad"
+    ? spatialPoint(poop.room, 0.72, 0.82)
+    : spatialPoint(poop.room, 0.16, 0.86);
+  if (images) {
+    drawProp(context, images.props, PROP_SPRITE_INDEX.poop, point, 46);
+    return;
+  }
+  context.fillStyle = "#8d674d";
+  context.beginPath();
+  context.arc(point.x, point.y - 8, 14, 0, Math.PI * 2);
+  context.fill();
+};
+
+const cueCopy: Record<EncounterCueKind, string> = {
+  potty: "배변 신호",
+  overexcited: "흥분 신호",
+  recall: "부르기",
+  settle: "진정 신호",
+  bark: "멍! 멍!",
+  whine: "낑…",
+  anxiety: "불안 신호",
+  biteWarning: "접근 멈춤",
+  flee: "거리 확보",
+};
+
+const drawCueEffect = (
+  context: CanvasRenderingContext2D,
+  encounter: EncounterPublicView,
+  fallbackDogPoint: Point | null,
+  now: number,
+  reducedMotion: boolean,
+) => {
+  const point = encounter.cue.anchor
+    ? spatialPoint(
+      encounter.cue.room,
+      encounter.cue.anchor.x,
+      encounter.cue.anchor.y,
+    )
+    : fallbackDogPoint ?? centerOf(encounter.cue.room);
+  const pulse = reducedMotion ? 0 : Math.sin(now / 180) * 8;
+  context.save();
+  context.lineWidth = encounter.safetyLevel === "high" ? 7 : 5;
+  context.strokeStyle = encounter.safetyLevel === "high" ? "#c93e35" : "#ef7f68";
+  context.fillStyle = "rgba(255, 255, 255, 0.96)";
+
+  if (encounter.cue.kind === "bark" || encounter.cue.kind === "whine") {
+    for (const radius of [28, 48, 68]) {
+      context.beginPath();
+      context.arc(point.x, point.y - 70, radius + pulse * 0.25, -0.8, 0.8);
+      context.stroke();
+    }
+  } else if (encounter.cue.kind === "biteWarning") {
+    context.beginPath();
+    context.moveTo(point.x, point.y - 150 - pulse);
+    context.lineTo(point.x - 58, point.y - 54);
+    context.lineTo(point.x + 58, point.y - 54);
+    context.closePath();
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#c93e35";
+    context.font = "900 48px sans-serif";
+    context.textAlign = "center";
+    context.fillText("!", point.x, point.y - 78);
+  } else if (encounter.cue.kind === "flee") {
+    context.setLineDash([16, 10]);
+    context.beginPath();
+    context.moveTo(point.x - 90, point.y - 50);
+    context.lineTo(point.x + 76 + pulse, point.y - 50);
+    context.stroke();
+    context.beginPath();
+    context.moveTo(point.x + 76 + pulse, point.y - 50);
+    context.lineTo(point.x + 48 + pulse, point.y - 72);
+    context.moveTo(point.x + 76 + pulse, point.y - 50);
+    context.lineTo(point.x + 48 + pulse, point.y - 28);
+    context.stroke();
+  } else if (encounter.cue.kind === "anxiety") {
+    context.setLineDash([7, 8]);
+    for (const radius of [48, 72]) {
+      context.beginPath();
+      context.arc(point.x, point.y - 55, radius + pulse * 0.3, 0, Math.PI * 2);
+      context.stroke();
+    }
+  } else {
+    context.beginPath();
+    context.arc(point.x, point.y - 45, 58 + pulse * 0.35, 0, Math.PI * 2);
+    context.stroke();
+  }
+
+  const label = cueCopy[encounter.cue.kind];
+  context.font = "900 18px sans-serif";
+  const width = context.measureText(label).width + 30;
+  const labelX = Math.max(10, Math.min(WIDTH - width - 10, point.x - width / 2));
+  const labelY = Math.max(20, point.y - 190);
+  context.fillStyle = encounter.safetyLevel === "high" ? "#c93e35" : "#2f6258";
+  context.beginPath();
+  context.roundRect(labelX, labelY, width, 38, 13);
+  context.fill();
+  context.fillStyle = "#fff";
+  context.textAlign = "center";
+  context.fillText(label, labelX + width / 2, labelY + 25);
+  context.restore();
+};
+
+const drawMasksAndSpotlight = (
+  context: CanvasRenderingContext2D,
+  view: WaitdogUiView,
+  encounter: EncounterPublicView | null,
+  fallbackDogPoint: Point | null,
 ) => {
   for (const room of ROOM_ORDER) {
-    if (roomVisibility[room] !== "hidden") continue;
+    if (view.roomVisibility[room] !== "hidden") continue;
     const rect = ROOMS[room];
     context.fillStyle = "rgba(29, 38, 42, 0.68)";
     context.fillRect(rect.x, rect.y, rect.width, rect.height);
   }
+  if (encounter) {
+    const point = encounter.cue.anchor
+      ? spatialPoint(
+        encounter.cue.room,
+        encounter.cue.anchor.x,
+        encounter.cue.anchor.y,
+      )
+      : fallbackDogPoint ?? centerOf(encounter.cue.room);
+    context.save();
+    context.fillStyle = "rgba(24, 37, 40, 0.2)";
+    context.beginPath();
+    context.rect(0, 0, WIDTH, HEIGHT);
+    context.arc(point.x, point.y - 48, 145, 0, Math.PI * 2, true);
+    context.fill("evenodd");
+    const rect = ROOMS[encounter.cue.room];
+    context.strokeStyle = encounter.safetyLevel === "high" ? "#c93e35" : "#ffd86d";
+    context.lineWidth = 9;
+    context.strokeRect(rect.x + 5, rect.y + 5, rect.width - 10, rect.height - 10);
+    context.restore();
+  }
 };
 
-const drawFullCover = (
+const drawRoomLabels = (
   context: CanvasRenderingContext2D,
-  ownerAway: boolean,
+  view: WaitdogUiView,
 ) => {
-  context.fillStyle = "rgba(37, 48, 52, 0.68)";
-  context.fillRect(0, 0, WIDTH, HEIGHT);
-  context.fillStyle = "#fff8df";
-  context.font = "800 28px sans-serif";
-  context.textAlign = "center";
-  context.fillText(
-    ownerAway ? "보호자 외출 중 · 개입 불가" : "집중 업무 중 · 관찰 제한",
-    WIDTH / 2,
-    HEIGHT / 2,
-  );
-  context.textAlign = "start";
+  for (const room of ROOM_ORDER) {
+    const rect = ROOMS[room];
+    context.save();
+    context.font = "800 15px sans-serif";
+    const width = context.measureText(rect.label).width + 22;
+    context.fillStyle = view.roomVisibility[room] === "hidden"
+      ? "rgba(44, 54, 58, 0.92)"
+      : "rgba(255, 255, 255, 0.9)";
+    context.beginPath();
+    context.roundRect(rect.x + 10, rect.y + 10, width, 28, 9);
+    context.fill();
+    context.fillStyle = view.roomVisibility[room] === "hidden"
+      ? "#fff8df"
+      : "#27483f";
+    context.fillText(rect.label, rect.x + 21, rect.y + 30);
+    context.restore();
+  }
+};
+
+const separatedOwnerPoint = (
+  owner: Point,
+  ownerRoom: RoomId,
+  dog: Point | null,
+  dogRoom: RoomId | null,
+): Point => {
+  if (dog === null || dogRoom !== ownerRoom) return owner;
+  if (Math.abs(owner.x - dog.x) >= 82 || Math.abs(owner.y - dog.y) >= 48) {
+    return owner;
+  }
+  const rect = ROOMS[ownerRoom];
+  const direction = owner.x <= dog.x ? -1 : 1;
+  return {
+    x: Math.max(rect.x + 46, Math.min(rect.x + rect.width - 46, owner.x + direction * 42)),
+    y: owner.y,
+  };
 };
 
 export function HouseCanvas({
   view,
   lastSeenRoom,
-  ownerAway,
   disabled,
+  compact,
+  encounter,
   onRoomSelect,
+  onComputer,
 }: HouseCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const reducedMotionRef = useRef(false);
-  const dogPositionRef = useRef<Point>(
-    visibleSpatialPoint(view) ?? dogAnchor(view.room ?? lastSeenRoom ?? "living"),
+  const initialDog = dogPoint(view) ?? centerOf(lastSeenRoom ?? "living");
+  const dogPositionRef = useRef<Point>(initialDog);
+  const ownerPositionRef = useRef<Point>(
+    spatialPoint(view.ownerSpatial.room, view.ownerSpatial.x, view.ownerSpatial.y),
   );
-  const dogWasSeenRef = useRef(view.visibility === "seen");
-  const transitionRef = useRef<RoomTransition | null>(null);
-  const transientEventRef = useRef<{ key: string | null; startedAt: number }>({
-    key: null,
-    startedAt: 0,
-  });
+  const dogTransitionRef = useRef<PositionTransition | null>(null);
+  const ownerTransitionRef = useRef<PositionTransition | null>(null);
   const [artLoad, setArtLoad] = useState<ArtLoadState>({ status: "loading" });
 
   useEffect(() => {
@@ -611,7 +645,6 @@ export function HouseCanvas({
     const entries = Object.entries(WAITDOG_ART_ASSETS) as Array<
       [keyof ArtImages, string]
     >;
-
     for (const [key, source] of entries) {
       const image = images[key];
       image.onload = () => {
@@ -627,209 +660,166 @@ export function HouseCanvas({
       };
       image.src = source;
     }
-
     return () => {
       active = false;
       for (const image of Object.values(images)) {
         image.onload = null;
         image.onerror = null;
-        image.src = "";
       }
     };
   }, []);
 
   useEffect(() => {
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updatePreference = () => {
+    const update = () => {
       reducedMotionRef.current = media.matches;
     };
-    updatePreference();
-    media.addEventListener("change", updatePreference);
-    return () => media.removeEventListener("change", updatePreference);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-
-    const effectStartedAt = performance.now();
-    const nextPosition = visibleSpatialPoint(view);
-    if (nextPosition !== null) {
-      const from = transitionRef.current === null
-        ? dogPositionRef.current
-        : positionDuring(transitionRef.current, effectStartedAt);
-      if (
-        !dogWasSeenRef.current ||
-        reducedMotionRef.current ||
-        Math.hypot(nextPosition.x - from.x, nextPosition.y - from.y) < 1
-      ) {
-        dogPositionRef.current = nextPosition;
-        transitionRef.current = null;
+    const startedAt = performance.now();
+    const nextDog = dogPoint(view);
+    if (nextDog !== null) {
+      const currentDog = dogTransitionRef.current
+        ? positionDuring(dogTransitionRef.current, startedAt)
+        : dogPositionRef.current;
+      if (reducedMotionRef.current) {
+        dogPositionRef.current = nextDog;
+        dogTransitionRef.current = null;
       } else {
-        transitionRef.current = {
-          from,
-          to: nextPosition,
-          startedAt: effectStartedAt,
+        dogTransitionRef.current = {
+          from: currentDog,
+          to: nextDog,
+          startedAt,
           duration: POSITION_TWEEN_MS,
-          movingLeft: nextPosition.x < from.x,
         };
       }
     }
-    dogWasSeenRef.current = view.visibility === "seen";
-
-    const transientEvent = [...view.recentEvents].reverse().find((event) =>
-      TRANSIENT_EVENT_TYPES.has(event.type)
+    const nextOwner = spatialPoint(
+      view.ownerSpatial.room,
+      view.ownerSpatial.x,
+      view.ownerSpatial.y,
     );
-    if (transientEvent && view.t - transientEvent.t <= 10) {
-      const key = `${transientEvent.t}:${transientEvent.type}:${transientEvent.room ?? "unknown"}`;
-      if (transientEventRef.current.key !== key) {
-        transientEventRef.current = { key, startedAt: effectStartedAt };
-      }
-    }
-
-    const drawFallback = () => {
-      context.clearRect(0, 0, WIDTH, HEIGHT);
-      context.fillStyle = "#b9dfd2";
-      context.fillRect(0, 0, WIDTH, HEIGHT);
-      for (const room of ROOM_ORDER) {
-        drawFallbackRoom(context, room, view.roomVisibility[room]);
-      }
-      drawFallbackMat(context);
-      if (view.blocked) drawFallbackFence(context);
-      if (!ownerAway) drawFallbackOwner(context, view.owner.room);
-      const fallbackPoint = visibleSpatialPoint(view);
-      if (
-        fallbackPoint !== null && view.spatial.activity !== null &&
-        view.spatial.moving !== null
-      ) {
-        const fallbackTarget = visibleTargetPoint(view);
-        const fallbackFlip = fallbackTarget !== null &&
-          fallbackTarget.x < fallbackPoint.x;
-        drawActivityEffects(
-          context,
-          fallbackPoint,
-          view.spatial.activity,
-          view.spatial.moving,
-          effectStartedAt,
-          fallbackFlip,
-          true,
-        );
-        drawFallbackDog(context, fallbackPoint);
-      }
-      if (view.activePoop !== null) {
-        drawFallbackPoop(context, view.activePoop.room, view.activePoop.location);
-      }
-      drawRoomMasks(context, view.roomVisibility);
-      if (view.visibility === "hidden" && lastSeenRoom !== null) {
-        drawQuestion(context, lastSeenRoom);
-      }
-      if (view.visibility === "heard") drawSound(context);
-      for (const room of ROOM_ORDER) {
-        drawRoomLabel(context, room, view.roomVisibility[room]);
-      }
-      if (view.owner.focusLocked || ownerAway) drawFullCover(context, ownerAway);
-    };
-
-    if (artLoad.status !== "ready") {
-      drawFallback();
-      return;
+    const currentOwner = ownerTransitionRef.current
+      ? positionDuring(ownerTransitionRef.current, startedAt)
+      : ownerPositionRef.current;
+    if (reducedMotionRef.current) {
+      ownerPositionRef.current = nextOwner;
+      ownerTransitionRef.current = null;
+    } else {
+      ownerTransitionRef.current = {
+        from: currentOwner,
+        to: nextOwner,
+        startedAt,
+        duration: POSITION_TWEEN_MS,
+      };
     }
 
     let animationFrame = 0;
-    const drawArt = (now: number) => {
-      const { images } = artLoad;
+    const draw = (now: number) => {
+      const images = artLoad.status === "ready" ? artLoad.images : null;
       context.clearRect(0, 0, WIDTH, HEIGHT);
-      context.drawImage(images.background, 0, 0, WIDTH, HEIGHT);
+      if (images) context.drawImage(images.background, 0, 0, WIDTH, HEIGHT);
+      else drawFallbackFloor(context, view.roomVisibility);
 
-      drawProp(context, images.props, PROP_SPRITE_INDEX.mat, { x: 158, y: 833 }, 150);
-      drawProp(context, images.props, PROP_SPRITE_INDEX.ball, { x: 444, y: 786 }, 72);
-      drawProp(context, images.props, PROP_SPRITE_INDEX.food, { x: 650, y: 390 }, 94);
-      drawProp(context, images.props, PROP_SPRITE_INDEX.water, { x: 780, y: 390 }, 94);
-      drawProp(context, images.props, PROP_SPRITE_INDEX.pad, { x: 785, y: 846 }, 142);
-      if (view.blocked) drawRotatedFence(context, images.props);
-
-      if (view.activePoop !== null) {
-        drawProp(
-          context,
-          images.props,
-          PROP_SPRITE_INDEX.poop,
-          poopAnchor(view.activePoop.room, view.activePoop.location),
-          ROOMS.living.width * 0.08,
-        );
+      if (images) {
+        drawProp(context, images.props, PROP_SPRITE_INDEX.mat, { x: 158, y: 833 }, 150);
+        drawProp(context, images.props, PROP_SPRITE_INDEX.ball, { x: 444, y: 786 }, 72);
+        drawProp(context, images.props, PROP_SPRITE_INDEX.food, { x: 650, y: 390 }, 94);
+        drawProp(context, images.props, PROP_SPRITE_INDEX.water, { x: 780, y: 390 }, 94);
       }
+      drawComputer(
+        context,
+        spatialPoint(COMPUTER_LOCATION.room, COMPUTER_LOCATION.x, COMPUTER_LOCATION.y),
+      );
+      drawPadPlacement(context, view, images);
+      drawPoop(context, view, images);
+      view.environmentPlacements.barriers.forEach((barrier) =>
+        drawBarrier(context, barrier)
+      );
 
-      if (!ownerAway) {
-        const ownerHeight = ROOMS.living.height * 0.22;
-        const propCellWidth = images.props.naturalWidth / SPRITE_GRID.columns;
-        const propCellHeight = images.props.naturalHeight / SPRITE_GRID.rows;
-        drawProp(
-          context,
-          images.props,
-          PROP_SPRITE_INDEX.owner,
-          ownerAnchor(view.owner.room),
-          ownerHeight * propCellWidth / propCellHeight,
-          ownerHeight,
-        );
-      }
-
-      if (view.visibility === "seen" && view.room !== null) {
-        const transition = transitionRef.current;
-        const tweening = transition !== null &&
-          now - transition.startedAt < transition.duration;
-        if (transition !== null) {
-          dogPositionRef.current = positionDuring(transition, now);
-          if (!tweening) {
-            dogPositionRef.current = transition.to;
-            transitionRef.current = null;
-          }
+      if (ownerTransitionRef.current) {
+        ownerPositionRef.current = positionDuring(ownerTransitionRef.current, now);
+        if (now - ownerTransitionRef.current.startedAt >=
+          ownerTransitionRef.current.duration) {
+          ownerPositionRef.current = ownerTransitionRef.current.to;
+          ownerTransitionRef.current = null;
         }
-        const transient = transientEventRef.current.key !== null &&
-          now - transientEventRef.current.startedAt < TRANSIENT_MOTION_MS;
-        const moving = tweening || view.spatial.moving === true;
-        const motion = dogMotionFor(view, moving, transient);
-        const point = dogPositionRef.current;
-        const target = visibleTargetPoint(view);
-        const flipX = tweening
-          ? transition?.movingLeft === true
-          : target !== null && target.x < point.x;
-        if (view.spatial.activity !== null) {
-          drawActivityEffects(
+      }
+      if (dogTransitionRef.current) {
+        dogPositionRef.current = positionDuring(dogTransitionRef.current, now);
+        if (now - dogTransitionRef.current.startedAt >=
+          dogTransitionRef.current.duration) {
+          dogPositionRef.current = dogTransitionRef.current.to;
+          dogTransitionRef.current = null;
+        }
+      }
+
+      const publicDogPoint = view.visibility === "seen" ? dogPositionRef.current : null;
+      const dogRoom = view.visibility === "seen" ? view.spatial.room : null;
+      const ownerPoint = separatedOwnerPoint(
+        ownerPositionRef.current,
+        view.ownerSpatial.room,
+        publicDogPoint,
+        dogRoom,
+      );
+      const entities: Array<{ footY: number; draw: () => void }> = [
+        {
+          footY: ownerPoint.y,
+          draw: () => drawOwner(context, ownerPoint, images),
+        },
+      ];
+      if (publicDogPoint !== null) {
+        entities.push({
+          footY: publicDogPoint.y,
+          draw: () => drawDog(
             context,
-            point,
-            view.spatial.activity,
-            moving,
+            publicDogPoint,
+            view,
+            images,
             now,
-            flipX,
             reducedMotionRef.current,
-          );
-        }
-        drawDogSprite(
+          ),
+        });
+      }
+      entities.sort((first, second) => first.footY - second.footY);
+      entities.forEach((entity) => entity.draw());
+
+      if (encounter) {
+        drawCueEffect(
           context,
-          images,
-          point,
-          motion,
+          encounter,
+          publicDogPoint,
           now,
           reducedMotionRef.current,
-          flipX,
         );
       }
+      drawMasksAndSpotlight(context, view, encounter, publicDogPoint);
+      drawRoomLabels(context, view);
 
-      drawRoomMasks(context, view.roomVisibility);
       if (view.visibility === "hidden" && lastSeenRoom !== null) {
-        drawQuestion(context, lastSeenRoom);
+        const center = centerOf(lastSeenRoom);
+        context.fillStyle = "rgba(255,255,255,.92)";
+        context.beginPath();
+        context.arc(center.x, center.y, 30, 0, Math.PI * 2);
+        context.fill();
+        context.fillStyle = "#425058";
+        context.font = "900 36px sans-serif";
+        context.textAlign = "center";
+        context.fillText("?", center.x, center.y + 13);
       }
-      if (view.visibility === "heard") drawSound(context);
-      for (const room of ROOM_ORDER) {
-        drawRoomLabel(context, room, view.roomVisibility[room]);
-      }
-      if (view.owner.focusLocked || ownerAway) drawFullCover(context, ownerAway);
 
-      animationFrame = window.requestAnimationFrame(drawArt);
+      animationFrame = window.requestAnimationFrame(draw);
     };
-    animationFrame = window.requestAnimationFrame(drawArt);
+    animationFrame = window.requestAnimationFrame(draw);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [artLoad, lastSeenRoom, ownerAway, view]);
+  }, [artLoad, encounter, lastSeenRoom, view]);
 
   const handlePointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (disabled) return;
@@ -846,43 +836,78 @@ export function HouseCanvas({
     if (room) onRoomSelect(room);
   };
 
+  const computer = spatialPoint(
+    COMPUTER_LOCATION.room,
+    COMPUTER_LOCATION.x,
+    COMPUTER_LOCATION.y,
+  );
+  const placementSummary = [
+    view.environmentPlacements.padPlacement ? "패드 1개" : null,
+    view.environmentPlacements.barriers.length > 0
+      ? `칸막이 ${view.environmentPlacements.barriers.length}개`
+      : null,
+  ].filter(Boolean).join(", ");
   const dogLabel = view.visibility === "seen"
     ? "강아지가 보입니다."
     : view.visibility === "heard"
-      ? "강아지는 보이지 않고 소리만 들립니다."
-      : "강아지가 보이지 않습니다.";
+    ? "강아지는 보이지 않고 소리만 들립니다."
+    : "강아지가 보이지 않습니다.";
 
   return (
-    <section className="house-card" aria-labelledby="house-title">
-      <div className="section-heading">
+    <section className={`house-card${compact ? " is-compact" : ""}`} aria-labelledby="house-title">
+      <div className="section-heading house-heading">
         <div>
           <span className="section-kicker">LIVE HOUSE</span>
           <h2 id="house-title">하우스 뷰</h2>
         </div>
-        <span className="click-hint">방을 클릭해 이동</span>
+        <span className="click-hint">
+          {encounter ? "신호 위치를 확인하세요" : "방을 눌러 보호자 이동"}
+        </span>
       </div>
-      <canvas
-        ref={canvasRef}
-        width={WIDTH}
-        height={HEIGHT}
-        role="img"
-        aria-disabled={disabled}
-        aria-label={`생활방, 부엌, 화장실 평면도. ${dogLabel} 방을 클릭하면 보호자가 이동합니다.`}
-        onPointerUp={handlePointer}
-      />
-      <div className="room-shortcuts" role="group" aria-label="보호자 방 이동">
-        {ROOM_ORDER.map((room) => (
+      <div className="canvas-stage">
+        <canvas
+          ref={canvasRef}
+          width={WIDTH}
+          height={HEIGHT}
+          role="img"
+          tabIndex={0}
+          aria-disabled={disabled}
+          aria-label={`생활방, 부엌, 화장실 평면도. ${dogLabel} ${placementSummary || "배치 아이템 없음"}.`}
+          onPointerUp={handlePointer}
+        />
+        {!compact && (view.work.state === "idle" || view.work.state === "moving") && (
           <button
+            className="computer-hotspot"
             type="button"
-            key={room}
-            disabled={disabled}
-            aria-pressed={view.owner.room === room}
-            onClick={() => onRoomSelect(room)}
+            style={{
+              left: `${computer.x / WIDTH * 100}%`,
+              top: `${computer.y / HEIGHT * 100}%`,
+            }}
+            disabled={disabled || view.work.state === "moving"}
+            aria-label="컴퓨터 앞으로 이동"
+            onClick={onComputer}
           >
-            {ROOM_MOVE_LABELS[room]}
+            <span aria-hidden="true">⌨</span>
+            {view.work.state === "moving" ? "이동 중" : "업무"}
           </button>
-        ))}
+        )}
       </div>
+      {!compact && (
+        <div className="room-shortcuts" role="group" aria-label="보호자 방 이동">
+          {ROOM_ORDER.map((room) => (
+            <button
+              type="button"
+              key={room}
+              disabled={disabled}
+              aria-pressed={view.ownerSpatial.room === room &&
+                !view.ownerSpatial.moving}
+              onClick={() => onRoomSelect(room)}
+            >
+              {ROOM_MOVE_LABELS[room]}
+            </button>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

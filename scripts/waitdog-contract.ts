@@ -18,7 +18,13 @@ import {
   createSim,
   type WaitdogSnapshot,
   type WaitdogSnapshotV1,
+  type WaitdogSnapshotV2,
+  type WaitdogUiSim,
 } from "../src/waitdog/services/waitdogSim";
+import {
+  ENCOUNTER_DEFINITIONS,
+  ENCOUNTER_IDS,
+} from "../src/waitdog/services/encounters";
 import type {
   DecisionTrace,
   EventLog,
@@ -675,7 +681,7 @@ assert(
 const roundtripSource = createSim(8101);
 roundtripSource.feed(70);
 roundtripSource.advanceMinutes(210);
-assert(roundtripSource.serialize().version === 2, "serialize did not emit v2");
+assert(roundtripSource.serialize().version === 3, "serialize did not emit v3");
 const detachedSnapshot = roundtripSource.serialize();
 detachedSnapshot.log.push({
   t: 0,
@@ -715,10 +721,23 @@ assert(
 assert(
   JSON.stringify(roundtripSource.getFullState().spatial) ===
     JSON.stringify(roundtripRestored.getFullState().spatial),
-  "v2 roundtrip lost spatial continuation",
+  "v3 roundtrip lost spatial continuation",
 );
 
-const v2ForMigration = createSim(8104).serialize();
+const v3ForMigration = createSim(8104).serialize();
+const {
+  version: _v3Version,
+  ownerSpatial: _v3OwnerSpatial,
+  encounterDirector: _v3EncounterDirector,
+  economy: _v3Economy,
+  work: _v3Work,
+  environment: _v3Environment,
+  ...v2Fields
+} = v3ForMigration;
+const v2ForMigration: WaitdogSnapshotV2 = {
+  version: 2,
+  ...v2Fields,
+};
 const {
   version: _v2Version,
   spatial: _v2Spatial,
@@ -733,7 +752,7 @@ const legacySnapshot: WaitdogSnapshotV1 = {
 const migratedV1 = createSim(0);
 migratedV1.restore(legacySnapshot);
 const migratedSnapshot = migratedV1.serialize();
-assert(migratedSnapshot.version === 2, "v1 snapshot did not migrate to v2");
+assert(migratedSnapshot.version === 3, "v1 snapshot did not migrate to v3");
 assert(
   migratedSnapshot.spatial.room === legacySnapshot.dogRoom &&
     migratedSnapshot.spatial.x ===
@@ -744,6 +763,11 @@ assert(
 );
 const {
   version: _migratedVersion,
+  ownerSpatial: _migratedOwnerSpatial,
+  encounterDirector: _migratedEncounterDirector,
+  economy: _migratedEconomy,
+  work: _migratedWork,
+  environment: _migratedEnvironment,
   spatial: _migratedSpatial,
   opportunityRevision: _migratedOpportunityRevision,
   visibleOpportunityRevision: _migratedVisibleOpportunityRevision,
@@ -752,6 +776,33 @@ const {
 assert(
   JSON.stringify(migratedLegacyFields) === JSON.stringify(legacyFields),
   "v1 migration changed legacy simulation data",
+);
+const migratedV2 = createSim(2);
+migratedV2.restore(v2ForMigration);
+const migratedV2Snapshot = migratedV2.serialize();
+const {
+  version: _migratedV2Version,
+  ownerSpatial: _migratedV2OwnerSpatial,
+  encounterDirector: _migratedV2EncounterDirector,
+  economy: _migratedV2Economy,
+  work: _migratedV2Work,
+  environment: _migratedV2Environment,
+  ...migratedV2Legacy
+} = migratedV2Snapshot;
+assert(
+  JSON.stringify(migratedV2Legacy) === JSON.stringify(v2Fields),
+  "v2 migration changed legacy simulation data",
+);
+assert(
+  migratedV2Snapshot.economy.money ===
+      BALANCE.LIFESTYLE.ECONOMY.STARTER_MONEY &&
+    migratedV2Snapshot.encounterDirector.active === null &&
+    migratedV2Snapshot.work.progress === 0,
+  "v2 migration did not create v3 lifestyle defaults",
+);
+assert(
+  !migratedV2.getFullState().ownerDogOverlap,
+  "v2 migration created overlapping owner and dog footprints",
 );
 const migratedContinuation = createSim(1);
 migratedContinuation.restore(legacySnapshot);
@@ -810,14 +861,14 @@ try {
 } catch {
   malformedSpatialRejected = true;
 }
-assert(malformedSpatialRejected, "malformed v2 spatial state was accepted");
+assert(malformedSpatialRejected, "malformed v3 spatial state was accepted");
 assert(
   JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
   "malformed spatial restore partially polluted live state",
 );
 let extraV2Rejected = false;
 try {
-  atomicRestore.restore({ ...beforeInvalidRestore, unexpected: true });
+  atomicRestore.restore({ ...v2ForMigration, unexpected: true });
 } catch {
   extraV2Rejected = true;
 }
@@ -825,6 +876,20 @@ assert(extraV2Rejected, "v2 snapshot with an extra key was accepted");
 assert(
   JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
   "extra-key v2 restore partially polluted live state",
+);
+let malformedEconomyRejected = false;
+try {
+  atomicRestore.restore({
+    ...beforeInvalidRestore,
+    economy: { ...beforeInvalidRestore.economy, money: -1 },
+  });
+} catch {
+  malformedEconomyRejected = true;
+}
+assert(malformedEconomyRejected, "negative v3 economy state was accepted");
+assert(
+  JSON.stringify(atomicRestore.serialize()) === JSON.stringify(beforeInvalidRestore),
+  "malformed economy restore partially polluted live state",
 );
 let extraV1Rejected = false;
 try {
@@ -927,6 +992,983 @@ assert(
   "poop-signal wander lacked a distinguishing source",
 );
 
+const solveActiveEncounter = (sim: WaitdogUiSim) => {
+  let encounter = sim.getDogView().activeEncounter;
+  assert(encounter !== null, "encounter solver received no active encounter");
+  for (const option of encounter.causeChoices) {
+    sim.selectEncounterCause(option.id);
+    if (sim.getDogView().activeEncounter?.stage === "response") break;
+  }
+  encounter = sim.getDogView().activeEncounter;
+  assert(
+    encounter?.stage === "response",
+    "encounter did not advance from cause to response",
+  );
+  for (const option of encounter.responseChoices) {
+    sim.selectEncounterResponse(option.id);
+    const stage = sim.getDogView().activeEncounter?.stage;
+    if (stage === "reinforcement" || stage === "outcome") break;
+  }
+  encounter = sim.getDogView().activeEncounter;
+  if (encounter?.stage === "reinforcement") {
+    for (const option of encounter.reinforcementChoices) {
+      sim.selectEncounterReinforcement(option.id);
+      if (sim.getDogView().activeEncounter?.stage === "outcome") break;
+    }
+  }
+  encounter = sim.getDogView().activeEncounter;
+  assert(
+    encounter?.stage === "outcome" &&
+      encounter.outcome?.success === true,
+    "encounter did not produce a successful outcome",
+  );
+  return encounter;
+};
+
+const advanceActiveEncounterToReinforcement = (sim: WaitdogUiSim) => {
+  let encounter = sim.getDogView().activeEncounter;
+  assert(encounter !== null, "reinforcement solver received no active encounter");
+  for (const option of encounter.causeChoices) {
+    sim.selectEncounterCause(option.id);
+    if (sim.getDogView().activeEncounter?.stage === "response") break;
+  }
+  encounter = sim.getDogView().activeEncounter;
+  assert(
+    encounter?.stage === "response",
+    "reinforcement solver did not reach the response stage",
+  );
+  for (const option of encounter.responseChoices) {
+    sim.selectEncounterResponse(option.id);
+    if (sim.getDogView().activeEncounter?.stage === "reinforcement") break;
+  }
+  encounter = sim.getDogView().activeEncounter;
+  assert(
+    encounter?.stage === "reinforcement",
+    "reinforcement solver did not reach the reinforcement stage",
+  );
+  return encounter;
+};
+
+assert(
+  ENCOUNTER_IDS.length === 9 &&
+    new Set(ENCOUNTER_IDS).size === 9,
+  "encounter director did not define exactly nine unique encounters",
+);
+assert(
+  ENCOUNTER_DEFINITIONS.every((definition) =>
+    definition.causes.length === 3 &&
+    definition.responses.length === 3 &&
+    new Set(definition.causes.map((cause) => cause.cues.join("|"))).size ===
+      3 &&
+    definition.causes.every((cause) =>
+      definition.responses.some((response) =>
+        response.id === cause.correctResponseId && response.safe
+      )
+    )
+  ),
+  "an encounter lacked distinct clues or a safe best response",
+);
+const highRiskDefinitions = ENCOUNTER_DEFINITIONS.filter((definition) =>
+  definition.id === "anxiety" || definition.id === "biteWarning"
+);
+assert(
+  highRiskDefinitions.every((definition) =>
+    definition.safetyLevel === "high" &&
+    definition.causes.every((cause) => {
+      const response = definition.responses.find((candidate) =>
+        candidate.id === cause.correctResponseId
+      );
+      return response?.safe === true &&
+        !/(벌|제압|진단)/.test(response.label);
+    })
+  ),
+  "high-risk encounter selected punishment, restraint, or diagnosis",
+);
+
+const encounterDeterministicA = createSim(9101);
+const encounterDeterministicB = createSim(9101);
+assert(
+  encounterDeterministicA.startNextEncounter().ok &&
+    encounterDeterministicB.startNextEncounter().ok,
+  "first tutorial encounter did not start immediately",
+);
+const firstEncounterView = encounterDeterministicA.getDogView().activeEncounter;
+assert(
+  JSON.stringify(firstEncounterView) ===
+    JSON.stringify(encounterDeterministicB.getDogView().activeEncounter),
+  "same seed encounter was not deterministic",
+);
+assert(
+  firstEncounterView?.kind === "potty" &&
+    firstEncounterView.causeChoices.length === 3 &&
+    firstEncounterView.responseChoices.length === 3,
+  "first tutorial was not the three-choice potty encounter",
+);
+assert(
+  !JSON.stringify(firstEncounterView).includes("hiddenCauseId") &&
+    !JSON.stringify(firstEncounterView).includes("correctResponseId"),
+  "public encounter view leaked a hidden answer",
+);
+const activeEncounterReload = createSim(1);
+activeEncounterReload.restore(encounterDeterministicB.serialize());
+assert(
+  JSON.stringify(activeEncounterReload.getDogView().activeEncounter) ===
+      JSON.stringify(encounterDeterministicB.getDogView().activeEncounter) &&
+    activeEncounterReload.getDogView().pausedForEncounter,
+  "active encounter did not survive a v3 reload",
+);
+const pausedAt = encounterDeterministicA.getFullState().absoluteMinute;
+encounterDeterministicA.advanceMinutes(30);
+assert(
+  encounterDeterministicA.getFullState().absoluteMinute === pausedAt,
+  "active encounter did not pause game time",
+);
+const firstOutcome = solveActiveEncounter(encounterDeterministicA);
+assert(
+  firstOutcome.outcome?.carePointsAwarded === 1 &&
+    firstOutcome.outcome.firstReward,
+  "first encounter did not award its first daily care point",
+);
+assert(
+  encounterDeterministicA.dismissEncounterOutcome().ok,
+  "settled encounter outcome could not be dismissed",
+);
+const carePointsAfterFirst =
+  encounterDeterministicA.getFullState().economy.carePoints;
+assert(
+  encounterDeterministicA.startEncounter("potty").ok,
+  "same-day repeat encounter did not start",
+);
+const repeatOutcome = solveActiveEncounter(encounterDeterministicA);
+assert(
+  repeatOutcome.outcome?.carePointsAwarded === 0 &&
+    !repeatOutcome.outcome.firstReward &&
+    encounterDeterministicA.getFullState().economy.carePoints ===
+      carePointsAfterFirst,
+  "same-day encounter paid its first reward twice",
+);
+encounterDeterministicA.dismissEncounterOutcome();
+
+for (const encounterId of ENCOUNTER_IDS) {
+  const sim = createSim(9200 + ENCOUNTER_IDS.indexOf(encounterId));
+  assert(
+    sim.startEncounter(encounterId).ok,
+    `${encounterId} encounter did not start`,
+  );
+  const outcome = solveActiveEncounter(sim);
+  assert(
+    outcome.kind === encounterId,
+    `${encounterId} encounter resolved as another kind`,
+  );
+}
+
+const treatItemIds = [
+  "treat-mini",
+  "treat-basic",
+  "treat-lick",
+] as const;
+const emptyTreatRecall = createSim(9250);
+assert(
+  emptyTreatRecall.useItem(
+    "treat-basic",
+    BALANCE.LIFESTYLE.ECONOMY.STARTER_INVENTORY["treat-basic"],
+    "empty-recall-treats",
+  ).ok &&
+    treatItemIds.every((itemId) =>
+      emptyTreatRecall.getFullState().economy.inventory[itemId] === 0
+    ),
+  "recall fallback setup did not empty every treat inventory",
+);
+assert(
+  emptyTreatRecall.startEncounter("recall").ok,
+  "zero-treat recall encounter did not start",
+);
+advanceActiveEncounterToReinforcement(emptyTreatRecall);
+const unavailableTreat = emptyTreatRecall.selectEncounterReinforcement("treat");
+assert(
+  !unavailableTreat.ok &&
+    unavailableTreat.reason?.includes("재고") === true &&
+    emptyTreatRecall.getDogView().activeEncounter?.stage === "reinforcement",
+  "zero-treat recall did not reject the unavailable precise treat",
+);
+const beforeFallback = emptyTreatRecall.getFullState();
+const fallbackResult =
+  emptyTreatRecall.selectEncounterReinforcement("praise");
+const fallbackView = emptyTreatRecall.getDogView();
+const afterFallback = emptyTreatRecall.getFullState();
+assert(
+  fallbackResult.ok &&
+    fallbackView.activeEncounter?.stage === "outcome" &&
+    fallbackView.activeEncounter.outcome?.success === true &&
+    fallbackView.activeEncounter.outcome.message.includes("간식 재고") &&
+    fallbackView.activeEncounter.outcome.message.includes("칭찬"),
+  "stock-free praise did not resolve recall with an explanatory outcome",
+);
+assert(
+  !JSON.stringify(fallbackView.activeEncounter).includes("hiddenCauseId") &&
+    !JSON.stringify(fallbackView.activeEncounter).includes(
+      "correctResponseId",
+    ),
+  "stock-free praise outcome leaked a hidden encounter answer",
+);
+assert(
+  afterFallback.economy.carePoints ===
+      beforeFallback.economy.carePoints + 1 &&
+    afterFallback.memory.recallTrust ===
+      beforeFallback.memory.recallTrust + 3 &&
+    afterFallback.economy.ledger.filter((entry) =>
+      entry.id === "care:day:1:encounter:recall"
+    ).length === 1,
+  "stock-free praise duplicated or skipped recall completion effects",
+);
+assert(
+  treatItemIds.every((itemId) => {
+    const economy = afterFallback.economy;
+    const ledgerQuantity = economy.ledger.reduce(
+      (sum, entry) =>
+        sum + (entry.itemId === itemId ? entry.quantityDelta : 0),
+      0,
+    );
+    return economy.inventory[itemId] >= 0 &&
+      economy.inventory[itemId] ===
+        BALANCE.LIFESTYLE.ECONOMY.STARTER_INVENTORY[itemId] +
+          ledgerQuantity;
+  }),
+  "stock-free praise made treat inventory or its ledger inconsistent",
+);
+const fallbackCompletionCount = emptyTreatRecall.getLog().filter((event) =>
+  event.type === "encounterComplete" &&
+  event.detail.encounterId === "recall"
+).length;
+assert(
+  !emptyTreatRecall.selectEncounterReinforcement("praise").ok &&
+    emptyTreatRecall.getFullState().economy.carePoints ===
+      afterFallback.economy.carePoints &&
+    emptyTreatRecall.getLog().filter((event) =>
+      event.type === "encounterComplete" &&
+      event.detail.encounterId === "recall"
+    ).length === fallbackCompletionCount,
+  "repeated stock-free praise applied recall completion twice",
+);
+assert(
+  emptyTreatRecall.dismissEncounterOutcome().ok &&
+    !emptyTreatRecall.getDogView().pausedForEncounter &&
+    emptyTreatRecall.getDogView().activeEncounter === null,
+  "stock-free praise outcome did not dismiss and resume the simulation",
+);
+
+const stockedTreatRecall = createSim(9251);
+stockedTreatRecall.startEncounter("recall");
+const stockedReinforcement =
+  advanceActiveEncounterToReinforcement(stockedTreatRecall);
+const stockedBefore = stockedTreatRecall.getFullState().economy;
+assert(
+  !stockedTreatRecall.selectEncounterReinforcement("praise").ok &&
+    stockedTreatRecall.getDogView().activeEncounter?.stage ===
+      "reinforcement" &&
+    JSON.stringify(stockedTreatRecall.getFullState().economy.inventory) ===
+      JSON.stringify(stockedBefore.inventory),
+  "stocked treat-required recall accepted the praise fallback",
+);
+assert(
+  stockedTreatRecall.selectEncounterReinforcement("treat").ok,
+  "stocked recall rejected its precise treat reinforcement",
+);
+const stockedAfter = stockedTreatRecall.getFullState().economy;
+const stockedOutcome = stockedTreatRecall.getDogView().activeEncounter?.outcome;
+assert(
+  treatItemIds.reduce(
+    (sum, itemId) =>
+      sum + stockedBefore.inventory[itemId] - stockedAfter.inventory[itemId],
+    0,
+  ) === 1 &&
+    stockedAfter.inventory["treat-basic"] ===
+      stockedBefore.inventory["treat-basic"] - 1 &&
+    stockedAfter.ledger.filter((entry) =>
+      entry.id ===
+        `encounter-reward:${stockedReinforcement.instanceId}` &&
+      entry.kind === "consume" &&
+      entry.quantityDelta === -1
+    ).length === 1 &&
+    stockedOutcome?.inventoryDelta["treat-basic"] === -1,
+  "stocked recall did not consume exactly one precise treat",
+);
+stockedTreatRecall.dismissEncounterOutcome();
+
+const hintedEncounter = createSim(9301);
+hintedEncounter.startNextEncounter();
+assert(
+  hintedEncounter.requestEncounterHint().ok &&
+    hintedEncounter.getDogView().activeEncounter?.hint !== null,
+  "first action-group hint was not available",
+);
+const sameStageHint = createSim(9300);
+sameStageHint.startEncounter("overexcited");
+sameStageHint.advanceEncounterInput(
+  BALANCE.LIFESTYLE.ENCOUNTER.HINT_IDLE_SECONDS,
+);
+const sameStagePrivate = sameStageHint.serialize().encounterDirector.active;
+const sameStagePublic = sameStageHint.getDogView().activeEncounter;
+if (sameStagePrivate === null || sameStagePublic === null) {
+  throw new Error("CONTRACT FAIL: same-stage hint encounter was not active");
+}
+const wrongSameStageCause = sameStagePublic.causeChoices.find((option) =>
+  option.id !== sameStagePrivate.hiddenCauseId
+);
+if (wrongSameStageCause === undefined) {
+  throw new Error("CONTRACT FAIL: same-stage hint lacked a wrong cause");
+}
+assert(
+  !sameStageHint.selectEncounterCause(wrongSameStageCause.id).ok &&
+    sameStageHint.getDogView().activeEncounter?.stage === "cause" &&
+    sameStageHint.requestEncounterHint().ok,
+  "rejected same-stage input reset the elapsed hint timer",
+);
+solveActiveEncounter(hintedEncounter);
+hintedEncounter.dismissEncounterOutcome();
+hintedEncounter.startNextEncounter();
+hintedEncounter.advanceEncounterInput(
+  BALANCE.LIFESTYLE.ENCOUNTER.HINT_IDLE_SECONDS,
+);
+assert(
+  !hintedEncounter.requestEncounterHint().ok,
+  "hint appeared in consecutive encounters",
+);
+const daySevenHint = createSim(9302);
+for (let day = 1; day < 7; day += 1) daySevenHint.newDay();
+daySevenHint.startNextEncounter();
+daySevenHint.advanceEncounterInput(
+  BALANCE.LIFESTYLE.ENCOUNTER.HINT_IDLE_SECONDS,
+);
+assert(
+  !daySevenHint.requestEncounterHint().ok,
+  "Day 7 exposed a general hint",
+);
+
+const workSim = createSim(9401);
+const ownerStart = workSim.getFullState().ownerSpatial;
+assert(
+  workSim.moveOwnerTo({ hotspotId: "computer" }).ok,
+  "computer move command failed",
+);
+workSim.advanceMinutes(1);
+const ownerAtComputer = workSim.getDogView().ownerSpatial;
+assert(
+  !ownerAtComputer.moving &&
+    (ownerAtComputer.x !== ownerStart.x ||
+      ownerAtComputer.y !== ownerStart.y) &&
+    workSim.getDogView().work.state === "ready",
+  "owner did not physically arrive at the computer",
+);
+const moneyBeforeWork = workSim.getFullState().economy.money;
+assert(
+  workSim.performWorkBlock("contract-gig").ok &&
+    workSim.getFullState().work.progress === 25,
+  "first work block was not 15 minutes and 25 percent",
+);
+assert(
+  workSim.performWorkBlock("contract-gig").ok &&
+    workSim.getFullState().work.progress === 50 &&
+    workSim.getDogView().work.alert !== null,
+  "second work block did not pause on the public alert",
+);
+assert(
+  workSim.resolveWorkAlert("continue").ok &&
+    workSim.performWorkBlock("contract-gig").ok &&
+    workSim.getFullState().work.progress === 75 &&
+    workSim.performWorkBlock("contract-gig").ok &&
+    workSim.getFullState().work.progress === 100,
+  "work did not progress through 50, 75, and 100 percent",
+);
+assert(
+  workSim.getFullState().economy.money ===
+    moneyBeforeWork + BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY,
+  "base salary was not paid exactly at completion",
+);
+const moneyAfterWork = workSim.getFullState().economy.money;
+assert(
+  !workSim.performWorkBlock("contract-gig").ok &&
+    workSim.getFullState().economy.money === moneyAfterWork,
+  "completed gig paid twice",
+);
+
+const interruptedWork = createSim(9402);
+interruptedWork.moveOwnerTo({ hotspotId: "computer" });
+interruptedWork.advanceMinutes(1);
+interruptedWork.performWorkBlock("interrupted-gig");
+interruptedWork.performWorkBlock("interrupted-gig");
+assert(
+  interruptedWork.resolveWorkAlert("interrupt").ok,
+  "work alert could not be interrupted",
+);
+const interruptedCarePoints =
+  interruptedWork.getFullState().economy.carePoints;
+interruptedWork.performWorkBlock("interrupted-gig");
+interruptedWork.performWorkBlock("interrupted-gig");
+assert(
+  interruptedWork.getFullState().work.progress === 100 &&
+    interruptedWork.getFullState().economy.carePoints ===
+      interruptedCarePoints,
+  "interrupted work incorrectly received a continuity reward",
+);
+
+const reloadedWork = createSim(9403);
+reloadedWork.moveOwnerTo({ hotspotId: "computer" });
+reloadedWork.advanceMinutes(1);
+reloadedWork.performWorkBlock("reload-gig");
+reloadedWork.performWorkBlock("reload-gig");
+const workAlertSnapshot = reloadedWork.serialize();
+const workAlertRestored = createSim(0);
+workAlertRestored.restore(workAlertSnapshot);
+assert(
+  workAlertRestored.getDogView().work.state === "alert" &&
+    workAlertRestored.getFullState().work.progress === 50,
+  "work alert did not survive a v3 reload",
+);
+workAlertRestored.resolveWorkAlert("continue");
+workAlertRestored.performWorkBlock("reload-gig");
+workAlertRestored.performWorkBlock("reload-gig");
+const paidReloadSnapshot = workAlertRestored.serialize();
+const paidReloadRestored = createSim(0);
+paidReloadRestored.restore(paidReloadSnapshot);
+const paidReloadMoney = paidReloadRestored.getFullState().economy.money;
+assert(
+  !paidReloadRestored.performWorkBlock("reload-gig").ok &&
+    paidReloadRestored.getFullState().economy.money === paidReloadMoney,
+  "reloaded completed work paid salary twice",
+);
+
+for (const encounterId of ENCOUNTER_IDS) {
+  workSim.startEncounter(encounterId);
+  solveActiveEncounter(workSim);
+  workSim.dismissEncounterOutcome();
+}
+assert(
+  workSim.buyUpgrade("salary-routine").ok &&
+    workSim.buyUpgrade("salary-portfolio").ok &&
+    workSim.buyUpgrade("salary-specialist").ok &&
+    workSim.getDogView().economy.salaryBonusPercent === 45,
+  "salary upgrades did not reach the fixed 45 percent cap",
+);
+const moneyBeforeBonusGig = workSim.getFullState().economy.money;
+workSim.performWorkBlock("bonus-gig");
+workSim.performWorkBlock("bonus-gig");
+workSim.resolveWorkAlert("continue");
+workSim.performWorkBlock("bonus-gig");
+workSim.performWorkBlock("bonus-gig");
+assert(
+  workSim.getFullState().economy.money - moneyBeforeBonusGig ===
+    Math.round(
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY * 1.45,
+    ),
+  "salary bonus was not capped and paid at 45 percent",
+);
+const canonicalSalarySnapshot = workSim.serialize();
+const canonicalSalaryEntries = canonicalSalarySnapshot.economy.ledger.filter(
+  (entry) => entry.kind === "salary",
+);
+assert(
+  canonicalSalaryEntries.length === 2 &&
+    canonicalSalaryEntries[0].moneyDelta ===
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY &&
+    canonicalSalaryEntries[1].moneyDelta === Math.round(
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY * 1.45,
+    ),
+  "salary ledger did not preserve canonical before/after-upgrade payouts",
+);
+const canonicalSalaryRestored = createSim(0);
+canonicalSalaryRestored.restore(canonicalSalarySnapshot);
+assert(
+  JSON.stringify(canonicalSalaryRestored.serialize()) ===
+    JSON.stringify(canonicalSalarySnapshot),
+  "canonical before/after-upgrade salary snapshot did not roundtrip",
+);
+const forgedSalarySnapshot = JSON.parse(
+  JSON.stringify(canonicalSalarySnapshot),
+) as WaitdogSnapshot;
+const forgedSalaryEntry = forgedSalarySnapshot.economy.ledger.find((entry) =>
+  entry.kind === "salary" && entry.id === "salary:bonus-gig"
+);
+if (forgedSalaryEntry === undefined) {
+  throw new Error("CONTRACT FAIL: missing salary entry for forgery regression");
+}
+const forgedSalaryDelta = 999_000 - forgedSalaryEntry.moneyDelta;
+forgedSalaryEntry.moneyDelta = 999_000;
+forgedSalarySnapshot.economy.money += forgedSalaryDelta;
+const forgedSalaryRestore = createSim(9404);
+const beforeForgedSalaryRestore = forgedSalaryRestore.serialize();
+let forgedSalaryRejected = false;
+try {
+  forgedSalaryRestore.restore(forgedSalarySnapshot);
+} catch {
+  forgedSalaryRejected = true;
+}
+assert(
+  forgedSalaryRejected,
+  "forged salary ledger and matching money total were accepted",
+);
+assert(
+  JSON.stringify(forgedSalaryRestore.serialize()) ===
+    JSON.stringify(beforeForgedSalaryRestore),
+  "forged salary restore partially polluted live state",
+);
+
+const prefixLedgerSource = createSim(9405);
+for (const encounterId of ENCOUNTER_IDS.slice(0, 2)) {
+  prefixLedgerSource.startEncounter(encounterId);
+  solveActiveEncounter(prefixLedgerSource);
+  prefixLedgerSource.dismissEncounterOutcome();
+}
+assert(
+  prefixLedgerSource.buyUpgrade("salary-routine").ok,
+  "prefix-ledger regression could not buy its earned upgrade",
+);
+const validPrefixLedgerSnapshot = prefixLedgerSource.serialize();
+const validPrefixLedgerRestored = createSim(0);
+validPrefixLedgerRestored.restore(validPrefixLedgerSnapshot);
+assert(
+  JSON.stringify(validPrefixLedgerRestored.serialize()) ===
+    JSON.stringify(validPrefixLedgerSnapshot),
+  "valid earned-upgrade ledger did not roundtrip",
+);
+const negativePrefixSnapshot = JSON.parse(
+  JSON.stringify(validPrefixLedgerSnapshot),
+) as WaitdogSnapshot;
+const upgradeEntryIndex = negativePrefixSnapshot.economy.ledger.findIndex(
+  (entry) => entry.kind === "upgrade" && entry.id === "upgrade:salary-routine",
+);
+if (upgradeEntryIndex < 0) {
+  throw new Error("CONTRACT FAIL: prefix-ledger upgrade entry was missing");
+}
+const [earlyUpgradeEntry] = negativePrefixSnapshot.economy.ledger.splice(
+  upgradeEntryIndex,
+  1,
+);
+negativePrefixSnapshot.economy.ledger.unshift(earlyUpgradeEntry);
+negativePrefixSnapshot.economy.ledger.forEach((entry, index) => {
+  entry.revision = index + 1;
+});
+assert(
+  negativePrefixSnapshot.economy.ledger[0].carePointDelta === -2 &&
+    negativePrefixSnapshot.economy.carePoints ===
+      validPrefixLedgerSnapshot.economy.carePoints,
+  "prefix-ledger forgery did not preserve final totals with an early deficit",
+);
+const negativePrefixRestore = createSim(9406);
+const beforeNegativePrefixRestore = negativePrefixRestore.serialize();
+let negativePrefixRejected = false;
+try {
+  negativePrefixRestore.restore(negativePrefixSnapshot);
+} catch {
+  negativePrefixRejected = true;
+}
+assert(
+  negativePrefixRejected,
+  "ledger with a negative care-point prefix was accepted",
+);
+assert(
+  JSON.stringify(negativePrefixRestore.serialize()) ===
+    JSON.stringify(beforeNegativePrefixRestore),
+  "negative-prefix restore partially polluted live state",
+);
+
+const inventoryBeforePurchase =
+  workSim.getFullState().economy.inventory["food-basic"];
+const moneyBeforePurchase = workSim.getFullState().economy.money;
+assert(
+  workSim.purchaseItem("food-basic", 1, "contract-purchase").ok,
+  "valid catalog purchase failed",
+);
+const afterPurchase = workSim.getFullState().economy;
+assert(
+  afterPurchase.inventory["food-basic"] === inventoryBeforePurchase + 1 &&
+    afterPurchase.money < moneyBeforePurchase,
+  "purchase did not atomically update money and inventory",
+);
+assert(
+  !workSim.purchaseItem("food-basic", 1, "contract-purchase").ok &&
+    JSON.stringify(workSim.getFullState().economy) ===
+      JSON.stringify(afterPurchase),
+  "duplicate purchase transaction changed economy state",
+);
+assert(
+  !workSim.purchaseItem("food-basic", 0, "zero-purchase").ok &&
+    workSim.getFullState().economy.money >= 0,
+  "invalid purchase quantity made the ledger negative",
+);
+
+const clinicSim = createSim(9501);
+clinicSim.newDay();
+const clinicMoney = clinicSim.getFullState().economy.money;
+assert(
+  clinicSim.getDogView().clinic.couponAvailable &&
+    clinicSim.scheduleClinic("day-two-clinic").ok,
+  "Day 2 preventive-care coupon was not usable",
+);
+assert(
+  clinicSim.getFullState().economy.money === clinicMoney &&
+    clinicSim.getDogView().clinic.preventiveVisitCompleted &&
+    !clinicSim.scheduleClinic("duplicate-clinic").ok,
+  "clinic coupon charged money or allowed a duplicate visit",
+);
+
+const placementSim = createSim(9601);
+placementSim.startEncounter("potty");
+solveActiveEncounter(placementSim);
+placementSim.dismissEncounterOutcome();
+assert(
+  placementSim.placeItem(
+    "pad-paper",
+    { room: "living", x: 0.2, y: 0.7 },
+    "place-paper-pad",
+  ).ok,
+  "valid pad placement failed",
+);
+const placementOwner = placementSim.getFullState().ownerSpatial;
+assert(
+  !placementSim.placeItem(
+    "pad-paper",
+    {
+      room: placementOwner.room,
+      x: placementOwner.x,
+      y: placementOwner.y,
+    },
+    "pad-on-owner",
+  ).ok,
+  "pad placement on the owner was accepted",
+);
+assert(
+  placementSim.purchaseItem(
+    "barrier-1-panel",
+    2,
+    "purchase-contract-barriers",
+  ).ok,
+  "unlocked barrier purchase failed",
+);
+assert(
+  placementSim.placeItem(
+    "barrier-1-panel",
+    {
+      room: "living",
+      x: 0.3,
+      y: 0.3,
+      width: 0.1,
+      height: 0.3,
+      placementId: "safe-barrier",
+    },
+    "place-safe-barrier",
+  ).ok,
+  "valid barrier placement failed",
+);
+assert(
+  !placementSim.placeItem(
+    "barrier-1-panel",
+    {
+      room: "living",
+      x: 0.93,
+      y: 0.25,
+      width: 0.1,
+      height: 0.1,
+      placementId: "door-barrier",
+    },
+    "place-door-barrier",
+  ).ok,
+  "door-blocking barrier placement was accepted",
+);
+assert(
+  !placementSim.placeItem(
+    "barrier-4-panel",
+    {
+      room: "kitchen",
+      x: 0.5,
+      y: 0.5,
+      width: 0.1,
+      height: 0.1,
+      placementId: "tiny-enclosure",
+    },
+    "place-tiny-enclosure",
+  ).ok,
+  "unsafe four-panel enclosure was accepted",
+);
+const placementSnapshot = placementSim.serialize();
+const placementRestored = createSim(0);
+placementRestored.restore(placementSnapshot);
+assert(
+  JSON.stringify(placementRestored.serialize()) ===
+    JSON.stringify(placementSnapshot),
+  "environment placement and inventory ledger did not survive reload",
+);
+const ownerOnPadSnapshot = JSON.parse(
+  JSON.stringify(placementSnapshot),
+) as WaitdogSnapshot;
+if (ownerOnPadSnapshot.environment.padPlacement === null) {
+  throw new Error("CONTRACT FAIL: placement snapshot lacked its pad");
+}
+ownerOnPadSnapshot.environment.padPlacement = {
+  ...ownerOnPadSnapshot.environment.padPlacement,
+  room: ownerOnPadSnapshot.ownerSpatial.room,
+  x: ownerOnPadSnapshot.ownerSpatial.x,
+  y: ownerOnPadSnapshot.ownerSpatial.y,
+};
+const ownerOnPadRestored = createSim(0);
+ownerOnPadRestored.restore(ownerOnPadSnapshot);
+assert(
+  JSON.stringify(ownerOnPadRestored.serialize()) ===
+    JSON.stringify(ownerOnPadSnapshot),
+  "reachable owner-on-pad snapshot did not roundtrip",
+);
+const dogOnPadSnapshot = JSON.parse(
+  JSON.stringify(placementSnapshot),
+) as WaitdogSnapshot;
+if (dogOnPadSnapshot.environment.padPlacement === null) {
+  throw new Error("CONTRACT FAIL: placement snapshot lacked its pad");
+}
+dogOnPadSnapshot.environment.padPlacement = {
+  ...dogOnPadSnapshot.environment.padPlacement,
+  room: dogOnPadSnapshot.spatial.room,
+  x: dogOnPadSnapshot.spatial.x,
+  y: dogOnPadSnapshot.spatial.y,
+};
+const dogOnPadRestored = createSim(0);
+dogOnPadRestored.restore(dogOnPadSnapshot);
+assert(
+  JSON.stringify(dogOnPadRestored.serialize()) ===
+    JSON.stringify(dogOnPadSnapshot),
+  "reachable dog-on-pad snapshot did not roundtrip",
+);
+
+const assertPlacementRestoreRejectedAtomically = (
+  candidate: WaitdogSnapshot,
+  label: string,
+  seed: number,
+) => {
+  const target = createSim(seed);
+  const before = target.serialize();
+  let rejected = false;
+  try {
+    target.restore(candidate);
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, `${label} placement snapshot was accepted`);
+  assert(
+    JSON.stringify(target.serialize()) === JSON.stringify(before),
+    `${label} placement restore partially polluted live state`,
+  );
+};
+
+const unpaidBarrierSnapshot = JSON.parse(
+  JSON.stringify(placementSnapshot),
+) as WaitdogSnapshot;
+const paidBarrier = unpaidBarrierSnapshot.environment.barriers[0];
+if (paidBarrier === undefined) {
+  throw new Error("CONTRACT FAIL: placement snapshot lacked its barrier");
+}
+unpaidBarrierSnapshot.environment.barriers.push({
+  ...paidBarrier,
+  id: "unpaid-clone",
+  x: 0.5,
+});
+assertPlacementRestoreRejectedAtomically(
+  unpaidBarrierSnapshot,
+  "unpaid barrier clone",
+  9602,
+);
+
+const doorBarrierSnapshot = JSON.parse(
+  JSON.stringify(placementSnapshot),
+) as WaitdogSnapshot;
+doorBarrierSnapshot.environment.barriers[0] = {
+  ...doorBarrierSnapshot.environment.barriers[0],
+  x: 0.93,
+  y: 0.25,
+  width: 0.1,
+  height: 0.1,
+};
+assertPlacementRestoreRejectedAtomically(
+  doorBarrierSnapshot,
+  "door-blocking barrier",
+  9603,
+);
+
+const createBarrierEffectSim = (
+  seed: number,
+  itemId: "barrier-1-panel" | "barrier-4-panel",
+): WaitdogUiSim => {
+  const sim = createSim(seed);
+  const rewardsNeeded = itemId === "barrier-4-panel" ? 6 : 1;
+  for (const encounterId of ENCOUNTER_IDS.slice(0, rewardsNeeded)) {
+    sim.startEncounter(encounterId);
+    solveActiveEncounter(sim);
+    sim.dismissEncounterOutcome();
+  }
+  assert(
+    sim.purchaseItem(itemId, 1, `purchase-effect-${itemId}`).ok,
+    `${itemId} effect-test purchase failed`,
+  );
+  const size = itemId === "barrier-4-panel"
+    ? { width: 0.5, height: 0.42 }
+    : { width: 0.28, height: 0.08 };
+  assert(
+    sim.placeItem(
+      itemId,
+      {
+        room: "toilet",
+        x: 0.55,
+        y: 0.72,
+        ...size,
+        placementId: `effect-${itemId}`,
+      },
+      `place-effect-${itemId}`,
+    ).ok,
+    `${itemId} effect-test placement failed`,
+  );
+  assert(
+    !sim.getFullState().blocked,
+    `${itemId} globally blocked an unrelated room immediately after placement`,
+  );
+  return sim;
+};
+
+const withPendingCornerEat = (
+  source: WaitdogSnapshot,
+  room: "kitchen" | "toilet",
+): WaitdogSnapshot => {
+  const snapshot = JSON.parse(JSON.stringify(source)) as WaitdogSnapshot;
+  snapshot.dogRoom = room;
+  snapshot.spatial = {
+    ...snapshot.spatial,
+    room,
+    x: 0.86,
+    y: 0.3,
+    targetRoom: room,
+    targetX: 0.86,
+    targetY: 0.3,
+    route: [],
+    activity: "eatPoop",
+    moving: false,
+  };
+  snapshot.currentAction = "eatPoop";
+  snapshot.actionStartedAt = snapshot.absoluteMinute;
+  snapshot.activePoop = {
+    room,
+    createdAt: snapshot.absoluteMinute,
+    location: "corner",
+  };
+  snapshot.pendingEatAt = snapshot.absoluteMinute + 1;
+  return snapshot;
+};
+
+const onePanelEffectSim = createBarrierEffectSim(9610, "barrier-1-panel");
+const onePanelBoundarySnapshot = withPendingCornerEat(
+  onePanelEffectSim.serialize(),
+  "toilet",
+);
+const onePanelBoundaryRestored = createSim(0);
+onePanelBoundaryRestored.restore(onePanelBoundarySnapshot);
+assert(
+  !onePanelBoundaryRestored.getFullState().blocked,
+  "one-panel barrier blocked beyond its room footprint",
+);
+onePanelBoundaryRestored.advanceMinutes(1);
+assert(
+  onePanelBoundaryRestored.getFullState().activePoop === null &&
+    onePanelBoundaryRestored.getLog().some((event) =>
+      event.type === "eatPoop"
+    ),
+  "one-panel barrier blocked eating outside its covered boundary",
+);
+
+const fourPanelEffectSim = createBarrierEffectSim(9611, "barrier-4-panel");
+const fourPanelBoundarySnapshot = withPendingCornerEat(
+  fourPanelEffectSim.serialize(),
+  "toilet",
+);
+const fourPanelBoundaryRestored = createSim(0);
+fourPanelBoundaryRestored.restore(fourPanelBoundarySnapshot);
+assert(
+  fourPanelBoundaryRestored.getFullState().blocked &&
+    JSON.stringify(fourPanelBoundaryRestored.serialize()) ===
+      JSON.stringify(fourPanelBoundarySnapshot),
+  "four-panel covered block was not recomputed consistently after restore",
+);
+fourPanelBoundaryRestored.advanceMinutes(1);
+assert(
+  fourPanelBoundaryRestored.getFullState().activePoop !== null &&
+    !fourPanelBoundaryRestored.getLog().some((event) =>
+      event.type === "eatPoop"
+    ),
+  "four-panel barrier did not block eating inside its covered footprint",
+);
+
+const unrelatedRoomSnapshot = withPendingCornerEat(
+  fourPanelEffectSim.serialize(),
+  "kitchen",
+);
+const unrelatedRoomRestored = createSim(0);
+unrelatedRoomRestored.restore(unrelatedRoomSnapshot);
+assert(
+  !unrelatedRoomRestored.getFullState().blocked,
+  "toilet barrier globally blocked a kitchen dog or poop",
+);
+unrelatedRoomRestored.advanceMinutes(1);
+assert(
+  unrelatedRoomRestored.getFullState().activePoop === null &&
+    unrelatedRoomRestored.getLog().some((event) =>
+      event.type === "eatPoop"
+    ),
+  "unrelated-room barrier prevented kitchen eating",
+);
+
+const overlapSim = createSim(9701);
+for (const room of ["living", "kitchen", "toilet"] as const) {
+  overlapSim.setOwner({ room, focusLocked: false });
+  assert(
+    !overlapSim.getFullState().ownerDogOverlap,
+    `${room} owner relocation overlapped the dog`,
+  );
+}
+overlapSim.moveOwnerTo({ room: "living", x: 0.5, y: 0.56 });
+for (let minute = 0; minute < 12; minute += 1) {
+  overlapSim.advanceMinutes(1);
+  assert(
+    !overlapSim.getFullState().ownerDogOverlap,
+    "owner and dog footprints overlapped during movement",
+  );
+}
+
+const overlapRestore = createSim(9702);
+const beforeOverlapRestore = overlapRestore.serialize();
+const overlappingSnapshot: WaitdogSnapshot = {
+  ...beforeOverlapRestore,
+  owner: { ...beforeOverlapRestore.owner, room: beforeOverlapRestore.dogRoom },
+  ownerSpatial: {
+    room: beforeOverlapRestore.dogRoom,
+    x: beforeOverlapRestore.spatial.x,
+    y: beforeOverlapRestore.spatial.y,
+    targetRoom: beforeOverlapRestore.dogRoom,
+    targetX: beforeOverlapRestore.spatial.x,
+    targetY: beforeOverlapRestore.spatial.y,
+    route: [],
+    activity: "idle",
+    destinationActivity: "idle",
+    moving: false,
+    collisionRadius: BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS,
+  },
+};
+let overlapRestoreRejected = false;
+try {
+  overlapRestore.restore(overlappingSnapshot);
+} catch {
+  overlapRestoreRejected = true;
+}
+assert(overlapRestoreRejected, "overlapping v3 snapshot was accepted");
+assert(
+  JSON.stringify(overlapRestore.serialize()) ===
+    JSON.stringify(beforeOverlapRestore),
+  "overlapping snapshot partially polluted live state",
+);
+
 const curriculumPrediction = {
   start: 3 * BALANCE.TIME.DAY_LENGTH + 600,
   end: 3 * BALANCE.TIME.DAY_LENGTH + 780,
@@ -1017,6 +2059,34 @@ assert(
   "W3 profile top-level shape was not exact",
 );
 assert(loadProfile(memoryStorage).ok, "W3 saved profile did not load");
+const storedProfileV3 = memoryStorage.raw();
+const settingsV3 = storedProfile.settings as Record<string, unknown>;
+const {
+  lifestyle: _legacyLifestyle,
+  version: _legacySettingsVersion,
+  ...legacySettingsFields
+} = settingsV3;
+memoryStorage.setItem(
+  WAITDOG_PROFILE_KEY,
+  JSON.stringify({
+    ...storedProfile,
+    settings: {
+      ...legacySettingsFields,
+      version: 2,
+    },
+  }),
+);
+const migratedProfileV2 = loadProfile(memoryStorage);
+assert(
+  migratedProfileV2.ok &&
+    migratedProfileV2.profile?.settings.version === 3 &&
+    migratedProfileV2.profile.settings.lifestyle.selectedStoreCategory ===
+      "treat",
+  "campaign settings v2 did not migrate to v3 lifestyle defaults",
+);
+if (storedProfileV3 !== null) {
+  memoryStorage.setItem(WAITDOG_PROFILE_KEY, storedProfileV3);
+}
 
 const throwingStorage: StorageAdapter = {
   getItem: () => {
