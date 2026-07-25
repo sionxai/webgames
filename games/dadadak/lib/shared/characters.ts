@@ -21,8 +21,15 @@ export function characterById(id: string | null | undefined): CharacterDef {
   return CHARACTERS.find((c) => c.id === id) ?? CHARACTERS[0];
 }
 
+/**
+ * 정적 배포에서 next/image가 이 경로들에는 basePath를 붙여주지 않아
+ * 캐릭터 이미지만 깨졌다. 여기서 직접 붙인다.
+ * next.config.ts의 basePath와 반드시 같아야 한다.
+ */
+const ASSET_BASE = "/games/dadadak";
+
 export function characterFrames(c: CharacterDef): string[] {
-  return [0, 1, 2, 3].map((i) => `/characters/${c.id}-${i}.png`);
+  return [0, 1, 2, 3].map((i) => `${ASSET_BASE}/characters/${c.id}-${i}.png`);
 }
 
 export const EXPRESSIONS = [
@@ -38,11 +45,11 @@ export type Expression = (typeof EXPRESSIONS)[number];
 
 export function characterExpr(c: CharacterDef): Record<Expression, string> {
   return {
-    neutral: `/characters/${c.id}-neutral.png`,
-    blink: `/characters/${c.id}-blink.png`,
-    happy: `/characters/${c.id}-happy.png`,
-    star: `/characters/${c.id}-star.png`,
-    proud: `/characters/${c.id}-proud.png`,
-    sleepy: `/characters/${c.id}-sleepy.png`,
+    neutral: `${ASSET_BASE}/characters/${c.id}-neutral.png`,
+    blink: `${ASSET_BASE}/characters/${c.id}-blink.png`,
+    happy: `${ASSET_BASE}/characters/${c.id}-happy.png`,
+    star: `${ASSET_BASE}/characters/${c.id}-star.png`,
+    proud: `${ASSET_BASE}/characters/${c.id}-proud.png`,
+    sleepy: `${ASSET_BASE}/characters/${c.id}-sleepy.png`,
   };
 }
