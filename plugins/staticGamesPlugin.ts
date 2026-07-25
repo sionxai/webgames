@@ -29,7 +29,8 @@ const STATIC_GAMES = [
       '.env*'
     ]
   },
-  { id: 'life-rpg', dir: 'games/life-rpg/out', exclude: [] }
+  { id: 'life-rpg', dir: 'games/life-rpg/out', exclude: [] },
+  { id: 'dadadak', dir: 'games/dadadak/out', exclude: [] }
 ] as const satisfies readonly StaticGame[];
 
 const MIME_TYPES: Record<string, string> = {

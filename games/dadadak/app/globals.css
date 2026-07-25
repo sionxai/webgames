@@ -1,0 +1,288 @@
+@import "tailwindcss";
+
+/* 디자인 토큰 — PRD 12장. 그라데이션·shadow 금지, border로 위계 표현 */
+@theme {
+  --color-bg: #0f1220;
+  --color-surface: #1b2030;
+  --color-surface-border: #434b64; /* --surface 명도 +10% */
+  --color-text: #f5f7ff;
+  --color-dim: #9aa3b8;
+  --color-primary: #ffd60a;
+  --color-primary-edge: #b89b07;
+  --color-primary-ink: #1a1a00;
+  --color-rival: #4da3ff;
+  --color-rival-edge: #2f77c9;
+  --color-rival-ink: #06172e;
+  --color-room: #b58cff;
+  --color-room-edge: #62459d;
+  --color-room-ink: #16082b;
+  --color-danger: #ff4d6d;
+  --color-win: #3ddc84;
+
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", sans-serif;
+}
+
+html {
+  background-color: var(--color-bg);
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  line-height: 1.6;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 카운터·타이머 숫자 자리 흔들림 방지 (PRD 12.3) */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.dot-grid {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E%3Ccircle cx='1' cy='1' r='1' fill='%23434B64' fill-opacity='0.4'/%3E%3C/svg%3E");
+}
+
+/* 공통 컴포넌트 규칙 (PRD 12.5) */
+.btn,
+.btn-primary,
+.btn-ghost {
+  @apply flex h-[52px] w-full items-center justify-center rounded-[14px] px-4 text-base font-bold transition duration-150 ease-out select-none;
+}
+.btn:active,
+.btn-primary:active,
+.btn-ghost:active {
+  transform: translateY(3px) scale(0.99);
+}
+.btn:disabled,
+.btn-primary:disabled,
+.btn-ghost:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.btn-primary {
+  @apply bg-primary text-primary-ink;
+  border-bottom: 4px solid var(--color-primary-edge);
+}
+.btn-ghost {
+  @apply border border-surface-border bg-surface text-text;
+  border-bottom: 4px solid var(--color-surface-border);
+}
+/* Buttons use fixed border-box height, so reducing the bottom edge on press changes no layout flow. */
+.btn-primary:active,
+.btn-ghost:active {
+  border-bottom-width: 1px;
+}
+.card {
+  @apply rounded-[16px] border border-surface-border bg-surface;
+}
+.menu-button {
+  min-height: 72px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding-block: 12px;
+  text-align: left;
+}
+.mode-tile {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 72px;
+  gap: 12px;
+  padding: 0 18px;
+  border-width: 2px;
+  border-style: solid;
+  border-bottom-width: 7px;
+  border-radius: 18px;
+  text-align: left;
+  user-select: none;
+  transition:
+    transform 100ms ease-out,
+    border-bottom-width 100ms ease-out;
+}
+.mode-tile:active {
+  transform: translateY(5px);
+  border-bottom-width: 2px;
+}
+.icon-chip {
+  @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-bg;
+}
+.input {
+  @apply h-12 w-full rounded-[14px] border border-surface-border bg-surface px-4 text-base text-text outline-none;
+}
+.input:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 0;
+}
+
+/* 배틀 카운터 숫자 팝 (PRD 12.6) — transform만 사용해 60fps 유지 */
+@keyframes count-pop {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+.count-pop {
+  animation: count-pop 120ms ease-out;
+}
+
+@keyframes float-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--fl-drift, 0px), -28px)
+      rotate(var(--fl-tilt, 0deg));
+  }
+}
+.float-up {
+  animation: float-up 500ms ease-out forwards;
+}
+
+@keyframes ripple-ring {
+  0% {
+    opacity: 0.5;
+    transform: scale(0.4);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+.ripple-ring {
+  animation: ripple-ring 350ms ease-out forwards;
+}
+
+@keyframes burst-ring {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.5);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.2);
+  }
+}
+.burst-ring {
+  animation: burst-ring 500ms ease-out forwards;
+}
+
+@keyframes fade-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+.fade-out {
+  animation: fade-out 300ms ease-out forwards;
+}
+
+@keyframes pop-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.pop-in {
+  animation: pop-in 200ms ease-out both;
+}
+
+/* 홈 마스코트 idle 숨쉬기 (PRD 12.6 예외 — 홈 마스코트 한정, transform만) */
+@keyframes mascot-breathe {
+  0%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  50% {
+    transform: translateY(-2px) scaleY(1.03);
+  }
+}
+.mascot-breathe {
+  transform-origin: center bottom;
+  animation: mascot-breathe 2600ms ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mascot-breathe {
+    animation: none;
+  }
+}
+
+.dock-tile {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 60px;
+  gap: 2px;
+  border-width: 2px;
+  border-style: solid;
+  border-bottom-width: 6px;
+  border-radius: 16px;
+  user-select: none;
+  transition:
+    transform 100ms ease-out,
+    border-bottom-width 100ms ease-out;
+}
+.dock-tile:active {
+  transform: translateY(4px);
+  border-bottom-width: 2px;
+}
+
+.dock-icon {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  gap: 4px;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 14px;
+}
+
+/* 탭 버튼 눌림 피드백 (PRD F2: scale 0.96, 80ms) */
+.tap-pressed {
+  transform: scale(0.96);
+  transition: transform 80ms ease-out;
+}
+
+/* 스켈레톤 */
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.skeleton {
+  @apply rounded-[14px] bg-surface;
+}
+
+/* 가로 모드 안내 오버레이 (PRD 6장) */
+.landscape-guard {
+  display: none;
+}
+@media (orientation: landscape) and (max-height: 520px) {
+  .landscape-guard {
+    display: flex;
+  }
+}

@@ -2,8 +2,15 @@
 node_modules/
 games/*/node_modules/
 games/*/.next/
+games/*/.next-*/
 games/*/.env*
 games/*/functions/node_modules/
+# out/은 배포 산출물이라 커밋한다. .next(빌드 캐시)는 커밋하지 않는다.
+!games/dadadak/out/
+!games/dadadak/out/**
+games/dadadak/data/
+games/dadadak/test-results/
+games/dadadak/playwright-report/
 
 # Build output
 dist/
