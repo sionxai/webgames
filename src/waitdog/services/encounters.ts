@@ -835,12 +835,27 @@ export const getEncounterPublicView = (
   const definition = definitionFor(active.encounterId);
   const tutorialIndex = TUTORIAL_ENCOUNTER_ORDER.indexOf(active.encounterId);
   const tutorial = tutorialIndex >= 0 && tutorialIndex >= state.tutorialIndex;
-  const reinforcementChoices = active.requiredReinforcement === null
+  const reinforcementChoices =
+      active.stage !== "reinforcement" ||
+      active.requiredReinforcement === null
     ? []
     : [
       choice("praise", "차분히 칭찬하기"),
       choice("treat", "작은 간식으로 보상하기"),
     ];
+  const responseChoices = active.stage === "response"
+    ? clone(active.responseOptions).slice(0, 3)
+    : [];
+  const inferredCause = active.selectedCauseId === null
+    ? null
+    : definition.causes.find((cause) =>
+      cause.id === active.selectedCauseId
+    )?.label ?? null;
+  const contextActions = active.stage === "response"
+    ? responseChoices
+    : active.stage === "reinforcement"
+    ? reinforcementChoices
+    : [];
   const publicStage = active.stage === "result" ? "outcome" : active.stage;
   return {
     id: active.instanceId,
@@ -856,8 +871,8 @@ export const getEncounterPublicView = (
       room: definition.cueRoom,
       anchor: clone(definition.cueAnchor),
     },
-    causeChoices: clone(active.causeOptions),
-    responseChoices: clone(active.responseOptions),
+    causeChoices: [],
+    responseChoices,
     reinforcementChoices,
     selectedCauseId: active.selectedCauseId,
     selectedResponseId: active.selectedResponseId,
@@ -866,12 +881,14 @@ export const getEncounterPublicView = (
     instanceId: active.instanceId,
     encounterId: active.encounterId,
     publicCues: clone(active.publicCues),
-    causeOptions: clone(active.causeOptions),
-    responseOptions: clone(active.responseOptions),
+    causeOptions: [],
+    responseOptions: responseChoices,
     reinforcementOptions: reinforcementChoices,
     safetyLevel: active.safetyLevel,
     safetyBanner: active.safetyBanner,
     result: clone(active.result),
+    inferredCause,
+    contextActions,
   };
 };
 

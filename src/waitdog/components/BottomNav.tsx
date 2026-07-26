@@ -1,22 +1,22 @@
 export type LifestyleSurface =
-  | "mission"
   | "bag"
   | "petMart"
   | "clinic"
   | "upgrade";
 
-interface BottomNavProps {
+export type LifestyleNavSurface = LifestyleSurface;
+
+export interface BottomNavProps {
   active: LifestyleSurface | null;
   disabled: boolean;
-  onSelect: (surface: LifestyleSurface) => void;
+  onSelect: (surface: LifestyleNavSurface) => void;
 }
 
 const NAV_ITEMS: ReadonlyArray<{
-  id: LifestyleSurface;
+  id: LifestyleNavSurface;
   icon: string;
   label: string;
 }> = [
-  { id: "mission", icon: "◎", label: "미션" },
   { id: "bag", icon: "▣", label: "가방" },
   { id: "petMart", icon: "◇", label: "펫마트" },
   { id: "clinic", icon: "+", label: "병원" },

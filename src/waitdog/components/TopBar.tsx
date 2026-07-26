@@ -2,7 +2,7 @@ import type { RoomId } from "../types";
 
 export type GameSpeed = 0 | 1 | 2 | 4;
 
-interface TopBarProps {
+export interface TopBarProps {
   day: number;
   minuteOfDay: number;
   speed: GameSpeed;
@@ -48,14 +48,20 @@ export function TopBar({
   ended,
   onSpeedChange,
 }: TopBarProps) {
+  const ownerState = pausedReason ??
+    (ownerMoving ? "이동 중" : `${ROOM_NAMES[ownerRoom]}에 머무는 중`);
+
   return (
     <header className="top-bar lifestyle-topbar">
-      <div className="brand-block">
-        <span className="eyebrow">WAIT, DOG!</span>
-        <h1>기다려, 멍!</h1>
+      <div className="brand-block" title="기다려, 멍!">
+        <span aria-hidden="true">🐕</span>
+        <h1>기다려멍</h1>
       </div>
 
-      <div className="day-clock" aria-label={`Day ${day}, ${formatClock(minuteOfDay)}`}>
+      <div
+        className="day-clock"
+        aria-label={`Day ${day}, ${formatClock(minuteOfDay)}`}
+      >
         <strong>Day {day}</strong>
         <span aria-hidden="true">·</span>
         <time>{formatClock(minuteOfDay)}</time>
@@ -63,16 +69,38 @@ export function TopBar({
 
       <div className="economy-hud" aria-label="생활 자원">
         <span>
-          <small>보유금</small>
+          <small>돈</small>
           <strong>{money.toLocaleString("ko-KR")}원</strong>
         </span>
         <span>
           <small>돌봄</small>
           <strong>{carePoints}P</strong>
         </span>
-        <span>
-          <small>급여 보너스</small>
-          <strong>+{salaryBonusPercent}%</strong>
+      </div>
+
+      <div className="topbar-secondary" aria-label="보호자 상태">
+        <span
+          className="salary-bonus-chip"
+          aria-label={`급여 보너스 ${salaryBonusPercent}%`}
+          title={`급여 보너스 +${salaryBonusPercent}%`}
+        >
+          <span aria-hidden="true">↗</span>
+          +{salaryBonusPercent}%
+        </span>
+        <span
+          className="owner-status"
+          role="status"
+          aria-label={`보호자, ${ROOM_NAMES[ownerRoom]}, ${ownerState}`}
+          title={`보호자 · ${ROOM_NAMES[ownerRoom]} · ${ownerState}`}
+        >
+          <span aria-hidden="true">⌂</span>
+          <strong>{ROOM_NAMES[ownerRoom]}</strong>
+          <span
+            className={pausedReason ? "focus-on" : "focus-off"}
+            aria-hidden="true"
+          >
+            {pausedReason ? "⏸" : ownerMoving ? "➜" : "●"}
+          </span>
         </span>
       </div>
 
@@ -91,13 +119,6 @@ export function TopBar({
             {item.label}
           </button>
         ))}
-      </div>
-
-      <div className="owner-status" role="status">
-        <span>보호자 · {ROOM_NAMES[ownerRoom]}</span>
-        <span className={pausedReason ? "focus-on" : "focus-off"}>
-          {pausedReason ?? (ownerMoving ? "이동 중" : "생활 중")}
-        </span>
       </div>
     </header>
   );

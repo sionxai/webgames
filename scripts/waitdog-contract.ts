@@ -16,15 +16,20 @@ import {
 } from "../src/waitdog/services/narrative";
 import {
   createSim,
+  WORLD_STATIONS,
   type WaitdogSnapshot,
   type WaitdogSnapshotV1,
   type WaitdogSnapshotV2,
+  type WaitdogSnapshotV3,
   type WaitdogUiSim,
 } from "../src/waitdog/services/waitdogSim";
 import {
   ENCOUNTER_DEFINITIONS,
   ENCOUNTER_IDS,
 } from "../src/waitdog/services/encounters";
+import {
+  ownerDogFootprintSeparation,
+} from "../src/waitdog/services/economy";
 import type {
   DecisionTrace,
   EventLog,
@@ -681,7 +686,7 @@ assert(
 const roundtripSource = createSim(8101);
 roundtripSource.feed(70);
 roundtripSource.advanceMinutes(210);
-assert(roundtripSource.serialize().version === 3, "serialize did not emit v3");
+assert(roundtripSource.serialize().version === 4, "serialize did not emit v4");
 const detachedSnapshot = roundtripSource.serialize();
 detachedSnapshot.log.push({
   t: 0,
@@ -721,19 +726,37 @@ assert(
 assert(
   JSON.stringify(roundtripSource.getFullState().spatial) ===
     JSON.stringify(roundtripRestored.getFullState().spatial),
-  "v3 roundtrip lost spatial continuation",
+  "v4 roundtrip lost spatial continuation",
 );
 
-const v3ForMigration = createSim(8104).serialize();
+const v4ForMigration = createSim(8104).serialize();
 const {
-  version: _v3Version,
+  version: _v4Version,
   ownerSpatial: _v3OwnerSpatial,
   encounterDirector: _v3EncounterDirector,
   economy: _v3Economy,
   work: _v3Work,
   environment: _v3Environment,
   ...v2Fields
-} = v3ForMigration;
+} = v4ForMigration;
+const {
+  seated: _v4Seated,
+  ...v3Work
+} = v4ForMigration.work;
+const {
+  foodBowl: _v4FoodBowl,
+  waterBowl: _v4WaterBowl,
+  ...v3Environment
+} = v4ForMigration.environment;
+const v3ForMigration: WaitdogSnapshotV3 = {
+  ...v2Fields,
+  version: 3,
+  ownerSpatial: v4ForMigration.ownerSpatial,
+  encounterDirector: v4ForMigration.encounterDirector,
+  economy: v4ForMigration.economy,
+  work: v3Work,
+  environment: v3Environment,
+};
 const v2ForMigration: WaitdogSnapshotV2 = {
   version: 2,
   ...v2Fields,
@@ -752,7 +775,7 @@ const legacySnapshot: WaitdogSnapshotV1 = {
 const migratedV1 = createSim(0);
 migratedV1.restore(legacySnapshot);
 const migratedSnapshot = migratedV1.serialize();
-assert(migratedSnapshot.version === 3, "v1 snapshot did not migrate to v3");
+assert(migratedSnapshot.version === 4, "v1 snapshot did not migrate to v4");
 assert(
   migratedSnapshot.spatial.room === legacySnapshot.dogRoom &&
     migratedSnapshot.spatial.x ===
@@ -798,7 +821,7 @@ assert(
       BALANCE.LIFESTYLE.ECONOMY.STARTER_MONEY &&
     migratedV2Snapshot.encounterDirector.active === null &&
     migratedV2Snapshot.work.progress === 0,
-  "v2 migration did not create v3 lifestyle defaults",
+  "v2 migration did not create v4 lifestyle defaults",
 );
 assert(
   !migratedV2.getFullState().ownerDogOverlap,
@@ -812,6 +835,43 @@ assert(
   JSON.stringify(migratedV1.serialize()) ===
     JSON.stringify(migratedContinuation.serialize()),
   "v1 migration continuation was not deterministic",
+);
+
+const migratedV3 = createSim(3);
+migratedV3.restore(v3ForMigration);
+const migratedV3Snapshot = migratedV3.serialize();
+const {
+  version: _migratedV3Version,
+  work: migratedV3Work,
+  environment: migratedV3Environment,
+  ...migratedV3Legacy
+} = migratedV3Snapshot;
+const {
+  seated: _migratedV3Seated,
+  ...migratedV3LegacyWork
+} = migratedV3Work;
+const {
+  foodBowl: _migratedV3FoodBowl,
+  waterBowl: _migratedV3WaterBowl,
+  ...migratedV3LegacyEnvironment
+} = migratedV3Environment;
+const {
+  version: _legacyV3Version,
+  work: legacyV3Work,
+  environment: legacyV3Environment,
+  ...legacyV3Fields
+} = v3ForMigration;
+assert(
+  JSON.stringify(migratedV3Legacy) === JSON.stringify(legacyV3Fields) &&
+    JSON.stringify(migratedV3LegacyWork) === JSON.stringify(legacyV3Work) &&
+    JSON.stringify(migratedV3LegacyEnvironment) ===
+      JSON.stringify(legacyV3Environment) &&
+    migratedV3Work.seated === false &&
+    migratedV3Environment.foodBowl.itemId === null &&
+    migratedV3Environment.foodBowl.level === 0 &&
+    migratedV3Environment.waterBowl.level === 0 &&
+    migratedV3Environment.waterBowl.clean,
+  "v3 migration changed legacy data or missed v4 world defaults",
 );
 
 const largeMealSource = createSim(8103);
@@ -995,8 +1055,14 @@ assert(
 const solveActiveEncounter = (sim: WaitdogUiSim) => {
   let encounter = sim.getDogView().activeEncounter;
   assert(encounter !== null, "encounter solver received no active encounter");
-  for (const option of encounter.causeChoices) {
-    sim.selectEncounterCause(option.id);
+  const definition = ENCOUNTER_DEFINITIONS.find((candidate) =>
+    candidate.id === encounter?.kind
+  );
+  if (definition === undefined) {
+    throw new Error("CONTRACT FAIL: encounter solver lacked a definition");
+  }
+  for (const cause of definition.causes) {
+    sim.selectEncounterCause(cause.id);
     if (sim.getDogView().activeEncounter?.stage === "response") break;
   }
   encounter = sim.getDogView().activeEncounter;
@@ -1028,8 +1094,14 @@ const solveActiveEncounter = (sim: WaitdogUiSim) => {
 const advanceActiveEncounterToReinforcement = (sim: WaitdogUiSim) => {
   let encounter = sim.getDogView().activeEncounter;
   assert(encounter !== null, "reinforcement solver received no active encounter");
-  for (const option of encounter.causeChoices) {
-    sim.selectEncounterCause(option.id);
+  const definition = ENCOUNTER_DEFINITIONS.find((candidate) =>
+    candidate.id === encounter?.kind
+  );
+  if (definition === undefined) {
+    throw new Error("CONTRACT FAIL: reinforcement solver lacked a definition");
+  }
+  for (const cause of definition.causes) {
+    sim.selectEncounterCause(cause.id);
     if (sim.getDogView().activeEncounter?.stage === "response") break;
   }
   encounter = sim.getDogView().activeEncounter;
@@ -1100,9 +1172,11 @@ assert(
 );
 assert(
   firstEncounterView?.kind === "potty" &&
-    firstEncounterView.causeChoices.length === 3 &&
-    firstEncounterView.responseChoices.length === 3,
-  "first tutorial was not the three-choice potty encounter",
+    firstEncounterView.causeChoices.length === 0 &&
+    firstEncounterView.responseChoices.length === 0 &&
+    firstEncounterView.inferredCause === null &&
+    firstEncounterView.contextActions.length === 0,
+  "first tutorial exposed choices or an inferred cause before observation",
 );
 assert(
   !JSON.stringify(firstEncounterView).includes("hiddenCauseId") &&
@@ -1115,7 +1189,7 @@ assert(
   JSON.stringify(activeEncounterReload.getDogView().activeEncounter) ===
       JSON.stringify(encounterDeterministicB.getDogView().activeEncounter) &&
     activeEncounterReload.getDogView().pausedForEncounter,
-  "active encounter did not survive a v3 reload",
+  "active encounter did not survive a v4 reload",
 );
 const pausedAt = encounterDeterministicA.getFullState().absoluteMinute;
 encounterDeterministicA.advanceMinutes(30);
@@ -1312,8 +1386,11 @@ const sameStagePublic = sameStageHint.getDogView().activeEncounter;
 if (sameStagePrivate === null || sameStagePublic === null) {
   throw new Error("CONTRACT FAIL: same-stage hint encounter was not active");
 }
-const wrongSameStageCause = sameStagePublic.causeChoices.find((option) =>
-  option.id !== sameStagePrivate.hiddenCauseId
+const sameStageDefinition = ENCOUNTER_DEFINITIONS.find((definition) =>
+  definition.id === sameStagePublic.kind
+);
+const wrongSameStageCause = sameStageDefinition?.causes.find((cause) =>
+  cause.id !== sameStagePrivate.hiddenCauseId
 );
 if (wrongSameStageCause === undefined) {
   throw new Error("CONTRACT FAIL: same-stage hint lacked a wrong cause");
@@ -1351,7 +1428,13 @@ assert(
   workSim.moveOwnerTo({ hotspotId: "computer" }).ok,
   "computer move command failed",
 );
-workSim.advanceMinutes(1);
+for (
+  let minute = 0;
+  minute < 5 && workSim.getFullState().ownerSpatial.moving;
+  minute += 1
+) {
+  workSim.advanceMinutes(1);
+}
 const ownerAtComputer = workSim.getDogView().ownerSpatial;
 assert(
   !ownerAtComputer.moving &&
@@ -1423,7 +1506,7 @@ workAlertRestored.restore(workAlertSnapshot);
 assert(
   workAlertRestored.getDogView().work.state === "alert" &&
     workAlertRestored.getFullState().work.progress === 50,
-  "work alert did not survive a v3 reload",
+  "work alert did not survive a v4 reload",
 );
 workAlertRestored.resolveWorkAlert("continue");
 workAlertRestored.performWorkBlock("reload-gig");
@@ -2153,6 +2236,23 @@ const closeEnough = (
   second: number,
   tolerance = 1e-9,
 ): boolean => Math.abs(first - second) <= tolerance;
+const OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX = (122 + 110) / 2;
+const OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX = 145;
+const ownerDogSpriteBoundsSeparated = (
+  state: Pick<WaitdogFullState, "ownerSpatial" | "spatial">,
+): boolean => {
+  if (state.ownerSpatial.room !== state.spatial.room) return true;
+  const travel =
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
+      state.ownerSpatial.room
+    ];
+  const horizontalDistancePx =
+    Math.abs(state.ownerSpatial.x - state.spatial.x) * travel.x;
+  const verticalDistancePx =
+    Math.abs(state.ownerSpatial.y - state.spatial.y) * travel.y;
+  return horizontalDistancePx >= OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX ||
+    verticalDistancePx >= OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX;
+};
 
 // C1: fixed axis/diagonal steps and invalid/opposite input rejection.
 const directAxis = createSim(10_001);
@@ -2232,39 +2332,50 @@ assert(
 );
 
 // C2: room bounds, doorway roundtrip, and deterministic direct traces.
-const wallBounded = createSim(10_101);
+const wallBounded = createSim(10_101, { dogRoom: "toilet" });
 for (let step = 0; step < 10; step += 1) {
   if (!wallBounded.moveOwnerBy({ dx: 0, dy: 1 }).ok) {
     throw new Error("CONTRACT FAIL: C2 setup could not reach a non-door wall");
   }
 }
-let wallBlocked = false;
-for (let step = 0; step < 20; step += 1) {
+let wallTransitioned = false;
+for (let step = 0; step < 30; step += 1) {
   if (!wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
-    wallBlocked = true;
+    break;
+  }
+  if (wallBounded.getFullState().ownerSpatial.room !== "living") {
+    wallTransitioned = true;
     break;
   }
 }
 const wallPosition = wallBounded.getFullState().ownerSpatial;
+const wallTransition = wallPosition.room === "kitchen"
+  ? BALANCE.SPATIAL.TRANSITION.living.kitchen
+  : BALANCE.SPATIAL.TRANSITION.living.toilet;
 assert(
-  wallBlocked &&
-    wallPosition.room === "living" &&
-    wallPosition.x === BALANCE.SPATIAL.MAX_COORDINATE &&
-    closeEnough(wallPosition.y, 0.5),
-  "C2 direct movement crossed or escaped a wall outside a doorway",
+  wallTransitioned &&
+    (wallPosition.room === "kitchen" ||
+      wallPosition.room === "toilet") &&
+    wallPosition.x === wallTransition.entry.x &&
+    wallPosition.y === wallTransition.entry.y,
+  "C2 soft doorway approach did not snap to the nearest valid door",
 );
 const wallStableBefore = wallBounded.serialize();
 assert(
-  !wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok &&
-    JSON.stringify(wallBounded.serialize()) ===
-      JSON.stringify(wallStableBefore),
-  "C2 repeated boundary input jittered or mutated the clamped state",
+  wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok &&
+    wallBounded.getFullState().ownerSpatial.room ===
+      wallStableBefore.ownerSpatial.room &&
+    wallBounded.getFullState().ownerSpatial.x >= 0 &&
+    wallBounded.getFullState().ownerSpatial.x <= 1 &&
+    wallBounded.getFullState().ownerSpatial.y >= 0 &&
+    wallBounded.getFullState().ownerSpatial.y <= 1,
+  "C2 post-door movement escaped coordinate bounds or changed rooms",
 );
 
 const doorRoundtrip = createSim(10_102);
 for (
   let step = 0;
-  step < 20 && doorRoundtrip.getFullState().ownerSpatial.room === "living";
+  step < 30 && doorRoundtrip.getFullState().ownerSpatial.room === "living";
   step += 1
 ) {
   if (!doorRoundtrip.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
@@ -2364,8 +2475,13 @@ assert(
       "encounterDistance",
       "encounterReady",
       "nearbyTarget",
+      "targets",
+      "contextActions",
     ].sort().join(",") &&
-    !("hiddenCauseId" in publicBeforeObserve.activeEncounter!),
+    !("hiddenCauseId" in publicBeforeObserve.activeEncounter!) &&
+    publicBeforeObserve.activeEncounter?.inferredCause === null &&
+    publicBeforeObserve.activeEncounter?.responseChoices.length === 0 &&
+    publicBeforeObserve.activeEncounter?.contextActions.length === 0,
   "C4 public interaction shape changed or exposed a hidden cause field",
 );
 const outsideActionBefore = proximityEncounter.serialize();
@@ -2400,14 +2516,23 @@ while (
   proximitySteps += 1;
 }
 const readyInteraction = proximityEncounter.getDogView().interaction;
+const proximityReadyState = proximityEncounter.getFullState();
+const proximityCueSeparation = ownerDogFootprintSeparation(
+  proximityReadyState.ownerSpatial,
+  { room: proximityCue.room, ...proximityCue.anchor },
+);
 assert(
   proximitySteps > 0 &&
     readyInteraction.encounterReady &&
     readyInteraction.encounterDistance !== null &&
-    readyInteraction.encounterDistance <=
-      BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS &&
-    readyInteraction.nearbyTarget === "encounter" &&
-    proximityEncounter.getFullState().absoluteMinute ===
+    (
+      readyInteraction.encounterDistance <=
+          BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS ||
+        proximityCueSeparation <=
+          BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE
+    ) &&
+    readyInteraction.nearbyTarget === "cue" &&
+    proximityReadyState.absoluteMinute ===
       outsideActionBefore.absoluteMinute,
   "C4 fixed click steps did not reach the cue with frozen game time",
 );
@@ -2452,17 +2577,16 @@ assert(
   "C4 in-range reinforcement did not complete the encounter economy",
 );
 
-const encounterSafetyDistance =
-  BALANCE.LIFESTYLE.OWNER.COLLISION_RADIUS +
-  BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS +
-  BALANCE.LIFESTYLE.OWNER.SAFETY_GAP;
 assert(
   BALANCE.LIFESTYLE.OWNER.INTERACTION_RADIUS === 0.12 &&
-    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS >= 0.18 &&
-    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS <= 0.2 &&
-    BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS >
-      encounterSafetyDistance,
-  "C4 encounter proximity was not separated safely from the computer radius",
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
+        .HORIZONTAL_CLEARANCE_PX >= 120 &&
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
+        .VERTICAL_CLEARANCE_PX >= 150 &&
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
+        .SUPERELLIPSE_EXPONENT >= 8 &&
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE > 1,
+  "C4 encounter proximity did not preserve sprite-sized visual clearance",
 );
 
 const whineProximity = createSim(10_302);
@@ -2501,6 +2625,10 @@ const whineOwnerDogDistance = Math.hypot(
   whineReadyState.ownerSpatial.x - whineReadyState.spatial.x,
   whineReadyState.ownerSpatial.y - whineReadyState.spatial.y,
 );
+const whineOwnerDogSeparation = ownerDogFootprintSeparation(
+  whineReadyState.ownerSpatial,
+  whineReadyState.spatial,
+);
 assert(
   whineApproachSteps > 0 &&
     whineReadyView.interaction.encounterReady &&
@@ -2509,7 +2637,13 @@ assert(
       whineReadyView.interaction.encounterDistance,
       whineOwnerDogDistance,
     ) &&
-    whineOwnerDogDistance >= encounterSafetyDistance - 1e-9 &&
+    whineOwnerDogSeparation >= 1 - 1e-9 &&
+    (
+      whineOwnerDogDistance <=
+          BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS ||
+        whineOwnerDogSeparation <=
+          BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE
+    ) &&
     !whineReadyState.ownerDogOverlap,
   "C4 whine could not become ready while preserving owner/dog safety",
 );
@@ -2521,23 +2655,164 @@ assert(
 
 // C5: every successful direct step preserves owner/dog separation.
 const directOverlap = createSim(10_401);
+let collisionConstrained = false;
 for (let step = 0; step < 24; step += 1) {
   const state = directOverlap.getFullState();
+  const dogBeforeStep = state.spatial;
   const result = directOverlap.moveOwnerBy({
     dx: state.spatial.x - state.ownerSpatial.x,
     dy: state.spatial.y - state.ownerSpatial.y,
   });
-  if (!result.ok) {
-    throw new Error(
-      `CONTRACT FAIL: C5 collision approach failed: ${result.reason}`,
-    );
-  }
+  const separation = ownerDogFootprintSeparation(
+    directOverlap.getFullState().ownerSpatial,
+    directOverlap.getFullState().spatial,
+  );
+  if (!result.ok || separation <= 1.05) collisionConstrained = true;
   assert(
     !directOverlap.getFullState().ownerDogOverlap &&
-      !directOverlap.getDogView().ownerDogOverlap,
-    `C5 owner/dog footprints overlapped after direct step ${step + 1}`,
+      !directOverlap.getDogView().ownerDogOverlap &&
+      ownerDogFootprintSeparation(
+        directOverlap.getFullState().ownerSpatial,
+        directOverlap.getFullState().spatial,
+      ) >= 1 - 1e-9 &&
+      JSON.stringify(directOverlap.getFullState().spatial) ===
+        JSON.stringify(dogBeforeStep),
+    `C5 owner/dog footprints overlapped or dog moved after step ${step + 1}`,
   );
 }
+assert(
+  collisionConstrained,
+  "C5 owner movement never reached or respected the dog collision boundary",
+);
+
+const initialSpriteSeparation = createSim(10_402).getFullState();
+assert(
+  !initialSpriteSeparation.ownerDogOverlap &&
+    ownerDogSpriteBoundsSeparated(initialSpriteSeparation),
+  "C5 fresh living-room spawn visually overlapped the dog sprites",
+);
+
+const horizontalApproach = createSim(10_403);
+const horizontalSnapshot = horizontalApproach.serialize();
+horizontalSnapshot.dogRoom = "living";
+horizontalSnapshot.spatial = {
+  ...horizontalSnapshot.spatial,
+  room: "living",
+  x: 0.5,
+  y: 0.5,
+  targetRoom: "living",
+  targetX: 0.5,
+  targetY: 0.5,
+  route: [],
+  activity: "idle",
+  moving: false,
+};
+horizontalSnapshot.ownerSpatial = {
+  ...horizontalSnapshot.ownerSpatial,
+  room: "living",
+  x: 0.9,
+  y: 0.5,
+  targetRoom: "living",
+  targetX: 0.9,
+  targetY: 0.5,
+  route: [],
+  activity: "idle",
+  destinationActivity: "idle",
+  moving: false,
+};
+horizontalApproach.restore(horizontalSnapshot);
+const horizontalDogBefore = horizontalApproach.getFullState().spatial;
+for (let step = 0; step < 40; step += 1) {
+  const state = horizontalApproach.getFullState();
+  const result = horizontalApproach.moveOwnerBy({ dx: -1, dy: 0 });
+  assert(
+    !horizontalApproach.getFullState().ownerDogOverlap &&
+      ownerDogSpriteBoundsSeparated(horizontalApproach.getFullState()) &&
+      JSON.stringify(horizontalApproach.getFullState().spatial) ===
+        JSON.stringify(horizontalDogBefore),
+    `C5 horizontal approach violated sprite separation at step ${step + 1}`,
+  );
+  if (
+    !result.ok ||
+    ownerDogFootprintSeparation(
+        horizontalApproach.getFullState().ownerSpatial,
+        horizontalApproach.getFullState().spatial,
+      ) <= 1.05
+  ) {
+    break;
+  }
+  assert(
+    horizontalApproach.getFullState().ownerSpatial.x < state.ownerSpatial.x,
+    `C5 horizontal approach stalled before the boundary at step ${step + 1}`,
+  );
+}
+assert(
+  ownerDogFootprintSeparation(
+      horizontalApproach.getFullState().ownerSpatial,
+      horizontalApproach.getFullState().spatial,
+    ) <= 1.05 &&
+    ownerDogSpriteBoundsSeparated(horizontalApproach.getFullState()),
+  "C5 horizontal approach did not reach a visibly separated boundary",
+);
+
+const diagonalApproach = createSim(10_404);
+const diagonalSnapshot = diagonalApproach.serialize();
+diagonalSnapshot.dogRoom = "living";
+diagonalSnapshot.spatial = {
+  ...diagonalSnapshot.spatial,
+  room: "living",
+  x: 0.5,
+  y: 0.5,
+  targetRoom: "living",
+  targetX: 0.5,
+  targetY: 0.5,
+  route: [],
+  activity: "idle",
+  moving: false,
+};
+diagonalSnapshot.ownerSpatial = {
+  ...diagonalSnapshot.ownerSpatial,
+  room: "living",
+  x: 0.9,
+  y: 0.7,
+  targetRoom: "living",
+  targetX: 0.9,
+  targetY: 0.7,
+  route: [],
+  activity: "idle",
+  destinationActivity: "idle",
+  moving: false,
+};
+diagonalApproach.restore(diagonalSnapshot);
+const diagonalDogBefore = diagonalApproach.getFullState().spatial;
+let diagonalBoundaryReached = false;
+for (let step = 0; step < 40; step += 1) {
+  const result = diagonalApproach.stepOwnerToward({
+    room: "living",
+    x: diagonalDogBefore.x,
+    y: diagonalDogBefore.y,
+  });
+  const state = diagonalApproach.getFullState();
+  const separation = ownerDogFootprintSeparation(
+    state.ownerSpatial,
+    state.spatial,
+  );
+  assert(
+    !state.ownerDogOverlap &&
+      ownerDogSpriteBoundsSeparated(state) &&
+      JSON.stringify(state.spatial) === JSON.stringify(diagonalDogBefore),
+    `C5 diagonal approach violated sprite separation at step ${step + 1}`,
+  );
+  if (!result.ok || separation <= 1.05) {
+    diagonalBoundaryReached = true;
+    break;
+  }
+}
+assert(
+  diagonalBoundaryReached &&
+    ownerDogSpriteBoundsSeparated(diagonalApproach.getFullState()),
+  "C5 diagonal approach did not reach a visibly separated boundary",
+);
 
 // C6: click stepping follows the existing toilet-living-kitchen route.
 const clickRoute = createSim(10_501, {
@@ -2608,10 +2883,21 @@ assert(
     JSON.stringify(nearbyWork.serialize()) === JSON.stringify(farWorkBefore),
   "C7 work started outside the computer interaction radius",
 );
+for (
+  let step = 0;
+  step < 20 &&
+  nearbyWork.getDogView().interaction.nearbyTarget !== "computer";
+  step += 1
+) {
+  const owner = nearbyWork.getFullState().ownerSpatial;
+  const computer = BALANCE.LIFESTYLE.OWNER.HOTSPOT.computer;
+  nearbyWork.moveOwnerBy({
+    dx: computer.x - owner.x,
+    dy: computer.y - owner.y,
+  });
+}
 assert(
-  nearbyWork.moveOwnerBy({ dx: 1, dy: -1 }).ok &&
-    nearbyWork.moveOwnerBy({ dx: 1, dy: -1 }).ok &&
-    nearbyWork.getDogView().interaction.nearbyTarget === "computer" &&
+  nearbyWork.getDogView().interaction.nearbyTarget === "computer" &&
     nearbyWork.getDogView().work.state === "ready",
   "C7 direct movement did not expose the nearby computer target",
 );
@@ -2640,11 +2926,15 @@ assert(
 );
 const activeWorkBeforeDirect = nearbyWork.serialize();
 assert(
-  !nearbyWork.moveOwnerBy({ dx: -1, dy: 0 }).ok &&
-    !nearbyWork.getDogView().interaction.directControlEnabled &&
-    JSON.stringify(nearbyWork.serialize()) ===
-      JSON.stringify(activeWorkBeforeDirect),
-  "C7 direct movement mutated an active work block",
+  nearbyWork.moveOwnerBy({ dx: 1, dy: 0 }).ok &&
+    nearbyWork.getDogView().interaction.directControlEnabled &&
+    !nearbyWork.getFullState().work.active &&
+    !nearbyWork.getFullState().work.seated &&
+    nearbyWork.getFullState().work.progress ===
+      activeWorkBeforeDirect.work.progress &&
+    JSON.stringify(nearbyWork.getFullState().spatial) ===
+      JSON.stringify(activeWorkBeforeDirect.spatial),
+  "C7 direct movement did not leave the seat or moved the dog/work progress",
 );
 assert(
   nearbyWork.performWorkBlock("direct-work").ok &&
@@ -2670,7 +2960,7 @@ const directSnapshot = clickRoute.serialize();
 const directSnapshotRecord =
   directSnapshot as unknown as Record<string, unknown>;
 assert(
-  directSnapshot.version === 3 &&
+  directSnapshot.version === 4 &&
     !("interaction" in directSnapshotRecord) &&
     !("heldInput" in directSnapshotRecord) &&
     !("directControlEnabled" in directSnapshotRecord),
@@ -2700,6 +2990,744 @@ assert(
 assert(
   assertionCount - directContractAssertionStart >= 50,
   "C1-C8 direct-control contract contains fewer than 50 assertions",
+);
+
+const worldContractAssertionStart = assertionCount;
+
+const moveOwnerNearWorldTarget = (
+  sim: WaitdogUiSim,
+  targetId: string,
+  maxSteps = 180,
+): void => {
+  for (let step = 0; step < maxSteps; step += 1) {
+    const target = sim.getDogView().interaction.targets.find((candidate) =>
+      candidate.id === targetId
+    );
+    if (target === undefined) {
+      throw new Error(`CONTRACT FAIL: missing world target ${targetId}`);
+    }
+    if (target.nearby) return;
+    const result = sim.stepOwnerToward({
+      room: target.room,
+      x: target.x,
+      y: target.y,
+    });
+    if (!result.ok) {
+      throw new Error(
+        `CONTRACT FAIL: could not approach ${targetId}: ${result.reason}`,
+      );
+    }
+  }
+  throw new Error(`CONTRACT FAIL: approach to ${targetId} exceeded step cap`);
+};
+
+// M1-M2: v4 state and public encounter redaction/reveal.
+const automaticEncounter = createSim(11_001);
+const automaticBefore = automaticEncounter.getDogView();
+assert(
+  automaticBefore.activeEncounter === null &&
+    automaticBefore.interaction.targets.some((target) =>
+      target.id === "computer" &&
+      target.x === WORLD_STATIONS.computer.x &&
+      target.y === WORLD_STATIONS.computer.y
+    ) &&
+    automaticBefore.interaction.targets.some((target) =>
+      target.id === "foodBowl" &&
+      target.x === WORLD_STATIONS.foodBowl.x &&
+      target.y === WORLD_STATIONS.foodBowl.y
+    ) &&
+    automaticBefore.interaction.targets.some((target) =>
+      target.id === "waterBowl" &&
+      target.x === WORLD_STATIONS.waterBowl.x &&
+      target.y === WORLD_STATIONS.waterBowl.y
+    ) &&
+    automaticBefore.interaction.targets.some((target) =>
+      target.id === "bath" &&
+      target.x === WORLD_STATIONS.bath.x &&
+      target.y === WORLD_STATIONS.bath.y
+    ),
+  "M1 fresh public view missed static world stations",
+);
+assert(
+  automaticEncounter.ensureFirstEncounter().ok &&
+    automaticEncounter.getDogView().activeEncounter?.kind === "potty",
+  "M2 first encounter API did not start the tutorial encounter",
+);
+const automaticStartedSnapshot = automaticEncounter.serialize();
+assert(
+  automaticEncounter.ensureFirstEncounter().ok &&
+    JSON.stringify(automaticEncounter.serialize()) ===
+      JSON.stringify(automaticStartedSnapshot),
+  "M2 repeated first encounter API call was not idempotent",
+);
+const automaticRedacted = automaticEncounter.getDogView();
+const automaticPublicJson = JSON.stringify(automaticRedacted.activeEncounter);
+assert(
+  automaticRedacted.activeEncounter?.inferredCause === null &&
+    automaticRedacted.activeEncounter.responseChoices.length === 0 &&
+    automaticRedacted.activeEncounter.contextActions.length === 0 &&
+    !automaticPublicJson.includes("hiddenCauseId") &&
+    !automaticPublicJson.includes("correctResponseId"),
+  "M2 pre-observation public view exposed an inferred cause or answer",
+);
+assert(
+  automaticRedacted.interaction.targets.some((target) =>
+    target.id === "cue" &&
+    target.actions.length === 1 &&
+    target.actions[0].id === "encounter:observe"
+  ),
+  "M2 active encounter did not expose one nearby-observe world action",
+);
+moveOwnerNearWorldTarget(automaticEncounter, "cue");
+assert(
+  automaticEncounter.performWorldAction("encounter:observe").ok,
+  "M2 nearby world observe action was rejected",
+);
+const automaticObserved = automaticEncounter.getDogView().activeEncounter;
+assert(
+  automaticObserved?.stage === "response" &&
+    typeof automaticObserved.inferredCause === "string" &&
+    automaticObserved.inferredCause.length > 0 &&
+    automaticObserved.contextActions.length > 0 &&
+    automaticObserved.contextActions.length <= 3 &&
+    automaticObserved.responseChoices.length ===
+      automaticObserved.contextActions.length,
+  "M2 observation did not reveal one short cause and up to three actions",
+);
+assert(
+  !JSON.stringify(automaticObserved).includes("hiddenCauseId") &&
+    !JSON.stringify(automaticObserved).includes("correctResponseId"),
+  "M2 observed public view exposed the stored hidden answer",
+);
+
+const firstMissionCollision = createSim(11_003);
+const firstMissionSnapshot = firstMissionCollision.serialize();
+firstMissionSnapshot.spatial.x = 0.7;
+firstMissionSnapshot.spatial.y = 0.72;
+firstMissionSnapshot.spatial.targetX = 0.7;
+firstMissionSnapshot.spatial.targetY = 0.72;
+firstMissionCollision.restore(firstMissionSnapshot);
+assert(
+  firstMissionCollision.ensureFirstEncounter().ok,
+  "M2 visual collision setup could not start the first encounter",
+);
+const firstMissionDogBefore = JSON.stringify(
+  firstMissionCollision.getFullState().spatial,
+);
+moveOwnerNearWorldTarget(firstMissionCollision, "cue");
+const firstMissionReady = firstMissionCollision.getFullState();
+const firstMissionReadyInteraction =
+  firstMissionCollision.getDogView().interaction;
+const firstMissionSeparation = ownerDogFootprintSeparation(
+  firstMissionReady.ownerSpatial,
+  firstMissionReady.spatial,
+);
+assert(
+  firstMissionCollision.getDogView().interaction.nearbyTarget === "cue" &&
+    firstMissionSeparation >= 1 - 1e-9 &&
+    firstMissionReadyInteraction.encounterDistance !== null &&
+    (
+      firstMissionReadyInteraction.encounterDistance <=
+          BALANCE.LIFESTYLE.OWNER.ENCOUNTER_INTERACTION_RADIUS ||
+        firstMissionSeparation <=
+          BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE
+    ) &&
+    !firstMissionReady.ownerDogOverlap &&
+    JSON.stringify(firstMissionReady.spatial) === firstMissionDogBefore,
+  "M2 first cue was not reachable with visual owner/dog clearance",
+);
+assert(
+  firstMissionCollision.performWorldAction("encounter:observe").ok,
+  "M2 visually separated first cue could not be observed",
+);
+const firstMissionInternal =
+  firstMissionCollision.getFullState().encounterDirector.active;
+const firstMissionDefinition = ENCOUNTER_DEFINITIONS.find((definition) =>
+  definition.id === firstMissionInternal?.encounterId
+);
+const firstMissionCause = firstMissionDefinition?.causes.find((cause) =>
+  cause.id === firstMissionInternal?.hiddenCauseId
+);
+if (firstMissionCause === undefined) {
+  throw new Error("CONTRACT FAIL: M2 first cue cause setup was missing");
+}
+assert(
+  firstMissionCollision.performWorldAction(
+    `encounter:response:${firstMissionCause.correctResponseId}`,
+  ).ok &&
+    firstMissionCollision.performWorldAction(
+      "encounter:reinforce:praise",
+    ).ok,
+  "M2 first cue could not advance through response and reinforcement",
+);
+const firstMissionOutcome = firstMissionCollision.getFullState();
+assert(
+  firstMissionCollision.getDogView().activeEncounter?.stage === "outcome" &&
+    ownerDogFootprintSeparation(
+        firstMissionOutcome.ownerSpatial,
+        firstMissionOutcome.spatial,
+      ) >= 1 - 1e-9 &&
+    !firstMissionOutcome.ownerDogOverlap &&
+    JSON.stringify(firstMissionOutcome.spatial) === firstMissionDogBefore,
+  "M2 first mission outcome overlapped or moved the dog",
+);
+
+const malformedWorldRestore = createSim(11_002);
+const malformedWorldBaseline = malformedWorldRestore.serialize();
+const rejectMalformedWorldSnapshot = (
+  mutate: (snapshot: WaitdogSnapshot) => void,
+  label: string,
+) => {
+  const candidate = JSON.parse(
+    JSON.stringify(malformedWorldBaseline),
+  ) as WaitdogSnapshot;
+  mutate(candidate);
+  let rejected = false;
+  try {
+    malformedWorldRestore.restore(candidate);
+  } catch {
+    rejected = true;
+  }
+  assert(rejected, `M1 malformed ${label} snapshot was accepted`);
+  assert(
+    JSON.stringify(malformedWorldRestore.serialize()) ===
+      JSON.stringify(malformedWorldBaseline),
+    `M1 malformed ${label} restore partially changed live state`,
+  );
+};
+rejectMalformedWorldSnapshot((snapshot) => {
+  snapshot.environment.foodBowl = { itemId: null, level: 1 };
+}, "food bowl");
+rejectMalformedWorldSnapshot((snapshot) => {
+  snapshot.environment.waterBowl.level = 101;
+}, "water bowl");
+rejectMalformedWorldSnapshot((snapshot) => {
+  (snapshot.work as unknown as Record<string, unknown>).heldInput = true;
+}, "held input");
+rejectMalformedWorldSnapshot((snapshot) => {
+  snapshot.work.seated = true;
+}, "remote seated work");
+
+// M3: delta-time movement, soft doors, room graph parity, and dog immutability.
+const deltaFrame = createSim(11_101);
+const deltaFrameStart = deltaFrame.getFullState().ownerSpatial;
+assert(
+  deltaFrame.moveOwnerBy({
+    dx: 1,
+    dy: 1,
+    elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+  }).ok,
+  "M3 reference delta-time movement was rejected",
+);
+const deltaFrameAfter = deltaFrame.getFullState().ownerSpatial;
+assert(
+  closeEnough(
+    Math.hypot(
+      deltaFrameAfter.x - deltaFrameStart.x,
+      deltaFrameAfter.y - deltaFrameStart.y,
+    ),
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+  ) &&
+    closeEnough(
+      deltaFrameAfter.x - deltaFrameStart.x,
+      deltaFrameAfter.y - deltaFrameStart.y,
+    ),
+  "M3 reference delta-time diagonal was not normalized",
+);
+const deltaLong = createSim(11_102);
+const deltaLongStart = deltaLong.getFullState().ownerSpatial;
+assert(
+  deltaLong.moveOwnerBy({ dx: 1, dy: 0, elapsedMs: 50 }).ok &&
+    closeEnough(
+      deltaLong.getFullState().ownerSpatial.x - deltaLongStart.x,
+      BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PER_SECOND * 0.05,
+    ),
+  "M3 elapsed milliseconds did not scale direct distance",
+);
+const invalidDeltaBefore = deltaLong.serialize();
+assert(
+  !deltaLong.moveOwnerBy({ dx: 1, dy: 0, elapsedMs: 0 }).ok &&
+    !deltaLong.moveOwnerBy({
+      dx: 1,
+      dy: 0,
+      elapsedMs: BALANCE.LIFESTYLE.OWNER.MAX_INPUT_DELTA_MS + 1,
+    }).ok &&
+    JSON.stringify(deltaLong.serialize()) ===
+      JSON.stringify(invalidDeltaBefore),
+  "M3 invalid delta-time input changed state",
+);
+
+for (const [index, y] of [0.12, 0.45, 0.88].entries()) {
+  const softDoor = createSim(11_110 + index);
+  const softDoorSnapshot = softDoor.serialize();
+  softDoorSnapshot.ownerSpatial.x = 0.96;
+  softDoorSnapshot.ownerSpatial.y = y;
+  softDoorSnapshot.ownerSpatial.targetX = 0.96;
+  softDoorSnapshot.ownerSpatial.targetY = y;
+  softDoor.restore(softDoorSnapshot);
+  assert(
+    softDoor.moveOwnerBy({ dx: 1, dy: 0 }).ok,
+    `M3 soft door rejected approach y=${y}`,
+  );
+  const softDoorOwner = softDoor.getFullState().ownerSpatial;
+  const expectedRoom = y < 0.5 ? "kitchen" : "toilet";
+  const expectedEntry =
+    BALANCE.SPATIAL.TRANSITION.living[expectedRoom].entry;
+  assert(
+    softDoorOwner.room === expectedRoom &&
+      softDoorOwner.x === expectedEntry.x &&
+      softDoorOwner.y === expectedEntry.y,
+    `M3 soft door did not auto-snap y=${y} to the nearest entry`,
+  );
+}
+
+const wasdRoute = createSim(11_120, {
+  owner: { room: "toilet", focusLocked: false },
+});
+const wasdRoomTrace = ["toilet"];
+for (let step = 0; step < 80; step += 1) {
+  const ownerSpatial = wasdRoute.getFullState().ownerSpatial;
+  if (ownerSpatial.room === "living") break;
+  const result = wasdRoute.moveOwnerBy({ dx: -1, dy: 0 });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: M3 toilet exit failed: ${result.reason}`);
+  }
+  if (wasdRoomTrace[wasdRoomTrace.length - 1] !==
+      wasdRoute.getFullState().ownerSpatial.room) {
+    wasdRoomTrace.push(wasdRoute.getFullState().ownerSpatial.room);
+  }
+}
+for (let step = 0; step < 40; step += 1) {
+  const ownerSpatial = wasdRoute.getFullState().ownerSpatial;
+  if (ownerSpatial.y <= 0.4) break;
+  const result = wasdRoute.moveOwnerBy({ dx: 0, dy: -1 });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: M3 living alignment failed: ${result.reason}`);
+  }
+}
+for (let step = 0; step < 80; step += 1) {
+  const ownerSpatial = wasdRoute.getFullState().ownerSpatial;
+  if (ownerSpatial.room === "kitchen") break;
+  const result = wasdRoute.moveOwnerBy({ dx: 1, dy: 0 });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: M3 kitchen entry failed: ${result.reason}`);
+  }
+  if (wasdRoomTrace[wasdRoomTrace.length - 1] !==
+      wasdRoute.getFullState().ownerSpatial.room) {
+    wasdRoomTrace.push(wasdRoute.getFullState().ownerSpatial.room);
+  }
+}
+assert(
+  wasdRoomTrace.join(",") === clickRoomTrace.join(",") &&
+    wasdRoute.getFullState().ownerSpatial.room === "kitchen",
+  "M3 WASD and click movement did not share the room graph",
+);
+assert(
+  [wasdRoute, clickRoute].every((sim) => {
+    const owner = sim.getFullState().ownerSpatial;
+    return owner.x >= 0 && owner.x <= 1 && owner.y >= 0 && owner.y <= 1;
+  }),
+  "M3 click or WASD route escaped coordinate bounds",
+);
+
+const clickCollision = createSim(11_130);
+const clickCollisionDog = clickCollision.getFullState().spatial;
+let clickCollisionConstrained = false;
+for (let step = 0; step < 40; step += 1) {
+  const result = clickCollision.stepOwnerToward({
+    room: clickCollisionDog.room,
+    x: clickCollisionDog.x,
+    y: clickCollisionDog.y,
+  });
+  const separation = ownerDogFootprintSeparation(
+    clickCollision.getFullState().ownerSpatial,
+    clickCollision.getFullState().spatial,
+  );
+  assert(
+    JSON.stringify(clickCollision.getFullState().spatial) ===
+      JSON.stringify(clickCollisionDog) &&
+      !clickCollision.getFullState().ownerDogOverlap &&
+      separation >= 1 - 1e-9,
+    `M3 click collision attempt ${step + 1} moved the dog`,
+  );
+  if (!result.ok || separation <= 1.05) clickCollisionConstrained = true;
+}
+assert(
+  clickCollisionConstrained,
+  "M3 click movement never reached or respected the dog collision boundary",
+);
+
+// M4-M5: world targets, remote no-ops, held work and one-time salary.
+const poopTargetSim = createSim(11_201);
+const poopTargetSnapshot = poopTargetSim.serialize();
+poopTargetSnapshot.activePoop = {
+  room: "living",
+  createdAt: poopTargetSnapshot.absoluteMinute,
+  location: "corner",
+};
+poopTargetSim.restore(poopTargetSnapshot);
+assert(
+  poopTargetSim.getDogView().interaction.targets.some((target) =>
+    target.id === "activePoop" &&
+    target.room === "living" &&
+    target.actions[0]?.id === "poop:cleanup"
+  ) &&
+    poopTargetSim.getDogView().interaction.targets.some((target) =>
+      target.kind === "door"
+    ) &&
+    poopTargetSim.getDogView().interaction.targets.some((target) =>
+      target.id === "dog"
+    ),
+  "M4 public world targets omitted dog, poop, or doors",
+);
+
+const heldWork = createSim(11_301);
+const remoteWorkBefore = heldWork.serialize();
+assert(
+  !heldWork.sitAtComputer("held-gig").ok &&
+    !heldWork.advanceWorkHold(250).ok &&
+    JSON.stringify(heldWork.serialize()) === JSON.stringify(remoteWorkBefore),
+  "M5 remote work changed state",
+);
+moveOwnerNearWorldTarget(heldWork, "computer");
+assert(
+  heldWork.sitAtComputer("held-gig").ok &&
+    heldWork.getFullState().work.seated &&
+    heldWork.getFullState().work.active &&
+    heldWork.getDogView().work.seated,
+  "M5 nearby sit did not create the explicit seated state",
+);
+const seatedWorkSnapshot = heldWork.serialize();
+assert(
+  seatedWorkSnapshot.work.seated &&
+    !("heldInput" in
+      (seatedWorkSnapshot.work as unknown as Record<string, unknown>)) &&
+    !("holding" in
+      (seatedWorkSnapshot.work as unknown as Record<string, unknown>)),
+  "M5 snapshot omitted seat state or persisted held input",
+);
+const heldMoneyBefore = heldWork.getFullState().economy.money;
+const heldClockBefore = heldWork.getFullState().absoluteMinute;
+assert(
+  heldWork.advanceWorkHold(1_000).ok &&
+    heldWork.getFullState().work.progress === 12.5 &&
+    heldWork.getFullState().economy.money === heldMoneyBefore &&
+    heldWork.getFullState().absoluteMinute === heldClockBefore,
+  "M5 one-second hold did not add smooth proportional progress",
+);
+const releasedProgress = heldWork.getFullState().work.progress;
+heldWork.advanceMinutes(2);
+assert(
+  heldWork.getFullState().work.progress === releasedProgress,
+  "M5 work progressed after hold ticks stopped",
+);
+const partialWorkSnapshot = heldWork.serialize();
+const partialWorkRestored = createSim(0);
+partialWorkRestored.restore(partialWorkSnapshot);
+assert(
+  partialWorkRestored.getFullState().work.progress === 12.5 &&
+    partialWorkRestored.getFullState().work.seated &&
+    JSON.stringify(partialWorkRestored.serialize()) ===
+      JSON.stringify(partialWorkSnapshot),
+  "M5 partial held work or seat did not survive restore",
+);
+const workDogBeforeMove = heldWork.getFullState().spatial;
+assert(
+  heldWork.moveOwnerBy({ dx: -1, dy: 0 }).ok &&
+    !heldWork.getFullState().work.seated &&
+    !heldWork.getFullState().work.active &&
+    heldWork.getFullState().work.progress === 12.5 &&
+    JSON.stringify(heldWork.getFullState().spatial) ===
+      JSON.stringify(workDogBeforeMove),
+  "M5 movement did not unseat work atomically or moved the dog",
+);
+const unseatedWorkBeforeHold = heldWork.serialize();
+assert(
+  !heldWork.advanceWorkHold(250).ok &&
+    JSON.stringify(heldWork.serialize()) ===
+      JSON.stringify(unseatedWorkBeforeHold),
+  "M5 unseated hold tick changed state",
+);
+moveOwnerNearWorldTarget(heldWork, "computer");
+assert(
+  heldWork.sitAtComputer("held-gig").ok &&
+    heldWork.advanceWorkHold(3_000).ok &&
+    heldWork.getFullState().work.progress === 50 &&
+    heldWork.getFullState().work.alert !== null &&
+    heldWork.getFullState().work.seated,
+  "M5 resumed hold did not pause exactly at the midpoint alert",
+);
+assert(
+  heldWork.resolveWorkAlert("continue").ok &&
+    heldWork.advanceWorkHold(4_000).ok &&
+    heldWork.getFullState().work.progress === 100,
+  "M5 continued hold did not finish at 100 percent",
+);
+const paidHeldState = heldWork.getFullState();
+const heldSalaryEntries = paidHeldState.economy.ledger.filter((entry) =>
+  entry.id === "salary:held-gig"
+);
+assert(
+  paidHeldState.economy.money ===
+      heldMoneyBefore + BALANCE.LIFESTYLE.ECONOMY.WORK.BASE_SALARY &&
+    heldSalaryEntries.length === 1 &&
+    paidHeldState.work.paidGigIds.filter((id) => id === "held-gig").length === 1,
+  "M5 held completion did not pay the canonical salary exactly once",
+);
+const paidHeldSnapshot = heldWork.serialize();
+const paidHeldMoney = paidHeldState.economy.money;
+assert(
+  !heldWork.advanceWorkHold(1_000).ok &&
+    heldWork.getFullState().economy.money === paidHeldMoney &&
+    heldWork.getFullState().economy.ledger.filter((entry) =>
+      entry.id === "salary:held-gig"
+    ).length === 1,
+  "M5 repeated hold tick paid a completed gig twice",
+);
+const paidHeldRestored = createSim(1);
+paidHeldRestored.restore(paidHeldSnapshot);
+assert(
+  !paidHeldRestored.sitAtComputer("held-gig").ok &&
+    !paidHeldRestored.advanceWorkHold(1_000).ok &&
+    paidHeldRestored.getFullState().economy.money === paidHeldMoney &&
+    paidHeldRestored.getFullState().economy.ledger.filter((entry) =>
+      entry.id === "salary:held-gig"
+    ).length === 1,
+  "M5 restore allowed completed work to pay twice",
+);
+
+// M6: nearby food selection, inventory ledger, bowl state, and dog eating.
+const foodBowlSim = createSim(11_401);
+const remoteFoodBefore = foodBowlSim.serialize();
+assert(
+  !foodBowlSim.fillFoodBowl("food-basic").ok &&
+    JSON.stringify(foodBowlSim.serialize()) === JSON.stringify(remoteFoodBefore),
+  "M6 remote food fill changed state",
+);
+moveOwnerNearWorldTarget(foodBowlSim, "foodBowl");
+const emptyComfortBefore = foodBowlSim.serialize();
+assert(
+  !foodBowlSim.fillFoodBowl("food-comfort").ok &&
+    JSON.stringify(foodBowlSim.serialize()) ===
+      JSON.stringify(emptyComfortBefore),
+  "M6 empty food inventory changed state",
+);
+const basicFoodBefore =
+  foodBowlSim.getFullState().economy.inventory["food-basic"];
+const foodHungerBefore = foodBowlSim.getFullState().stats.hunger;
+assert(
+  foodBowlSim.fillFoodBowl("food-basic", "food-bowl:contract-basic").ok,
+  "M6 nearby owned food could not fill the bowl",
+);
+const filledFoodState = foodBowlSim.getFullState();
+assert(
+  filledFoodState.economy.inventory["food-basic"] === basicFoodBefore - 1 &&
+    filledFoodState.environment.foodBowl.itemId === "food-basic" &&
+    filledFoodState.environment.foodBowl.level === 100 &&
+    filledFoodState.economy.ledger.filter((entry) =>
+      entry.id === "food-bowl:contract-basic" &&
+      entry.kind === "consume" &&
+      entry.itemId === "food-basic" &&
+      entry.quantityDelta === -1
+    ).length === 1,
+  "M6 food inventory, bowl, and consume ledger diverged",
+);
+const alreadyFullFood = foodBowlSim.serialize();
+assert(
+  !foodBowlSim.fillFoodBowl("food-basic").ok &&
+    JSON.stringify(foodBowlSim.serialize()) ===
+      JSON.stringify(alreadyFullFood),
+  "M6 full food bowl accepted another item",
+);
+for (let step = 0; step < 80; step += 1) {
+  const owner = foodBowlSim.getFullState().ownerSpatial;
+  if (owner.x >= 0.82 && owner.y >= 0.78) break;
+  const result = foodBowlSim.stepOwnerToward({
+    room: "kitchen",
+    x: 0.84,
+    y: 0.8,
+  });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: M6 owner retreat failed: ${result.reason}`);
+  }
+}
+for (
+  let minute = 0;
+  minute < 30 &&
+  foodBowlSim.getFullState().environment.foodBowl.level > 0;
+  minute += 1
+) {
+  foodBowlSim.advanceMinutes(1);
+}
+const eatenFoodState = foodBowlSim.getFullState();
+assert(
+  eatenFoodState.environment.foodBowl.itemId === null &&
+    eatenFoodState.environment.foodBowl.level === 0 &&
+    eatenFoodState.economy.inventory["food-basic"] === basicFoodBefore - 1 &&
+    eatenFoodState.digestionQueue.length === 1 &&
+    eatenFoodState.stats.hunger < foodHungerBefore,
+  "M6 dog eating did not reconcile bowl level, inventory, digestion, or hunger",
+);
+assert(
+  foodBowlSim.getLog().some((event) =>
+    event.type === "foodBowlFilled" &&
+    event.detail.itemId === "food-basic"
+  ) &&
+    foodBowlSim.getLog().some((event) =>
+      event.type === "foodBowlEaten" &&
+      event.detail.remainingLevel === 0
+    ),
+  "M6 food fill/eat log omitted the bowl transition",
+);
+const unpaidFoodBowlSim = createSim(11_402);
+const unpaidFoodBowlSnapshot = unpaidFoodBowlSim.serialize();
+unpaidFoodBowlSnapshot.environment.foodBowl = {
+  itemId: "food-basic",
+  level: 100,
+};
+let unpaidFoodBowlRejected = false;
+try {
+  unpaidFoodBowlSim.restore(unpaidFoodBowlSnapshot);
+} catch {
+  unpaidFoodBowlRejected = true;
+}
+assert(
+  unpaidFoodBowlRejected,
+  "M6 restore accepted a filled food bowl without a consume ledger",
+);
+
+// M7: nearby water fill/clean, persisted level, and dog drinking.
+const waterBowlSim = createSim(11_501);
+const remoteWaterBefore = waterBowlSim.serialize();
+assert(
+  !waterBowlSim.fillWaterBowl().ok &&
+    !waterBowlSim.cleanWaterBowl().ok &&
+    JSON.stringify(waterBowlSim.serialize()) ===
+      JSON.stringify(remoteWaterBefore),
+  "M7 remote water action changed state",
+);
+moveOwnerNearWorldTarget(waterBowlSim, "waterBowl");
+assert(
+  waterBowlSim.fillWaterBowl().ok &&
+    waterBowlSim.getFullState().environment.waterBowl.level === 100 &&
+    waterBowlSim.getFullState().environment.waterBowl.clean,
+  "M7 nearby clean water bowl did not fill",
+);
+const fullWaterBefore = waterBowlSim.serialize();
+assert(
+  !waterBowlSim.fillWaterBowl().ok &&
+    JSON.stringify(waterBowlSim.serialize()) ===
+      JSON.stringify(fullWaterBefore),
+  "M7 full water bowl accepted another fill",
+);
+for (let step = 0; step < 80; step += 1) {
+  const owner = waterBowlSim.getFullState().ownerSpatial;
+  if (owner.x >= 0.94 && owner.y >= 0.9) break;
+  const result = waterBowlSim.stepOwnerToward({
+    room: "kitchen",
+    x: 0.96,
+    y: 0.92,
+  });
+  if (!result.ok) {
+    throw new Error(`CONTRACT FAIL: M7 owner retreat failed: ${result.reason}`);
+  }
+}
+const firstDrink = waterBowlSim.serialize();
+firstDrink.dogRoom = WORLD_STATIONS.waterBowl.room;
+firstDrink.spatial = {
+  room: WORLD_STATIONS.waterBowl.room,
+  x: WORLD_STATIONS.waterBowl.x,
+  y: WORLD_STATIONS.waterBowl.y,
+  targetRoom: WORLD_STATIONS.waterBowl.room,
+  targetX: WORLD_STATIONS.waterBowl.x,
+  targetY: WORLD_STATIONS.waterBowl.y,
+  route: [],
+  activity: "seekWater",
+  moving: false,
+  nextActivityAt: firstDrink.spatial.nextActivityAt,
+};
+waterBowlSim.restore(firstDrink);
+const thirstBeforeDrink = waterBowlSim.getFullState().stats.thirst;
+waterBowlSim.advanceMinutes(1);
+assert(
+  waterBowlSim.getFullState().environment.waterBowl.level === 60 &&
+    waterBowlSim.getFullState().environment.waterBowl.clean &&
+    waterBowlSim.getFullState().stats.thirst < thirstBeforeDrink &&
+    waterBowlSim.getLog().some((event) =>
+      event.type === "waterBowlDrunk" &&
+      event.detail.remainingLevel === 60
+    ),
+  "M7 first drink did not reduce clean water level and thirst consistently",
+);
+for (const expectedLevel of [20, 0]) {
+  const drinkAgain = waterBowlSim.serialize();
+  drinkAgain.dogRoom = WORLD_STATIONS.waterBowl.room;
+  drinkAgain.spatial = {
+    room: WORLD_STATIONS.waterBowl.room,
+    x: WORLD_STATIONS.waterBowl.x,
+    y: WORLD_STATIONS.waterBowl.y,
+    targetRoom: WORLD_STATIONS.waterBowl.room,
+    targetX: WORLD_STATIONS.waterBowl.x,
+    targetY: WORLD_STATIONS.waterBowl.y,
+    route: [],
+    activity: "seekWater",
+    moving: false,
+    nextActivityAt: drinkAgain.spatial.nextActivityAt,
+  };
+  waterBowlSim.restore(drinkAgain);
+  waterBowlSim.advanceMinutes(1);
+  assert(
+    waterBowlSim.getFullState().environment.waterBowl.level ===
+      expectedLevel,
+    `M7 repeated dog drink did not reach level ${expectedLevel}`,
+  );
+}
+assert(
+  !waterBowlSim.getFullState().environment.waterBowl.clean,
+  "M7 emptied water bowl did not become dirty",
+);
+const remoteDirtyWater = waterBowlSim.serialize();
+assert(
+  !waterBowlSim.cleanWaterBowl().ok &&
+    JSON.stringify(waterBowlSim.serialize()) ===
+      JSON.stringify(remoteDirtyWater),
+  "M7 remote dirty-bowl cleaning changed state",
+);
+waterBowlSim.advanceMinutes(4);
+moveOwnerNearWorldTarget(waterBowlSim, "waterBowl");
+assert(
+  waterBowlSim.getDogView().interaction.contextActions.some((action) =>
+    action.id === "water:clean"
+  ) &&
+    waterBowlSim.cleanWaterBowl().ok &&
+    waterBowlSim.getFullState().environment.waterBowl.level === 0 &&
+    waterBowlSim.getFullState().environment.waterBowl.clean,
+  "M7 nearby dirty bowl did not expose and complete cleaning",
+);
+assert(
+  waterBowlSim.fillWaterBowl().ok &&
+    waterBowlSim.getFullState().environment.waterBowl.level === 100 &&
+    waterBowlSim.getFullState().environment.waterBowl.clean,
+  "M7 cleaned bowl could not be refilled",
+);
+const waterRoundtrip = waterBowlSim.serialize();
+const waterRoundtripRestored = createSim(0);
+waterRoundtripRestored.restore(waterRoundtrip);
+assert(
+  JSON.stringify(waterRoundtripRestored.serialize()) ===
+    JSON.stringify(waterRoundtrip),
+  "M7 water level/clean state did not survive v4 restore",
+);
+assert(
+  !waterBowlSim.getLog().some((event) =>
+    /진단|확정 질환/.test(JSON.stringify(event.detail))
+  ),
+  "M7 routine water messages asserted a diagnosis",
+);
+
+assert(
+  assertionCount - worldContractAssertionStart >= 55,
+  "M1-M7 world interaction contract contains fewer than 55 assertions",
 );
 
 assert(assertionCount >= 25, "contract contains fewer than 25 assertions");

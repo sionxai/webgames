@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BottomNav, type LifestyleSurface } from "./components/BottomNav";
 import { CampaignEnd } from "./components/CampaignEnd";
-import { ControlPanel } from "./components/ControlPanel";
 import { DayReview } from "./components/DayReview";
 import {
   DirectControls,
   type DirectMoveVector,
 } from "./components/DirectControls";
-import { EncounterPanel } from "./components/EncounterPanel";
 import {
   HouseCanvas,
   type GroundMoveTarget,
@@ -15,7 +13,11 @@ import {
 import { LifestyleDialog } from "./components/LifestyleDialog";
 import { MorningPlan } from "./components/MorningPlan";
 import { TopBar, type GameSpeed } from "./components/TopBar";
-import { WorkPanel } from "./components/WorkPanel";
+import {
+  WorldActionBar,
+  type WorldActionTarget,
+  type WorldContextAction as WorldActionBarItem,
+} from "./components/WorldActionBar";
 import {
   createCampaignSettings,
   createOwnerResources,
@@ -36,10 +38,11 @@ import {
 import {
   createSim,
   type ItemPlacementTarget,
-  type OwnerEncounterAction,
-  type WaitdogSnapshot,
   type WaitdogUiSim,
   type WaitdogUiView,
+  type WorldContextAction,
+  type WorldInteractionTarget,
+  type WorldTargetId,
 } from "./services/waitdogSim";
 import type {
   BarrierItemId,
@@ -99,13 +102,17 @@ interface DirectInputActions {
   selectContextAction: (index: number) => void;
   praise: () => void;
   treat: () => void;
-  work: () => void;
+  setWorkHold: (holding: boolean) => void;
   openSurface: (surface: LifestyleSurface) => void;
   closeSurface: () => void;
 }
 
 const DIRECT_CONTROL_STEP_MS = 64;
+const MIN_INPUT_DELTA_MS = 16;
+const MAX_INPUT_DELTA_MS = 250;
 const PERSISTENCE_TRAILING_MS = 240;
+const WORK_ALERT_INTERRUPT_ACTION = "work:alert:interrupt";
+const WORK_ALERT_CONTINUE_ACTION = "work:alert:continue";
 const ZERO_DIRECT_VECTOR: DirectMoveVector = { dx: 0, dy: 0 };
 const MOVE_KEY_VECTORS: Readonly<Record<string, DirectMoveVector>> = {
   KeyW: { dx: 0, dy: -1 },
@@ -246,16 +253,7 @@ const cloudBadgeTitle = (state: CloudSaveState): string => {
   return "계정 진행도를 클라우드와 동기화합니다.";
 };
 
-const hasFeedForDay = (snapshot: WaitdogSnapshot): boolean => {
-  const dayStart = (snapshot.day - 1) * 1440;
-  const dayEnd = dayStart + 1440;
-  return snapshot.log.some((event) =>
-    event.type === "feed" && event.t >= dayStart && event.t < dayEnd
-  );
-};
-
 const surfacePauseLabel = (surface: LifestyleSurface): string => {
-  if (surface === "mission") return "미션 메뉴 열림";
   if (surface === "bag") return "가방 열림";
   if (surface === "petMart") return "펫마트 열림";
   if (surface === "clinic") return "병원 메뉴 열림";
@@ -307,7 +305,74 @@ const placementFor = (
       x: 0.62,
       y: 0.3,
       ...size,
-    };
+  };
+};
+
+const roomLabel = (room: RoomId): string => {
+  if (room === "living") return "거실";
+  if (room === "kitchen") return "주방";
+  return "화장실";
+};
+
+const worldTargetPresentation = (
+  targetId: WorldTargetId,
+): WorldActionTarget => {
+  if (targetId === "dog") return { icon: "🐕", label: "강아지" };
+  if (targetId === "cue") return { icon: "◎", label: "강아지 신호" };
+  if (targetId === "computer") return { icon: "▰", label: "컴퓨터" };
+  if (targetId === "foodBowl") return { icon: "◉", label: "사료 그릇" };
+  if (targetId === "waterBowl") return { icon: "◌", label: "물그릇" };
+  if (targetId === "activePoop") return { icon: "✦", label: "배변 흔적" };
+  if (targetId === "bath") return { icon: "◇", label: "목욕 공간" };
+  const destination = targetId.slice("door:".length) as RoomId;
+  return { icon: "↗", label: `${roomLabel(destination)} 문` };
+};
+
+const worldActionIcon = (actionId: string): string => {
+  if (actionId === WORK_ALERT_INTERRUPT_ACTION) return "◎";
+  if (actionId === WORK_ALERT_CONTINUE_ACTION) return "▰";
+  if (actionId === "encounter:observe") return "◎";
+  if (actionId.startsWith("encounter:response:")) return "→";
+  if (actionId === "encounter:reinforce:praise") return "♡";
+  if (actionId === "encounter:reinforce:treat") return "◆";
+  if (actionId === "encounter:dismiss") return "✓";
+  if (actionId === "work:sit") return "▰";
+  if (actionId.startsWith("food:")) return "◉";
+  if (actionId.startsWith("water:")) return "◌";
+  if (actionId === "poop:cleanup") return "✦";
+  if (actionId.startsWith("bath:")) return "◇";
+  if (actionId.startsWith("door:")) return "↗";
+  return "•";
+};
+
+const isAutoInteractAction = (actionId: string): boolean =>
+  actionId === "encounter:observe" ||
+  actionId === "encounter:dismiss" ||
+  actionId === "work:sit" ||
+  actionId.startsWith("water:") ||
+  actionId === "poop:cleanup" ||
+  actionId.startsWith("door:");
+
+const toActionBarItems = (
+  actions: readonly WorldContextAction[],
+): WorldActionBarItem[] =>
+  actions.slice(0, 3).map((action, index) => ({
+    id: action.id,
+    label: action.label,
+    icon: worldActionIcon(action.id),
+    shortcut: String(index + 1),
+    disabled: !action.enabled,
+    disabledReason: action.reason ?? undefined,
+  }));
+
+const nearbyWorldTarget = (
+  currentView: WaitdogUiView,
+): WorldInteractionTarget | null => {
+  const targetId = currentView.interaction.nearbyTarget;
+  if (targetId === null) return null;
+  return currentView.interaction.targets.find((target) =>
+    target.id === targetId
+  ) ?? null;
 };
 
 export default function App() {
@@ -363,6 +428,8 @@ export default function App() {
   const heldMoveKeysRef = useRef<Set<string>>(new Set());
   const virtualMoveRef = useRef<DirectMoveVector>(ZERO_DIRECT_VECTOR);
   const clickMoveTargetRef = useRef<GroundMoveTarget | null>(null);
+  const workHoldRef = useRef(false);
+  const lastDirectTickAtRef = useRef<number | null>(null);
   const directInputActionsRef = useRef<DirectInputActions | null>(null);
   const persistenceTimerRef = useRef<number | null>(null);
   const persistencePendingRef = useRef(false);
@@ -388,10 +455,12 @@ export default function App() {
     settings.infinite,
   );
 
-  const clearDirectMovement = () => {
+  const clearDirectInput = () => {
     heldMoveKeysRef.current.clear();
     virtualMoveRef.current = ZERO_DIRECT_VECTOR;
     clickMoveTargetRef.current = null;
+    workHoldRef.current = false;
+    lastDirectTickAtRef.current = null;
   };
 
   const flushPendingPersistence = (silent: boolean) => {
@@ -405,7 +474,7 @@ export default function App() {
   };
 
   const commitPhase = (next: CampaignPhase) => {
-    if (next !== "live") clearDirectMovement();
+    if (next !== "live") clearDirectInput();
     phaseRef.current = next;
     setPhase(next);
   };
@@ -457,7 +526,7 @@ export default function App() {
     surfaceRef.current = null;
     externalClockRef.current = false;
     automationRemainderRef.current = 0;
-    clearDirectMovement();
+    clearDirectInput();
     setPhase(next.phase);
     setView(nextView);
     setSpeed(next.settings.speed);
@@ -559,7 +628,7 @@ export default function App() {
   }, []);
 
   const commitSurface = (next: LifestyleSurface | null) => {
-    if (next !== null) clearDirectMovement();
+    clearDirectInput();
     surfaceRef.current = next;
     setOpenSurface(next);
     setSurfaceFeedback(null);
@@ -659,9 +728,21 @@ export default function App() {
         current.minuteOfDay >= DAY_END_MINUTE ||
         !current.interaction.directControlEnabled
       ) {
-        clearDirectMovement();
+        clearDirectInput();
         return;
       }
+
+      const now = performance.now();
+      const elapsedMs = Math.min(
+        MAX_INPUT_DELTA_MS,
+        Math.max(
+          MIN_INPUT_DELTA_MS,
+          lastDirectTickAtRef.current === null
+            ? DIRECT_CONTROL_STEP_MS
+            : now - lastDirectTickAtRef.current,
+        ),
+      );
+      lastDirectTickAtRef.current = now;
 
       let dx = 0;
       let dy = 0;
@@ -681,13 +762,34 @@ export default function App() {
       const magnitude = Math.hypot(dx, dy);
       let result: LifestyleActionResult | null = null;
       if (magnitude > 0) {
+        workHoldRef.current = false;
         clickMoveTargetRef.current = null;
         result = simRef.current.moveOwnerBy({
           dx: dx / magnitude,
           dy: dy / magnitude,
+          elapsedMs,
         });
       } else if (clickMoveTargetRef.current !== null) {
-        result = simRef.current.stepOwnerToward(clickMoveTargetRef.current);
+        workHoldRef.current = false;
+        result = simRef.current.stepOwnerToward({
+          ...clickMoveTargetRef.current,
+          elapsedMs,
+        });
+      } else if (workHoldRef.current) {
+        const beforeProgress = current.work.progress;
+        result = simRef.current.advanceWorkHold(elapsedMs);
+        const next = simRef.current.getDogView();
+        if (!result.ok) {
+          workHoldRef.current = false;
+          setWorkFeedback(result.reason ?? "업무를 진행하지 못했습니다.");
+        } else if (beforeProgress < 100 && next.work.progress === 100) {
+          workHoldRef.current = false;
+          setWorkFeedback(
+            `업무 100% 완료 · ${next.work.salaryPreview.toLocaleString("ko-KR")}원이 정산되었습니다.`,
+          );
+        }
+        commitView(next);
+        return;
       }
 
       if (result === null) return;
@@ -695,6 +797,7 @@ export default function App() {
         if (clickMoveTargetRef.current !== null) {
           clickMoveTargetRef.current = null;
         }
+        commitView(simRef.current.getDogView());
         return;
       }
 
@@ -749,6 +852,10 @@ export default function App() {
 
       if (MOVE_KEY_VECTORS[event.code]) {
         event.preventDefault();
+        actions.setWorkHold(false);
+        setEncounterFeedback(null);
+        setWorkFeedback(null);
+        setSecondaryFeedback(null);
         clickMoveTargetRef.current = null;
         heldMoveKeysRef.current.add(event.code);
         return;
@@ -764,7 +871,7 @@ export default function App() {
       else if (event.code === "Digit3") actions.selectContextAction(2);
       else if (event.code === "Space") actions.praise();
       else if (event.code === "KeyQ") actions.treat();
-      else if (event.code === "KeyR") actions.work();
+      else if (event.code === "KeyR") actions.setWorkHold(true);
       else if (event.code === "KeyB") actions.openSurface("bag");
       else if (event.code === "KeyM") actions.openSurface("petMart");
       else if (event.code === "KeyC") actions.openSurface("clinic");
@@ -772,13 +879,19 @@ export default function App() {
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code === "KeyR") {
+        directInputActionsRef.current?.setWorkHold(false);
+        event.preventDefault();
+        return;
+      }
       if (!MOVE_KEY_VECTORS[event.code]) return;
       const released = heldMoveKeysRef.current.delete(event.code);
       if (released) event.preventDefault();
     };
     const handleVisibilityChange = () => {
-      if (document.visibilityState !== "visible") clearDirectMovement();
+      if (document.visibilityState !== "visible") clearDirectInput();
     };
+    const handleWindowBlur = () => clearDirectInput();
 
     const intervalId = window.setInterval(
       directControlTick,
@@ -786,31 +899,31 @@ export default function App() {
     );
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
-    window.addEventListener("blur", clearDirectMovement);
+    window.addEventListener("blur", handleWindowBlur);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
-      window.removeEventListener("blur", clearDirectMovement);
+      window.removeEventListener("blur", handleWindowBlur);
       document.removeEventListener(
         "visibilitychange",
         handleVisibilityChange,
       );
-      clearDirectMovement();
+      clearDirectInput();
     };
   }, []);
 
   useEffect(() => {
-    if (
-      phaseRef.current !== "live" ||
-      settingsRef.current.lifestyle.tutorialStarted ||
-      viewRef.current.activeEncounter !== null
-    ) return;
-    const result = simRef.current.startNextEncounter();
+    if (phaseRef.current !== "live") return;
+    const result = simRef.current.ensureFirstEncounter();
     const next = simRef.current.getDogView();
     commitView(next);
-    if (result.ok) {
+    if (
+      result.ok &&
+      next.activeEncounter !== null &&
+      !settingsRef.current.lifestyle.tutorialStarted
+    ) {
       commitSettings({
         ...settingsRef.current,
         lifestyle: {
@@ -818,7 +931,10 @@ export default function App() {
           tutorialStarted: true,
         },
       });
-    } else {
+    } else if (
+      !result.ok &&
+      result.reason !== "첫 encounter는 이미 시작되었습니다."
+    ) {
       setEncounterFeedback(result.reason);
     }
   }, [phase]);
@@ -827,6 +943,23 @@ export default function App() {
     const renderGameToText = () => {
       const current = viewRef.current;
       const encounter = current.activeEncounter;
+      const contextActions: WorldContextAction[] = current.work.alert === null
+        ? current.interaction.contextActions.slice(0, 3)
+        : [
+          {
+            id: WORK_ALERT_INTERRUPT_ACTION,
+            label: "돌봄 신호 확인",
+            enabled: true,
+            reason: null,
+          },
+          {
+            id: WORK_ALERT_CONTINUE_ACTION,
+            label: "업무 계속",
+            enabled: true,
+            reason: null,
+          },
+        ];
+      const nearby = nearbyWorldTarget(current);
       const availableActions: string[] = [];
       if (
         phaseRef.current === "live" &&
@@ -846,33 +979,51 @@ export default function App() {
               "1:interrupt-work",
               "2:continue-work",
             );
-          } else if (encounter !== null) {
-            if (
-              encounter.stage === "cause" ||
-              encounter.stage === "cue"
-            ) {
-              availableActions.push("E:observe-nearby-cue");
-            } else if (encounter.stage === "response") {
-              availableActions.push(
-                ...encounter.responseChoices.slice(0, 3).map(
-                  (_, index) => `${index + 1}:response`,
-                ),
-              );
-            } else if (encounter.stage === "reinforcement") {
-              availableActions.push("Space:praise", "Q:treat");
-            }
           } else {
-            if (current.interaction.nearbyTarget === "computer") {
-              availableActions.push("E/R:work");
-            } else {
-              availableActions.push("R:work-when-near-computer");
+            if (
+              contextActions.length === 1 &&
+              contextActions[0].enabled &&
+              isAutoInteractAction(contextActions[0].id)
+            ) {
+              availableActions.push(`E:${contextActions[0].id}`);
+            } else if (nearby !== null && contextActions.length > 0) {
+              availableActions.push("E:show-context-actions");
             }
             availableActions.push(
-              "B:bag",
-              "M:pet-mart",
-              "C:clinic",
-              "U:upgrade",
+              ...contextActions.flatMap((action, index) =>
+                action.enabled ? [`${index + 1}:${action.id}`] : []
+              ),
             );
+            if (
+              contextActions.some((action) =>
+                action.enabled &&
+                action.id === "encounter:reinforce:praise"
+              )
+            ) {
+              availableActions.push("Space:encounter:reinforce:praise");
+            }
+            if (
+              contextActions.some((action) =>
+                action.enabled &&
+                action.id === "encounter:reinforce:treat"
+              )
+            ) {
+              availableActions.push("Q:encounter:reinforce:treat");
+            }
+            if (
+              current.work.seated &&
+              current.work.progress < 100
+            ) {
+              availableActions.push("R-hold:work");
+            }
+            if (encounter === null) {
+              availableActions.push(
+                "B:bag",
+                "M:pet-mart",
+                "C:clinic",
+                "U:upgrade",
+              );
+            }
           }
         }
       }
@@ -896,7 +1047,6 @@ export default function App() {
         : automaticPause ?? (speedRef.current === 0 ? "manual" : null);
       return JSON.stringify({
         mode: phaseRef.current,
-        inputMode: "direct-keyboard-mouse-touch",
         coordinateSystem:
           "room-normalized coordinates: origin top-left, x right, y down, range 0..1",
         day: current.day,
@@ -908,61 +1058,76 @@ export default function App() {
         paused: pause !== null,
         pauseReason: pause,
         openSurface: surfaceRef.current,
+        owner: {
+          room: current.ownerSpatial.room,
+          x: current.ownerSpatial.x,
+          y: current.ownerSpatial.y,
+          activity: current.ownerSpatial.activity,
+          moving: current.ownerSpatial.moving,
+        },
         dog: {
           visibility: current.visibility,
           action: current.action,
           position: dogPosition,
         },
-        ownerSpatial: {
-          room: current.ownerSpatial.room,
-          x: current.ownerSpatial.x,
-          y: current.ownerSpatial.y,
-          targetRoom: current.ownerSpatial.targetRoom,
-          targetX: current.ownerSpatial.targetX,
-          targetY: current.ownerSpatial.targetY,
-          activity: current.ownerSpatial.activity,
-          moving: current.ownerSpatial.moving,
-        },
-        ownerDogOverlap: current.ownerDogOverlap,
-        interaction: current.interaction,
-        availableActions,
+        nearbyTarget: nearby === null
+          ? null
+          : {
+            id: nearby.id,
+            label: worldTargetPresentation(nearby.id).label,
+            distance: nearby.distance,
+          },
+        visibleTargets: current.interaction.targets.map((target) => ({
+          id: target.id,
+          kind: target.kind,
+          room: target.room,
+          x: target.x,
+          y: target.y,
+          distance: target.distance,
+          nearby: target.nearby,
+        })),
+        currentContextActions: contextActions.map((action) => ({
+          id: action.id,
+          label: action.label,
+          enabled: action.enabled,
+          reason: action.reason,
+        })),
         encounter: encounter === null
           ? null
           : {
             id: encounter.id,
-            kind: encounter.kind,
-            title: encounter.title,
             stage: encounter.stage,
-            cue: encounter.cue,
-            publicClues: encounter.publicClues,
-            ...(encounter.stage === "response"
-              ? { currentOptions: encounter.responseChoices }
-              : encounter.stage === "reinforcement"
-              ? { currentOptions: encounter.reinforcementChoices }
-              : {}),
-            selectedResponseId: encounter.selectedResponseId,
-            hint: encounter.hint,
-            safetyLevel: encounter.safetyLevel,
-            safetyBanner: encounter.safetyBanner,
-            result: encounter.outcome === null
+            cue: {
+              kind: encounter.cue.kind,
+              label: encounter.cue.label,
+              room: encounter.cue.room,
+              anchor: encounter.cue.anchor,
+            },
+            inferredCause: encounter.inferredCause,
+            outcome: encounter.outcome === null
               ? null
               : {
                 success: encounter.outcome.success,
                 score: encounter.outcome.score,
-                carePointsAwarded: encounter.outcome.carePointsAwarded,
                 message: encounter.outcome.message,
-                safetyMessage: encounter.outcome.safetyMessage,
               },
           },
+        work: {
+          state: current.work.state,
+          progress: current.work.progress,
+          seated: current.work.seated,
+          alert: current.work.alert === null
+            ? null
+            : { cueLabel: current.work.alert.cueLabel },
+          salaryPreview: current.work.salaryPreview,
+        },
+        bowls: {
+          food: current.environmentPlacements.foodBowl,
+          water: current.environmentPlacements.waterBowl,
+        },
+        activePoop: current.activePoop,
         economy: current.economy,
-        inventory: current.inventory,
-        work: current.work,
-        visiblePlacements: current.environmentPlacements,
-        nextTask: encounter === null
-          ? "WASD 또는 바닥 클릭으로 이동해 미션 신호나 컴퓨터에 접근하세요."
-          : current.interaction.encounterReady
-          ? "가까운 신호에 맞는 단축 행동을 실행하세요."
-          : "WASD 또는 바닥 클릭으로 신호 가까이 이동하세요.",
+        availableActions,
       });
     };
 
@@ -1099,83 +1264,44 @@ export default function App() {
     };
   }, [openSurface]);
 
-  const startMission = () => {
-    const result = runLifestyle(
-      () => simRef.current.startNextEncounter(),
-      setEncounterFeedback,
-    );
-    if (!result.ok) return;
-    commitSurface(null);
+  const setWorldFeedback = (message: string | null) => {
     setEncounterFeedback(null);
-    if (!settingsRef.current.lifestyle.tutorialStarted) {
-      commitSettings({
-        ...settingsRef.current,
-        lifestyle: {
-          ...settingsRef.current.lifestyle,
-          tutorialStarted: true,
-        },
-      });
-    }
+    setWorkFeedback(null);
+    setSecondaryFeedback(message);
   };
 
-  const performDirectEncounterAction = (action: OwnerEncounterAction) => {
-    runLifestyle(
-      () => simRef.current.performEncounterAction(action),
-      setEncounterFeedback,
-    );
+  const clearWorldFeedback = () => {
+    setEncounterFeedback(null);
+    setWorkFeedback(null);
+    setSecondaryFeedback(null);
   };
 
-  const observeEncounter = () => {
-    performDirectEncounterAction({ type: "observe" });
-  };
-
-  const selectEncounterResponse = (choiceId: string) => {
-    performDirectEncounterAction({ type: "response", choiceId });
-  };
-
-  const selectEncounterReinforcement = (choiceId: string) => {
-    if (choiceId !== "praise" && choiceId !== "treat") {
-      setEncounterFeedback("사용할 수 없는 보상입니다.");
+  const setWorkHoldActive = (holding: boolean) => {
+    if (!holding) {
+      workHoldRef.current = false;
       return;
     }
-    performDirectEncounterAction({ type: "reinforcement", choiceId });
-  };
-
-  const requestEncounterHint = () => {
-    runLifestyle(
-      () => simRef.current.requestEncounterHint(),
-      setEncounterFeedback,
-    );
-  };
-
-  const revealIdleHint = useCallback(() => {
-    if (viewRef.current.activeEncounter === null) return;
-    const advanced = simRef.current.advanceEncounterInput(8);
-    if (!advanced.ok) return;
-    simRef.current.requestEncounterHint();
-    syncAfterCommand();
-  }, []);
-
-  const dismissEncounter = () => {
-    const resultId = viewRef.current.activeEncounter?.id ?? null;
-    const result = runLifestyle(
-      () => simRef.current.dismissEncounterOutcome(),
-      setEncounterFeedback,
-    );
-    if (!result.ok) return;
-    setEncounterFeedback(null);
-    commitSettings({
-      ...settingsRef.current,
-      lifestyle: {
-        ...settingsRef.current.lifestyle,
-        lastEncounterResultId: resultId,
-      },
-    });
+    const current = viewRef.current;
+    const moving = heldMoveKeysRef.current.size > 0 ||
+      virtualMoveRef.current.dx !== 0 ||
+      virtualMoveRef.current.dy !== 0 ||
+      clickMoveTargetRef.current !== null;
+    if (
+      phaseRef.current !== "live" ||
+      surfaceRef.current !== null ||
+      moving ||
+      !current.work.seated ||
+      current.work.alert !== null ||
+      current.work.progress >= 100
+    ) return;
+    workHoldRef.current = true;
+    setWorkFeedback(null);
   };
 
   const handleGroundMove = (target: GroundMoveTarget) => {
+    workHoldRef.current = false;
     clickMoveTargetRef.current = target;
-    setSecondaryFeedback(null);
+    clearWorldFeedback();
   };
 
   const handleVirtualMove = (vector: DirectMoveVector) => {
@@ -1183,69 +1309,117 @@ export default function App() {
       virtualMoveRef.current = ZERO_DIRECT_VECTOR;
       return;
     }
+    workHoldRef.current = false;
     clickMoveTargetRef.current = null;
     virtualMoveRef.current = vector;
-  };
-
-  const moveToComputer = () => {
-    runLifestyle(
-      () => simRef.current.moveOwnerTo({ hotspotId: "computer" }),
-      setWorkFeedback,
-      "컴퓨터 앞으로 이동합니다.",
-    );
-  };
-
-  const performWorkBlock = () => {
-    const before = viewRef.current.work.progress;
-    const result = runLifestyle(
-      () => simRef.current.performWorkBlock(),
-      setWorkFeedback,
-      null,
-    );
-    if (result.ok) {
-      const after = viewRef.current.work.progress;
-      setWorkFeedback(
-        after === 100
-          ? `업무 100% 완료 · ${viewRef.current.work.salaryPreview.toLocaleString("ko-KR")}원이 정산되었습니다.`
-          : `업무가 ${before}%에서 ${after}%로 진행되었습니다.`,
-      );
-    }
+    clearWorldFeedback();
   };
 
   const resolveWorkAlert = (choice: "interrupt" | "continue") => {
+    workHoldRef.current = false;
     const resolution = simRef.current.resolveWorkAlert(choice);
     if (!resolution.ok) {
       syncAfterCommand();
-      setWorkFeedback(resolution.reason);
+      setWorldFeedback(resolution.reason);
       return;
     }
     if (choice === "interrupt") {
       const mission = simRef.current.startNextEncounter();
       syncAfterCommand();
-      setWorkFeedback(
+      setWorldFeedback(
         mission.ok
           ? "업무 진행도를 보존하고 돌봄 미션으로 전환했습니다."
           : mission.reason,
       );
-      setEncounterFeedback(null);
       return;
     }
     syncAfterCommand();
-    setWorkFeedback("업무를 이어갑니다. 다음 15분 블록을 시작하세요.");
+    setWorldFeedback("업무를 이어갑니다. R을 누르고 진행하세요.");
+  };
+
+  const executeWorldAction = (actionId: string) => {
+    if (actionId === WORK_ALERT_INTERRUPT_ACTION) {
+      resolveWorkAlert("interrupt");
+      return;
+    }
+    if (actionId === WORK_ALERT_CONTINUE_ACTION) {
+      resolveWorkAlert("continue");
+      return;
+    }
+
+    workHoldRef.current = false;
+    const encounterResultId = viewRef.current.activeEncounter?.id ?? null;
+    const result = simRef.current.performWorldAction(actionId);
+    const next = syncAfterCommand();
+    if (!result.ok) {
+      setWorldFeedback(result.reason ?? "행동을 실행하지 못했습니다.");
+      return;
+    }
+
+    if (actionId === "encounter:dismiss") {
+      commitSettings({
+        ...settingsRef.current,
+        lifestyle: {
+          ...settingsRef.current.lifestyle,
+          lastEncounterResultId: encounterResultId,
+        },
+      });
+      setWorldFeedback(null);
+      return;
+    }
+
+    let message: string | null = null;
+    if (actionId === "encounter:observe") {
+      message = "원인을 추정했습니다. 1~3 중 대응을 선택하세요.";
+    } else if (actionId.startsWith("encounter:response:")) {
+      message = "대응했습니다. 이어서 칭찬이나 보상을 선택하세요.";
+    } else if (actionId.startsWith("encounter:reinforce:")) {
+      message = next.activeEncounter?.outcome?.message ?? "돌봄 행동을 마쳤습니다.";
+    } else if (actionId === "work:sit") {
+      message = "컴퓨터에 앉았습니다. R을 누르는 동안 업무가 진행됩니다.";
+    } else if (actionId.startsWith("food:")) {
+      message = "사료를 그릇에 담았습니다.";
+    } else if (actionId === "water:fill") {
+      message = "깨끗한 물을 채웠습니다.";
+    } else if (actionId === "water:clean") {
+      message = "물그릇을 깨끗이 씻었습니다.";
+    } else if (actionId === "poop:cleanup") {
+      message = "배변 흔적을 정리했습니다.";
+    } else if (actionId.startsWith("bath:")) {
+      message = "목욕 돌봄을 마쳤습니다.";
+    }
+    setWorldFeedback(message);
   };
 
   const handleNearbyInteraction = () => {
     const current = viewRef.current;
-    if (current.activeEncounter !== null) {
-      observeEncounter();
+    if (current.work.alert !== null) {
+      setWorldFeedback("1~2 중 업무 알림 대응을 선택하세요.");
       return;
     }
-    if (current.interaction.nearbyTarget === "computer") {
-      performWorkBlock();
+    const actions = current.interaction.contextActions.slice(0, 3);
+    if (
+      actions.length === 1 &&
+      isAutoInteractAction(actions[0].id)
+    ) {
+      executeWorldAction(actions[0].id);
       return;
     }
-    setSecondaryFeedback(
-      "신호나 컴퓨터 가까이 이동한 뒤 E를 눌러 주세요.",
+    if (actions.length > 0) {
+      setWorldFeedback(`1~${actions.length} 중 행동을 선택하세요.`);
+      return;
+    }
+    const target = nearbyWorldTarget(current);
+    if (target !== null) {
+      setWorldFeedback(
+        `${worldTargetPresentation(target.id).label}에서 지금 할 행동이 없습니다.`,
+      );
+      return;
+    }
+    setWorldFeedback(
+      current.activeEncounter === null
+        ? "상호작용할 대상 가까이 이동해 주세요."
+        : "강아지 신호 쪽으로 이동해 주세요.",
     );
   };
 
@@ -1256,15 +1430,18 @@ export default function App() {
       else if (index === 1) resolveWorkAlert("continue");
       return;
     }
-    const encounter = current.activeEncounter;
-    if (encounter?.stage !== "response") {
-      if (encounter !== null) {
-        setEncounterFeedback("먼저 신호 가까이에서 E로 관찰해 주세요.");
-      }
-      return;
-    }
-    const choice = encounter.responseChoices[index];
-    if (choice) selectEncounterResponse(choice.id);
+    const action = current.interaction.contextActions[index];
+    if (action) executeWorldAction(action.id);
+  };
+
+  const executeReinforcementShortcut = (
+    reinforcement: "praise" | "treat",
+  ) => {
+    const actionId = `encounter:reinforce:${reinforcement}`;
+    const action = viewRef.current.interaction.contextActions.find(
+      (candidate) => candidate.id === actionId,
+    );
+    if (action) executeWorldAction(action.id);
   };
 
   const openShortcutSurface = (surface: LifestyleSurface) => {
@@ -1293,15 +1470,6 @@ export default function App() {
       () => simRef.current.purchaseItem(itemId),
       setSurfaceFeedback,
       `${label} 1개를 구매했습니다.`,
-    );
-  };
-
-  const useItem = (itemId: CatalogItemId) => {
-    const label = itemLabel(viewRef.current, itemId);
-    runLifestyle(
-      () => simRef.current.useItem(itemId),
-      setSurfaceFeedback,
-      `${label} 사용을 완료했습니다.`,
     );
   };
 
@@ -1337,34 +1505,10 @@ export default function App() {
     );
   };
 
-  const handleWalk = () => {
-    if (blockedPauseReason(viewRef.current, surfaceRef.current) !== null) return;
-    simRef.current.walk(30);
-    syncAfterCommand();
-    setSecondaryFeedback("산책 30분을 마쳐 긴장과 지루함을 낮췄습니다.");
-  };
-
-  const handleWater = () => {
-    if (blockedPauseReason(viewRef.current, surfaceRef.current) !== null) return;
-    simRef.current.water();
-    syncAfterCommand();
-    setSecondaryFeedback("깨끗한 물을 채웠습니다.");
-  };
-
-  const handleCleanup = () => {
-    if (blockedPauseReason(viewRef.current, surfaceRef.current) !== null) return;
-    const result = simRef.current.intervene("cleanup");
-    syncAfterCommand();
-    setSecondaryFeedback(
-      result.success ? "배변 흔적을 안전하게 정리했습니다." : "지금 정리할 배변 흔적이 없습니다.",
-    );
-  };
-
   const handleStartDay = () => {
     const currentSettings = settingsRef.current;
-    if (!hasFeedForDay(simRef.current.serialize())) simRef.current.feed(70);
     const morningSnapshot = simRef.current.serialize();
-    const encounter = simRef.current.startNextEncounter();
+    const encounter = simRef.current.ensureFirstEncounter();
     const nextSpeed = currentSettings.speed === 0 ? 1 : currentSettings.speed;
     speedRef.current = nextSpeed;
     setSpeed(nextSpeed);
@@ -1382,9 +1526,15 @@ export default function App() {
           currentSettings.lifestyle.tutorialStarted,
       },
     });
-    commitView(simRef.current.getDogView());
+    const next = simRef.current.getDogView();
+    commitView(next);
     commitPhase("live");
-    setEncounterFeedback(encounter.ok ? null : encounter.reason);
+    setEncounterFeedback(
+      encounter.ok ||
+          encounter.reason === "첫 encounter는 이미 시작되었습니다."
+        ? null
+        : encounter.reason,
+    );
   };
 
   const handleHypothesis = (hypothesis: Hypothesis) => {
@@ -1492,9 +1642,9 @@ export default function App() {
   directInputActionsRef.current = {
     interact: handleNearbyInteraction,
     selectContextAction,
-    praise: () => selectEncounterReinforcement("praise"),
-    treat: () => selectEncounterReinforcement("treat"),
-    work: performWorkBlock,
+    praise: () => executeReinforcementShortcut("praise"),
+    treat: () => executeReinforcementShortcut("treat"),
+    setWorkHold: setWorkHoldActive,
     openSurface: openShortcutSurface,
     closeSurface: () => commitSurface(null),
   };
@@ -1594,14 +1744,82 @@ export default function App() {
     );
   }
 
-  const missionBlocked = view.work.state === "working" ||
-    view.work.state === "alert";
   const directControlsDisabled = ended ||
     openSurface !== null ||
     !view.interaction.directControlEnabled;
-  const lifestyleControlsDisabled = ended ||
-    activeEncounter !== null ||
-    view.work.alert !== null;
+  const nearbyTarget = nearbyWorldTarget(view);
+  const cueTarget = view.interaction.targets.find((target) =>
+    target.id === "cue"
+  ) ?? null;
+  const displayedTargetId = view.work.alert !== null
+    ? "computer"
+    : nearbyTarget?.id ?? cueTarget?.id ?? null;
+  const actionBarTarget = displayedTargetId === null
+    ? null
+    : worldTargetPresentation(displayedTargetId);
+  const engineContextActions = view.interaction.contextActions.slice(0, 3);
+  const actionBarItems: WorldActionBarItem[] = view.work.alert === null
+    ? toActionBarItems(engineContextActions)
+    : [
+      {
+        id: WORK_ALERT_INTERRUPT_ACTION,
+        label: "신호 확인",
+        icon: worldActionIcon(WORK_ALERT_INTERRUPT_ACTION),
+        shortcut: "1",
+      },
+      {
+        id: WORK_ALERT_CONTINUE_ACTION,
+        label: "업무 계속",
+        icon: worldActionIcon(WORK_ALERT_CONTINUE_ACTION),
+        shortcut: "2",
+      },
+    ];
+  const automaticInteraction = engineContextActions.length === 1 &&
+      isAutoInteractAction(engineContextActions[0].id)
+    ? engineContextActions[0]
+    : null;
+  const interactionLabel = view.work.alert !== null
+    ? "알림 선택"
+    : automaticInteraction?.label ??
+      (engineContextActions.length > 0 ? "행동 선택" : "상호작용");
+  const worldFeedback = encounterFeedback ?? workFeedback ?? secondaryFeedback;
+  const worldPrompt = (() => {
+    if (worldFeedback !== null) return worldFeedback;
+    if (view.work.alert !== null) {
+      return `${view.work.alert.cueLabel} · 1~2 중 대응을 선택하세요.`;
+    }
+    if (activeEncounter !== null) {
+      if (!view.interaction.encounterReady) {
+        return "강아지 신호 쪽으로 이동하세요.";
+      }
+      if (activeEncounter.stage === "cause" || activeEncounter.stage === "cue") {
+        return "E로 신호를 관찰하세요.";
+      }
+      if (activeEncounter.stage === "reinforcement") {
+        return "Space·Q 또는 1~3으로 보상을 선택하세요.";
+      }
+      if (activeEncounter.stage === "outcome") {
+        return "E로 결과를 확인하세요.";
+      }
+      return `1~${Math.max(1, engineContextActions.length)} 중 대응을 선택하세요.`;
+    }
+    if (nearbyTarget !== null) {
+      if (automaticInteraction !== null) {
+        return `E로 ${automaticInteraction.label} 행동을 실행하세요.`;
+      }
+      if (engineContextActions.length > 0) {
+        return `1~${engineContextActions.length} 중 행동을 선택하세요.`;
+      }
+      return `${worldTargetPresentation(nearbyTarget.id).label} 가까이입니다.`;
+    }
+    if (view.work.seated) return "R을 누르는 동안 업무가 진행됩니다.";
+    return "WASD·클릭으로 집을 살펴보세요.";
+  })();
+  const interactDisabled = view.work.alert === null && nearbyTarget === null;
+  const workHoldDisabled = !view.work.seated ||
+    view.work.alert !== null ||
+    view.work.progress >= 100;
+  const visibleWorkProgress = view.work.seated ? view.work.progress : null;
 
   return (
     <main
@@ -1623,83 +1841,45 @@ export default function App() {
       />
 
       <div className="lifestyle-layout">
-        <HouseCanvas
-          view={view}
-          lastSeenRoom={lastSeenRoom}
-          disabled={directControlsDisabled}
-          compact={activeEncounter !== null}
-          encounter={activeEncounter}
-          onGroundMove={handleGroundMove}
-          onInteract={handleNearbyInteraction}
-        />
-
-        <aside className="priority-rail" aria-label="현재 우선 행동">
-          {activeEncounter ? (
-            <EncounterPanel
-              encounter={activeEncounter}
-              feedback={encounterFeedback}
-              onObserve={observeEncounter}
-              onSelectResponse={selectEncounterResponse}
-              onSelectReinforcement={selectEncounterReinforcement}
-              onRequestHint={requestEncounterHint}
-              onIdleHint={revealIdleHint}
-              onDismiss={dismissEncounter}
-            />
-          ) : view.work.alert ? (
-            <WorkPanel
-              work={view.work}
-              feedback={workFeedback}
-              disabled={ended}
-              onMoveToComputer={moveToComputer}
-              onWorkBlock={performWorkBlock}
-              onResolveAlert={resolveWorkAlert}
-            />
-          ) : (
-            <>
-              <section className="panel-card next-task-card">
-                <span className="section-kicker">NEXT TASK</span>
-                <h2>강아지의 다음 신호를 함께 읽어 보세요.</h2>
-                <button
-                  className="primary-action"
-                  type="button"
-                  disabled={ended || missionBlocked}
-                  onClick={startMission}
-                >
-                  다음 생활 미션 시작
-                </button>
-                {missionBlocked && (
-                  <p>진행 중인 업무 블록을 먼저 마쳐 주세요.</p>
-                )}
-              </section>
-
-              <WorkPanel
-                work={view.work}
-                feedback={workFeedback}
-                disabled={ended}
-                onMoveToComputer={moveToComputer}
-                onWorkBlock={performWorkBlock}
-                onResolveAlert={resolveWorkAlert}
-              />
-
-              <ControlPanel
-                blocked={view.blocked}
-                disabled={lifestyleControlsDisabled}
-                feedback={secondaryFeedback}
-                onWalk={handleWalk}
-                onWater={handleWater}
-                onCleanup={handleCleanup}
-              />
-            </>
-          )}
-        </aside>
+        <div className="world-live-column">
+          <HouseCanvas
+            view={view}
+            lastSeenRoom={lastSeenRoom}
+            disabled={directControlsDisabled}
+            compact={activeEncounter !== null}
+            encounter={activeEncounter}
+            onGroundMove={handleGroundMove}
+            onInteract={handleNearbyInteraction}
+          />
+          <WorldActionBar
+            target={actionBarTarget}
+            prompt={worldPrompt}
+            cause={activeEncounter?.inferredCause ?? null}
+            actions={actionBarItems}
+            disabled={ended || openSurface !== null}
+            interactLabel={interactionLabel}
+            interactDisabled={interactDisabled}
+            workProgress={visibleWorkProgress}
+            workHoldLabel="업무"
+            workHoldDisabled={workHoldDisabled}
+            onAction={executeWorldAction}
+            onInteract={handleNearbyInteraction}
+            onWorkHoldChange={setWorkHoldActive}
+          />
+        </div>
       </div>
 
       <DirectControls
         disabled={directControlsDisabled}
         onMove={handleVirtualMove}
         onInteract={handleNearbyInteraction}
-        onPraise={() => selectEncounterReinforcement("praise")}
-        onTreat={() => selectEncounterReinforcement("treat")}
+        interactionLabel={interactDisabled ? null : interactionLabel}
+        interactionIcon={actionBarTarget?.icon ?? "◎"}
+        interactionDisabled={interactDisabled}
+        workProgress={visibleWorkProgress}
+        workHoldLabel="업무"
+        workHoldDisabled={workHoldDisabled}
+        onWorkHoldChange={setWorkHoldActive}
       />
 
       <BottomNav
@@ -1716,9 +1896,7 @@ export default function App() {
           storeCategory={settings.lifestyle.selectedStoreCategory}
           onStoreCategory={updateStoreCategory}
           onClose={() => commitSurface(null)}
-          onStartMission={startMission}
           onPurchase={purchaseItem}
-          onUse={useItem}
           onPlace={placeItem}
           onClinic={scheduleClinic}
           onUpgrade={buyUpgrade}

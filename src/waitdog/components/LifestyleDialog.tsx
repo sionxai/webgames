@@ -22,9 +22,7 @@ interface LifestyleDialogProps {
   storeCategory: CatalogCategory;
   onStoreCategory: (category: CatalogCategory) => void;
   onClose: () => void;
-  onStartMission: () => void;
   onPurchase: (itemId: CatalogItemId) => void;
-  onUse: (itemId: CatalogItemId) => void;
   onPlace: (itemId: PlaceableItemId, preset: PlacementPreset) => void;
   onClinic: () => void;
   onUpgrade: (upgradeId: SalaryUpgradeId) => void;
@@ -34,7 +32,6 @@ const SURFACE_TITLES: Record<LifestyleSurface, {
   kicker: string;
   title: string;
 }> = {
-  mission: { kicker: "NEXT TASK", title: "생활 미션" },
   bag: { kicker: "INVENTORY", title: "가방" },
   petMart: { kicker: "PET MART", title: "펫마트" },
   clinic: { kicker: "WELLNESS", title: "접종·예방 진료" },
@@ -57,10 +54,6 @@ const isPlaceable = (
 ): item is WaitdogCatalogView & { itemId: PlaceableItemId } =>
   item.category === "pad" || item.category === "barrier";
 
-const canUseDirectly = (item: WaitdogCatalogView): boolean =>
-  item.category === "food" || item.category === "treat" ||
-  item.category === "shampoo";
-
 const coverageLabel = (item: WaitdogCatalogView): string | null => {
   if (item.coverage !== undefined) {
     return `커버 반경 ${Math.round(item.coverage * 100)}%`;
@@ -76,9 +69,7 @@ export function LifestyleDialog({
   storeCategory,
   onStoreCategory,
   onClose,
-  onStartMission,
   onPurchase,
-  onUse,
   onPlace,
   onClinic,
   onUpgrade,
@@ -156,23 +147,6 @@ export function LifestyleDialog({
         </header>
 
         <div className="surface-body">
-          {surface === "mission" && (
-            <section className="mission-launch">
-              <span className="mission-orbit" aria-hidden="true">◎</span>
-              <h3>강아지의 다음 신호를 함께 읽어 보세요.</h3>
-              <p>
-                단서를 관찰하고 원인·대응·마무리 보상을 차례로 선택하는 짧은 미션입니다.
-              </p>
-              <button
-                className="primary-action"
-                type="button"
-                onClick={onStartMission}
-              >
-                다음 생활 미션 시작
-              </button>
-            </section>
-          )}
-
           {surface === "bag" && (
             <ul className="inventory-list">
               {view.inventory.filter((entry) => entry.count > 0).map((entry) => {
@@ -188,14 +162,6 @@ export function LifestyleDialog({
                         {coverageLabel(item) && ` · ${coverageLabel(item)}`}
                       </small>
                     </div>
-                    {canUseDirectly(item) && (
-                      <button
-                        type="button"
-                        onClick={() => onUse(entry.itemId)}
-                      >
-                        사용
-                      </button>
-                    )}
                     {isPlaceable(item) && (
                       <div className="placement-actions" aria-label={`${item.label} 배치`}>
                         <button

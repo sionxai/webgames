@@ -173,6 +173,8 @@ export interface EncounterPublicView {
   safetyLevel: EncounterSafetyLevel;
   safetyBanner: string | null;
   result: EncounterResult | null;
+  inferredCause: string | null;
+  contextActions: EncounterChoice[];
 }
 
 export type OwnerActivityId = "idle" | "moving" | "working" | "responding";
@@ -259,6 +261,7 @@ export interface WorkState {
   completedBlocks: number;
   minutesInBlock: number;
   active: boolean;
+  seated: boolean;
   continuityEligible: boolean;
   paidGigIds: string[];
   lastPayout: number;
@@ -290,10 +293,22 @@ export interface BarrierPlacement {
   panels: 1 | 2 | 4;
 }
 
+export interface FoodBowlState {
+  itemId: FoodItemId | null;
+  level: number;
+}
+
+export interface WaterBowlState {
+  level: number;
+  clean: boolean;
+}
+
 export interface EnvironmentState {
   selectedPadId: PadItemId;
   padPlacement: PadPlacement | null;
   barriers: BarrierPlacement[];
+  foodBowl: FoodBowlState;
+  waterBowl: WaterBowlState;
 }
 
 export interface PlacementValidation {

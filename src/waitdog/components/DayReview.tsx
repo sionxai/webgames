@@ -1,7 +1,7 @@
 import type { Hypothesis } from "../services/campaign";
 import type { DayNarrative } from "../services/narrative";
 
-interface DayReviewProps {
+export interface DayReviewProps {
   day: number;
   narrative: DayNarrative;
   selectedHypothesis: Hypothesis | null;
@@ -19,31 +19,58 @@ export function DayReview({
   onContinue,
 }: DayReviewProps) {
   const needsHypothesis = day === 5;
+  const timelineIndexes = narrative.timeline.length <= 3
+    ? narrative.timeline.map((_, index) => index)
+    : [
+      0,
+      Math.floor((narrative.timeline.length - 1) / 2),
+      narrative.timeline.length - 1,
+    ];
+  const timelineHighlights = timelineIndexes.map((index) => ({
+    index,
+    item: narrative.timeline[index],
+  }));
+  const learningHighlights = narrative.learning.slice(0, 2);
+  const hasMoreDetail = narrative.timeline.length > timelineHighlights.length ||
+    narrative.learning.length > learningHighlights.length;
+
   return (
     <main className="waitdog-page phase-page">
       <section className="phase-card review-card" aria-labelledby="review-title">
         <span className="section-kicker">DAY REVIEW</span>
         <h1 id="review-title">Day {day} 하루 평가</h1>
-        <p className="phase-lead">시간은 멈춰 있습니다. 보인 것과 들린 것만 일지에 남겼습니다.</p>
+        <p className="phase-lead">
+          오늘의 핵심 장면과 학습 변화만 모았습니다.
+        </p>
 
         <div className="review-grid">
-          <section aria-labelledby="timeline-title">
-            <h2 id="timeline-title">행동일지</h2>
-            <ol className="review-timeline">
-              {narrative.timeline.map((item, index) => (
-                <li key={`${item.time}-${index}`}>
-                  <time>{item.time}</time>
-                  <p>{item.sentence}</p>
-                </li>
-              ))}
-            </ol>
+          <section className="review-highlights" aria-labelledby="timeline-title">
+            <h2 id="timeline-title">오늘의 핵심</h2>
+            {timelineHighlights.length > 0 ? (
+              <ol className="review-highlight-list">
+                {timelineHighlights.map(({ item, index }) => (
+                  <li key={`${item.time}-${index}`}>
+                    <time>{item.time}</time>
+                    <p>{item.sentence}</p>
+                  </li>
+                ))}
+              </ol>
+            ) : (
+              <p className="empty-copy">기록할 핵심 장면이 없었습니다.</p>
+            )}
           </section>
 
-          <section aria-labelledby="learning-title">
-            <h2 id="learning-title">학습 변화 요약</h2>
-            <ul className="learning-list">
-              {narrative.learning.map((sentence) => <li key={sentence}>{sentence}</li>)}
-            </ul>
+          <section className="review-learning" aria-labelledby="learning-title">
+            <h2 id="learning-title">학습 변화</h2>
+            {learningHighlights.length > 0 ? (
+              <ul className="learning-cards">
+                {learningHighlights.map((sentence) => (
+                  <li key={sentence}>{sentence}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="empty-copy">오늘 확인된 학습 변화가 없습니다.</p>
+            )}
 
             {needsHypothesis && (
               <fieldset className="hypothesis-fieldset">
@@ -66,6 +93,33 @@ export function DayReview({
             )}
           </section>
         </div>
+
+        {hasMoreDetail && (
+          <details className="review-details">
+            <summary>전체 기록 펼치기</summary>
+            <div>
+              <section aria-labelledby="full-timeline-title">
+                <h2 id="full-timeline-title">시간순 기록</h2>
+                <ol className="review-timeline">
+                  {narrative.timeline.map((item, index) => (
+                    <li key={`${item.time}-${index}`}>
+                      <time>{item.time}</time>
+                      <p>{item.sentence}</p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+              <section aria-labelledby="full-learning-title">
+                <h2 id="full-learning-title">학습 변화 전체</h2>
+                <ul className="learning-list">
+                  {narrative.learning.map((sentence) => (
+                    <li key={sentence}>{sentence}</li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+          </details>
+        )}
 
         <button
           className="primary-action"

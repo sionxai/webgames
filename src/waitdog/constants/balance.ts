@@ -247,16 +247,31 @@ export const BALANCE = {
       BASE_CARE_POINTS: 1,
     },
     OWNER: {
-      SPEED_PER_MINUTE: 0.22,
+      SPEED_PER_MINUTE: 0.3,
       DIRECT_STEP_DISTANCE: 0.02,
+      DIRECT_SPEED_PER_SECOND: 1.2,
+      DIRECT_REFERENCE_MS: 1000 / 60,
+      MAX_INPUT_DELTA_MS: 250,
       DOOR_RADIUS: 0.08,
       INTERACTION_RADIUS: 0.12,
-      ENCOUNTER_INTERACTION_RADIUS: 0.19,
+      ENCOUNTER_INTERACTION_RADIUS: 0.28,
       COLLISION_RADIUS: 0.075,
       DOG_COLLISION_RADIUS: 0.065,
       SAFETY_GAP: 0.025,
+      VISUAL_FOOTPRINT: {
+        HORIZONTAL_CLEARANCE_PX: 124,
+        VERTICAL_CLEARANCE_PX: 152,
+        SUPERELLIPSE_EXPONENT: 8,
+        SAFE_SCALE: 1.02,
+        ENCOUNTER_SCALE: 1.1,
+        ROOM_TRAVEL_PX: {
+          living: { x: 355.5, y: 710 },
+          kitchen: { x: 233.1, y: 287.64 },
+          toilet: { x: 233.1, y: 287.64 },
+        },
+      },
       INITIAL: {
-        living: { x: 0.72, y: 0.3 },
+        living: { x: 0.52, y: 0.2 },
         kitchen: { x: 0.76, y: 0.58 },
         toilet: { x: 0.72, y: 0.3 },
       },
@@ -265,6 +280,7 @@ export const BALANCE = {
         store: { room: "living", x: 0.16, y: 0.2 },
         clinic: { room: "living", x: 0.16, y: 0.34 },
       },
+      BATH: { room: "toilet", x: 0.28, y: 0.22 },
     },
     ECONOMY: {
       STARTER_MONEY: 12_000,
@@ -288,9 +304,18 @@ export const BALANCE = {
       WORK: {
         BLOCK_MINUTES: 15,
         BLOCK_PROGRESS: 25,
+        HOLD_TO_COMPLETE_MS: 8_000,
         BASE_SALARY: 22_000,
         CONTINUITY_CARE_POINTS: 1,
         MAX_SALARY_BONUS_RATE: 0.45,
+      },
+      BOWLS: {
+        FOOD_FILL_LEVEL: 100,
+        BASIC_FOOD_VOLUME: 60,
+        COMFORT_FOOD_VOLUME: 50,
+        WATER_FILL_LEVEL: 100,
+        WATER_DRINK_VOLUME: 40,
+        CONSUME_RADIUS: 0.04,
       },
       CATALOG: {
         "food-basic": {

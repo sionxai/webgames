@@ -9,6 +9,7 @@ import type {
   EconomyLedgerEntry,
   EconomyState,
   EnvironmentState,
+  FoodItemId,
   Inventory,
   OwnerSpatialState,
   PadItemId,
@@ -133,6 +134,9 @@ export const isBarrierItemId = (value: unknown): value is BarrierItemId =>
   value === "barrier-1-panel" || value === "barrier-2-panel" ||
   value === "barrier-4-panel";
 
+export const isFoodItemId = (value: unknown): value is FoodItemId =>
+  value === "food-basic" || value === "food-comfort";
+
 const isSalaryUpgradeId = (value: unknown): value is SalaryUpgradeId =>
   typeof value === "string" &&
   (SALARY_UPGRADE_IDS as readonly string[]).includes(value);
@@ -161,6 +165,7 @@ export const createWorkState = (): WorkState => ({
   completedBlocks: 0,
   minutesInBlock: 0,
   active: false,
+  seated: false,
   continuityEligible: true,
   paidGigIds: [],
   lastPayout: 0,
@@ -171,6 +176,14 @@ export const createEnvironmentState = (): EnvironmentState => ({
   selectedPadId: "pad-paper",
   padPlacement: null,
   barriers: [],
+  foodBowl: {
+    itemId: null,
+    level: 0,
+  },
+  waterBowl: {
+    level: 0,
+    clean: true,
+  },
 });
 
 const withLedger = (
@@ -445,13 +458,14 @@ export const startWorkGig = (
         activeGigId: gigId,
         paidGigIds: [...state.paidGigIds],
         active: true,
+        seated: true,
       },
     };
   }
   return {
     ok: true,
     reason: null,
-    state: { ...state, active: true },
+    state: { ...state, active: true, seated: true },
   };
 };
 
@@ -468,6 +482,7 @@ export const interruptWorkGig = (
     state: {
       ...state,
       active: false,
+      seated: false,
       continuityEligible: false,
       alert: null,
     },
@@ -493,6 +508,7 @@ export const resolveWorkAlert = (
         ...state,
         alert: null,
         active: false,
+        seated: false,
         continuityEligible: false,
       },
     };
@@ -500,31 +516,42 @@ export const resolveWorkAlert = (
   return {
     ok: true,
     reason: null,
-    state: { ...state, alert: null, active: true },
+    state: { ...state, alert: null, active: true, seated: true },
   };
 };
 
-export const advanceWorkMinutes = (
+const workAlert = (gigId: string): WorkState["alert"] => ({
+  id: `work-alert:${gigId}:2`,
+  cueLabel: "강아지가 문 쪽 소리에 반응합니다.",
+  publicClues: [
+    "짧게 몸을 일으켰습니다.",
+    "업무는 절반까지 진행되었습니다.",
+  ],
+  interruptPreview: "진행도는 유지하고 돌봄을 우선합니다.",
+  continuePreview: "업무를 이어가되 무리한 제지는 하지 않습니다.",
+});
+
+export const advanceWorkProgress = (
   currentEconomy: EconomyState,
   currentWork: WorkState,
-  minutes: number,
+  progressDelta: number,
 ): WorkTransition => {
   let economy = clone(currentEconomy);
   let work = clone(currentWork);
-  if (!Number.isInteger(minutes) || minutes < 0) {
+  if (!isFiniteNumber(progressDelta) || progressDelta < 0) {
     return {
       ok: false,
-      reason: "업무 시간이 올바르지 않습니다.",
+      reason: "업무 진행 시간이 올바르지 않습니다.",
       economy,
       work,
       payout: 0,
       completed: false,
     };
   }
-  if (!work.active || work.activeGigId === null) {
+  if (!work.active || !work.seated || work.activeGigId === null) {
     return {
       ok: false,
-      reason: "업무가 활성화되지 않았습니다.",
+      reason: "컴퓨터에 앉아 업무를 시작해야 합니다.",
       economy,
       work,
       payout: 0,
@@ -532,33 +559,26 @@ export const advanceWorkMinutes = (
     };
   }
 
-  for (let minute = 0; minute < minutes && work.progress < 100; minute += 1) {
-    work.minutesInBlock += 1;
-    if (
-      work.minutesInBlock >=
-      BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES
-    ) {
-      work.minutesInBlock = 0;
-      work.completedBlocks += 1;
-      work.progress = Math.min(
-        100,
-        work.progress + BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS,
-      );
-      if (work.completedBlocks === 2 && work.progress < 100) {
-        work.alert = {
-          id: `work-alert:${work.activeGigId}:2`,
-          cueLabel: "강아지가 문 쪽 소리에 반응합니다.",
-          publicClues: [
-            "짧게 몸을 일으켰습니다.",
-            "업무는 절반까지 진행되었습니다.",
-          ],
-          interruptPreview: "진행도는 유지하고 돌봄을 우선합니다.",
-          continuePreview: "업무를 이어가되 무리한 제지는 하지 않습니다.",
-        };
-        work.active = false;
-        break;
-      }
-    }
+  const nextProgress = Math.min(100, work.progress + progressDelta);
+  if (work.progress < 50 && nextProgress >= 50) {
+    work.progress = 50;
+    work.completedBlocks = 2;
+    work.minutesInBlock = 0;
+    work.alert = workAlert(work.activeGigId);
+    work.active = false;
+  } else {
+    work.progress = Math.round(nextProgress * 1_000_000) / 1_000_000;
+    work.completedBlocks = Math.floor(
+      work.progress / BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS,
+    );
+    work.minutesInBlock = work.progress === 100
+      ? 0
+      : (
+        work.progress %
+          BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS
+      ) /
+        BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS *
+        BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES;
   }
 
   let payout = 0;
@@ -591,6 +611,7 @@ export const advanceWorkMinutes = (
       }
     }
     work.active = false;
+    work.seated = true;
     work.lastPayout = payout;
   }
   return {
@@ -603,15 +624,82 @@ export const advanceWorkMinutes = (
   };
 };
 
+export const advanceWorkMinutes = (
+  currentEconomy: EconomyState,
+  currentWork: WorkState,
+  minutes: number,
+): WorkTransition => {
+  if (!Number.isInteger(minutes) || minutes < 0) {
+    return {
+      ok: false,
+      reason: "업무 시간이 올바르지 않습니다.",
+      economy: clone(currentEconomy),
+      work: clone(currentWork),
+      payout: 0,
+      completed: false,
+    };
+  }
+  return advanceWorkProgress(
+    currentEconomy,
+    currentWork,
+    minutes /
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES *
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS,
+  );
+};
+
+export const advanceWorkMilliseconds = (
+  currentEconomy: EconomyState,
+  currentWork: WorkState,
+  elapsedMs: number,
+): WorkTransition => {
+  if (!isFiniteNumber(elapsedMs) || elapsedMs <= 0) {
+    return {
+      ok: false,
+      reason: "누르고 있던 시간이 올바르지 않습니다.",
+      economy: clone(currentEconomy),
+      work: clone(currentWork),
+      payout: 0,
+      completed: false,
+    };
+  }
+  return advanceWorkProgress(
+    currentEconomy,
+    currentWork,
+    elapsedMs /
+      BALANCE.LIFESTYLE.ECONOMY.WORK.HOLD_TO_COMPLETE_MS *
+      100,
+  );
+};
+
 export const ownerDogFootprintsOverlap = (
   owner: OwnerSpatialState,
   dog: Pick<DogSpatialState, "room" | "x" | "y">,
 ): boolean => {
   if (owner.room !== dog.room) return false;
-  const distance = Math.hypot(owner.x - dog.x, owner.y - dog.y);
-  return distance <
-    owner.collisionRadius +
-      BALANCE.LIFESTYLE.OWNER.DOG_COLLISION_RADIUS;
+  return ownerDogFootprintSeparation(owner, dog) < 1;
+};
+
+export const ownerDogFootprintSeparation = (
+  owner: Pick<OwnerSpatialState, "room" | "x" | "y">,
+  dog: Pick<DogSpatialState, "room" | "x" | "y">,
+): number => {
+  if (owner.room !== dog.room) return Number.POSITIVE_INFINITY;
+  const footprint = BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT;
+  const travel = footprint.ROOM_TRAVEL_PX[owner.room];
+  const horizontalRatio = Math.abs(
+    (owner.x - dog.x) * travel.x /
+      footprint.HORIZONTAL_CLEARANCE_PX,
+  );
+  const verticalRatio = Math.abs(
+    (owner.y - dog.y) * travel.y /
+      footprint.VERTICAL_CLEARANCE_PX,
+  );
+  return Math.pow(
+    Math.pow(horizontalRatio, footprint.SUPERELLIPSE_EXPONENT) +
+      Math.pow(verticalRatio, footprint.SUPERELLIPSE_EXPONENT),
+    1 / footprint.SUPERELLIPSE_EXPONENT,
+  );
 };
 
 const circleOverlapsOwnerOrDog = (
@@ -1003,6 +1091,7 @@ export const isWorkState = (value: unknown): value is WorkState => {
     "completedBlocks",
     "minutesInBlock",
     "active",
+    "seated",
     "continuityEligible",
     "paidGigIds",
     "lastPayout",
@@ -1010,13 +1099,17 @@ export const isWorkState = (value: unknown): value is WorkState => {
     ]) ||
     (value.activeGigId !== null &&
       typeof value.activeGigId !== "string") ||
-    ![0, 25, 50, 75, 100].includes(value.progress as number) ||
+    !isFiniteNumber(value.progress) ||
+    value.progress < 0 ||
+    value.progress > 100 ||
     !isNonNegativeInteger(value.completedBlocks) ||
     (value.completedBlocks as number) > 4 ||
-    !isNonNegativeInteger(value.minutesInBlock) ||
-    (value.minutesInBlock as number) >=
+    !isFiniteNumber(value.minutesInBlock) ||
+    value.minutesInBlock < 0 ||
+    value.minutesInBlock >=
       BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES ||
     typeof value.active !== "boolean" ||
+    typeof value.seated !== "boolean" ||
     typeof value.continuityEligible !== "boolean" ||
     !Array.isArray(value.paidGigIds) ||
     !value.paidGigIds.every((id) => typeof id === "string") ||
@@ -1041,25 +1134,38 @@ export const isWorkState = (value: unknown): value is WorkState => {
     return false;
   }
   const state = value as unknown as WorkState;
-  return state.progress ===
-      state.completedBlocks *
-        BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS &&
+  const expectedBlocks = Math.floor(
+    state.progress / BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS,
+  );
+  const expectedMinutes = state.progress === 100
+    ? 0
+    : (
+      state.progress % BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS
+    ) /
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_PROGRESS *
+      BALANCE.LIFESTYLE.ECONOMY.WORK.BLOCK_MINUTES;
+  return state.completedBlocks === expectedBlocks &&
+    Math.abs(state.minutesInBlock - expectedMinutes) < 1e-6 &&
     (state.activeGigId !== null ||
       (state.progress === 0 &&
         state.completedBlocks === 0 &&
         state.minutesInBlock === 0 &&
         !state.active &&
+        !state.seated &&
         state.alert === null)) &&
     (!state.active ||
-      (state.activeGigId !== null &&
+      (state.seated &&
+        state.activeGigId !== null &&
         state.progress < 100 &&
         state.alert === null)) &&
     (state.alert === null ||
-      (state.activeGigId !== null &&
+      (state.seated &&
+        state.activeGigId !== null &&
         state.progress === 50 &&
         state.completedBlocks === 2 &&
         !state.active &&
         state.alert.id === `work-alert:${state.activeGigId}:2`)) &&
+    (!state.seated || state.activeGigId !== null) &&
     (state.progress !== 100 ||
       (state.activeGigId !== null &&
         !state.active &&
@@ -1099,11 +1205,32 @@ export const isEnvironmentState = (
 ): value is EnvironmentState => {
   if (
     !isRecord(value) ||
-    !hasExactKeys(value, ["selectedPadId", "padPlacement", "barriers"]) ||
+    !hasExactKeys(value, [
+      "selectedPadId",
+      "padPlacement",
+      "barriers",
+      "foodBowl",
+      "waterBowl",
+    ]) ||
     !isPadItemId(value.selectedPadId) ||
     (value.padPlacement !== null && !isPadPlacement(value.padPlacement)) ||
     !Array.isArray(value.barriers) ||
-    !value.barriers.every(isBarrierPlacement)
+    !value.barriers.every(isBarrierPlacement) ||
+    !isRecord(value.foodBowl) ||
+    !hasExactKeys(value.foodBowl, ["itemId", "level"]) ||
+    (value.foodBowl.itemId !== null &&
+      !isFoodItemId(value.foodBowl.itemId)) ||
+    !isFiniteNumber(value.foodBowl.level) ||
+    value.foodBowl.level < 0 ||
+    value.foodBowl.level > 100 ||
+    ((value.foodBowl.itemId === null) !==
+      (value.foodBowl.level === 0)) ||
+    !isRecord(value.waterBowl) ||
+    !hasExactKeys(value.waterBowl, ["level", "clean"]) ||
+    !isFiniteNumber(value.waterBowl.level) ||
+    value.waterBowl.level < 0 ||
+    value.waterBowl.level > 100 ||
+    typeof value.waterBowl.clean !== "boolean"
   ) {
     return false;
   }

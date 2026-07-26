@@ -14,7 +14,10 @@ import {
 import type {
   OwnerClickMoveTarget,
   WaitdogUiView,
+  WorldInteractionTarget,
+  WorldTargetId,
 } from "../services/waitdogSim";
+import { WORLD_STATIONS } from "../services/waitdogSim";
 import type {
   BarrierPlacement,
   EncounterCueKind,
@@ -68,7 +71,6 @@ const WIDTH = 900;
 const HEIGHT = 900;
 const DOG_POSITION_TWEEN_MS = 520;
 const OWNER_POSITION_TWEEN_MS = 96;
-const COMPUTER_LOCATION = { room: "living" as const, x: 0.82, y: 0.2 };
 
 const ROOMS: Record<RoomId, RoomRect> = {
   living: {
@@ -98,6 +100,9 @@ const ROOM_ORDER: RoomId[] = ["living", "kitchen", "toilet"];
 const DOG_HIT_RADIUS = 92;
 const CUE_HIT_RADIUS = 126;
 const COMPUTER_HIT_RADIUS = 88;
+const BOWL_HIT_RADIUS = 72;
+const POOP_HIT_RADIUS = 58;
+const BATH_HIT_RADIUS = 76;
 
 const clampCoordinate = (value: number): number =>
   Math.max(0, Math.min(1, value));
@@ -119,6 +124,15 @@ const spatialPoint = (room: RoomId, x: number, y: number): Point => {
       clampCoordinate(y) * (rect.height - topPadding - bottomPadding),
   };
 };
+
+const interactionTarget = (
+  view: WaitdogUiView,
+  id: WorldTargetId,
+): WorldInteractionTarget | null =>
+  view.interaction.targets.find((target) => target.id === id) ?? null;
+
+const targetPoint = (target: WorldInteractionTarget): Point =>
+  spatialPoint(target.room, target.x, target.y);
 
 const groundTargetAt = (point: Point): GroundMoveTarget | null => {
   const room = ROOM_ORDER.find((roomId) => {
@@ -260,8 +274,29 @@ const drawFallbackFloor = (
 const drawComputer = (
   context: CanvasRenderingContext2D,
   point: Point,
+  work: {
+    seated: boolean;
+    progress: number;
+    state: WaitdogUiView["work"]["state"];
+  },
 ) => {
+  const progress = Math.max(0, Math.min(100, work.progress));
   context.save();
+  if (work.seated) {
+    context.fillStyle = "rgba(79, 120, 198, 0.18)";
+    context.beginPath();
+    context.ellipse(point.x, point.y + 24, 82, 34, 0, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = "rgba(79, 120, 198, 0.72)";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.arc(point.x, point.y + 10, 48, Math.PI, Math.PI * 2);
+    context.stroke();
+  }
+  context.fillStyle = "#385664";
+  context.beginPath();
+  context.roundRect(point.x - 34, point.y + 18, 68, 58, 14);
+  context.fill();
   context.fillStyle = "#714a33";
   context.fillRect(point.x - 66, point.y - 8, 132, 18);
   context.fillRect(point.x - 54, point.y + 8, 10, 55);
@@ -274,9 +309,153 @@ const drawComputer = (
   context.fill();
   context.stroke();
   context.fillStyle = "#92d8d0";
-  context.font = "800 14px sans-serif";
+  context.font = "900 12px sans-serif";
   context.textAlign = "center";
-  context.fillText("WORK", point.x, point.y - 40);
+  context.fillText(work.seated ? "업무 중" : "WORK", point.x, point.y - 50);
+  context.fillStyle = "rgba(255, 255, 255, 0.36)";
+  context.beginPath();
+  context.roundRect(point.x - 32, point.y - 36, 64, 9, 5);
+  context.fill();
+  context.fillStyle = work.state === "complete" ? "#ffd86d" : "#92d8d0";
+  context.beginPath();
+  context.roundRect(point.x - 32, point.y - 36, 64 * progress / 100, 9, 5);
+  context.fill();
+  if (work.seated) {
+    context.fillStyle = "#fff";
+    context.strokeStyle = "#4f78c6";
+    context.lineWidth = 3;
+    context.beginPath();
+    context.roundRect(point.x + 42, point.y - 96, 42, 31, 10);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#345baf";
+    context.font = "950 15px sans-serif";
+    context.fillText("R", point.x + 63, point.y - 75);
+  }
+  context.restore();
+};
+
+const drawBowl = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+  kind: "food" | "water",
+  level: number,
+  status: "basic" | "comfort" | "empty" | "clean" | "dirty",
+  images: ArtImages | null,
+) => {
+  const normalizedLevel = Math.max(0, Math.min(100, level));
+  const drawEmptyBowl = () => {
+    context.save();
+    context.fillStyle = kind === "food" ? "#e9e2d8" : "#eef5f7";
+    context.strokeStyle = "#6d756f";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.ellipse(point.x, point.y - 13, 38, 14, 0, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.strokeStyle = "rgba(255, 255, 255, 0.72)";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.ellipse(point.x, point.y - 15, 24, 6, 0, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  };
+
+  if (images && normalizedLevel > 0) {
+    drawProp(
+      context,
+      images.props,
+      kind === "food" ? PROP_SPRITE_INDEX.food : PROP_SPRITE_INDEX.water,
+      point,
+      82,
+    );
+  } else {
+    drawEmptyBowl();
+  }
+
+  context.save();
+  const fillColor = kind === "food"
+    ? status === "comfort" ? "#e2a268" : "#a96a36"
+    : status === "dirty" ? "#8ea7a0" : "#64c3df";
+  if (normalizedLevel > 0) {
+    context.globalAlpha = 0.45 + normalizedLevel / 200;
+    context.fillStyle = fillColor;
+    context.beginPath();
+    context.ellipse(
+      point.x,
+      point.y - 19,
+      26,
+      Math.max(2, 7 * normalizedLevel / 100),
+      0,
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+  }
+  context.globalAlpha = 1;
+
+  const gaugeX = point.x - 34;
+  const gaugeY = point.y + 4;
+  context.fillStyle = "rgba(32, 61, 54, 0.68)";
+  context.beginPath();
+  context.roundRect(gaugeX, gaugeY, 68, 12, 6);
+  context.fill();
+  if (normalizedLevel > 0) {
+    context.fillStyle = fillColor;
+    context.beginPath();
+    context.roundRect(
+      gaugeX + 2,
+      gaugeY + 2,
+      Math.max(4, 64 * normalizedLevel / 100),
+      8,
+      4,
+    );
+    context.fill();
+  }
+
+  const icon = status === "basic"
+    ? "●"
+    : status === "comfort"
+    ? "♥"
+    : status === "clean"
+    ? "✓"
+    : status === "dirty"
+    ? "!"
+    : "—";
+  context.fillStyle = status === "dirty" ? "#c93e35" : "#2f6258";
+  context.strokeStyle = "#fff";
+  context.lineWidth = 3;
+  context.beginPath();
+  context.arc(point.x + 32, point.y - 52, 15, 0, Math.PI * 2);
+  context.fill();
+  context.stroke();
+  context.fillStyle = "#fff";
+  context.font = "950 13px sans-serif";
+  context.textAlign = "center";
+  context.fillText(icon, point.x + 32, point.y - 47);
+  context.restore();
+};
+
+const drawBath = (
+  context: CanvasRenderingContext2D,
+  point: Point,
+) => {
+  context.save();
+  context.fillStyle = "#f4fbff";
+  context.strokeStyle = "#6aa8bb";
+  context.lineWidth = 5;
+  context.beginPath();
+  context.roundRect(point.x - 55, point.y - 42, 110, 48, 16);
+  context.fill();
+  context.stroke();
+  context.fillStyle = "rgba(100, 195, 223, 0.42)";
+  context.beginPath();
+  context.ellipse(point.x, point.y - 18, 43, 12, 0, 0, Math.PI * 2);
+  context.fill();
+  context.fillStyle = "#4f78c6";
+  context.font = "900 12px sans-serif";
+  context.textAlign = "center";
+  context.fillText("BATH", point.x, point.y - 12);
   context.restore();
 };
 
@@ -459,10 +638,13 @@ const drawPoop = (
   context: CanvasRenderingContext2D,
   view: WaitdogUiView,
   images: ArtImages | null,
+  target: WorldInteractionTarget | null,
 ) => {
   const poop = view.activePoop;
   if (poop === null) return;
-  const point = poop.location === "pad"
+  const point = target
+    ? targetPoint(target)
+    : poop.location === "pad"
     ? spatialPoint(poop.room, 0.72, 0.82)
     : spatialPoint(poop.room, 0.16, 0.86);
   if (images) {
@@ -497,6 +679,27 @@ const cueIcon: Record<EncounterCueKind, string> = {
   anxiety: "≈",
   biteWarning: "!",
   flee: "➜",
+};
+
+const worldTargetLabel = (targetId: WorldTargetId): string => {
+  if (targetId.startsWith("door:")) return "문 이동";
+  switch (targetId) {
+    case "dog":
+      return "강아지 관찰";
+    case "cue":
+      return "신호 관찰";
+    case "computer":
+      return "컴퓨터";
+    case "foodBowl":
+      return "사료 그릇";
+    case "waterBowl":
+      return "물그릇";
+    case "activePoop":
+      return "배변 흔적";
+    case "bath":
+      return "목욕";
+  }
+  return "대상";
 };
 
 const cuePoint = (
@@ -568,17 +771,39 @@ const drawCueEffect = (
   }
 
   const label = cueCopy[encounter.cue.kind];
-  context.font = "900 18px sans-serif";
-  const width = context.measureText(label).width + 30;
+  context.font = "950 19px sans-serif";
+  const width = context.measureText(label).width + 42;
   const labelX = Math.max(10, Math.min(WIDTH - width - 10, point.x - width / 2));
   const labelY = Math.max(20, point.y - 190);
-  context.fillStyle = encounter.safetyLevel === "high" ? "#c93e35" : "#2f6258";
+  const accent = encounter.safetyLevel === "high" ? "#c93e35" : "#ef7f68";
+  context.fillStyle = "rgba(255, 255, 255, 0.98)";
+  context.strokeStyle = accent;
+  context.lineWidth = 5;
   context.beginPath();
-  context.roundRect(labelX, labelY, width, 38, 13);
+  context.roundRect(labelX, labelY, width, 44, 15);
   context.fill();
-  context.fillStyle = "#fff";
+  context.stroke();
+  const tailX = Math.max(labelX + 20, Math.min(labelX + width - 20, point.x));
+  context.fillStyle = "rgba(255, 255, 255, 0.98)";
+  context.beginPath();
+  context.moveTo(tailX - 10, labelY + 42);
+  context.lineTo(tailX + 10, labelY + 42);
+  context.lineTo(tailX, labelY + 58);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.fillStyle = encounter.safetyLevel === "high" ? "#8f302a" : "#27483f";
   context.textAlign = "center";
-  context.fillText(label, labelX + width / 2, labelY + 25);
+  context.fillText(label, labelX + width / 2, labelY + 29);
+  context.strokeStyle = accent;
+  context.lineWidth = 4;
+  context.setLineDash([]);
+  for (const offset of [-1, 1]) {
+    context.beginPath();
+    context.moveTo(point.x + offset * 42, point.y - 88);
+    context.lineTo(point.x + offset * (59 + pulse * 0.2), point.y - 101);
+    context.stroke();
+  }
   context.restore();
 };
 
@@ -658,21 +883,26 @@ const drawRoomLabels = (
   }
 };
 
-const separatedOwnerPoint = (
-  owner: Point,
+const cueEdgeIndicator = (
   ownerRoom: RoomId,
-  dog: Point | null,
-  dogRoom: RoomId | null,
-): Point => {
-  if (dog === null || dogRoom !== ownerRoom) return owner;
-  if (Math.abs(owner.x - dog.x) >= 82 || Math.abs(owner.y - dog.y) >= 48) {
-    return owner;
-  }
+  cue: Point,
+): { point: Point; angle: number } => {
   const rect = ROOMS[ownerRoom];
-  const direction = owner.x <= dog.x ? -1 : 1;
+  const center = centerOf(ownerRoom);
+  const dx = cue.x - center.x;
+  const dy = cue.y - center.y;
+  const safeDx = Math.abs(dx) < 0.001 ? 0.001 : Math.abs(dx);
+  const safeDy = Math.abs(dy) < 0.001 ? 0.001 : Math.abs(dy);
+  const scale = Math.min(
+    (rect.width / 2 - 28) / safeDx,
+    (rect.height / 2 - 28) / safeDy,
+  );
   return {
-    x: Math.max(rect.x + 46, Math.min(rect.x + rect.width - 46, owner.x + direction * 42)),
-    y: owner.y,
+    point: {
+      x: center.x + dx * scale,
+      y: center.y + dy * scale,
+    },
+    angle: Math.atan2(dy, dx) * 180 / Math.PI,
   };
 };
 
@@ -699,6 +929,14 @@ export function HouseCanvas({
     null,
   );
   const interaction = view.interaction;
+  const foodBowlTarget = interactionTarget(view, "foodBowl");
+  const waterBowlTarget = interactionTarget(view, "waterBowl");
+  const computerTarget = interactionTarget(view, "computer");
+  const poopTarget = interactionTarget(view, "activePoop");
+  const bathTarget = interactionTarget(view, "bath");
+  const dogInteractionTarget = interactionTarget(view, "dog");
+  const cueInteractionTarget = interactionTarget(view, "cue");
+  const workSeated = view.work.seated;
 
   useEffect(() => {
     let active = true;
@@ -827,15 +1065,59 @@ export function HouseCanvas({
       if (images) {
         drawProp(context, images.props, PROP_SPRITE_INDEX.mat, { x: 158, y: 833 }, 150);
         drawProp(context, images.props, PROP_SPRITE_INDEX.ball, { x: 444, y: 786 }, 72);
-        drawProp(context, images.props, PROP_SPRITE_INDEX.food, { x: 650, y: 390 }, 94);
-        drawProp(context, images.props, PROP_SPRITE_INDEX.water, { x: 780, y: 390 }, 94);
       }
+      const computerPoint = spatialPoint(
+        WORLD_STATIONS.computer.room,
+        WORLD_STATIONS.computer.x,
+        WORLD_STATIONS.computer.y,
+      );
       drawComputer(
         context,
-        spatialPoint(COMPUTER_LOCATION.room, COMPUTER_LOCATION.x, COMPUTER_LOCATION.y),
+        computerPoint,
+        {
+          seated: workSeated,
+          progress: view.work.progress,
+          state: view.work.state,
+        },
+      );
+      drawBowl(
+        context,
+        spatialPoint(
+          WORLD_STATIONS.foodBowl.room,
+          WORLD_STATIONS.foodBowl.x,
+          WORLD_STATIONS.foodBowl.y,
+        ),
+        "food",
+        view.environmentPlacements.foodBowl.level,
+        view.environmentPlacements.foodBowl.itemId === "food-comfort"
+          ? "comfort"
+          : view.environmentPlacements.foodBowl.itemId === "food-basic"
+          ? "basic"
+          : "empty",
+        images,
+      );
+      drawBowl(
+        context,
+        spatialPoint(
+          WORLD_STATIONS.waterBowl.room,
+          WORLD_STATIONS.waterBowl.x,
+          WORLD_STATIONS.waterBowl.y,
+        ),
+        "water",
+        view.environmentPlacements.waterBowl.level,
+        view.environmentPlacements.waterBowl.clean ? "clean" : "dirty",
+        images,
+      );
+      drawBath(
+        context,
+        spatialPoint(
+          WORLD_STATIONS.bath.room,
+          WORLD_STATIONS.bath.x,
+          WORLD_STATIONS.bath.y,
+        ),
       );
       drawPadPlacement(context, view, images);
-      drawPoop(context, view, images);
+      drawPoop(context, view, images, poopTarget);
       view.environmentPlacements.barriers.forEach((barrier) =>
         drawBarrier(context, barrier)
       );
@@ -866,13 +1148,7 @@ export function HouseCanvas({
       }
 
       const publicDogPoint = view.visibility === "seen" ? dogPositionRef.current : null;
-      const dogRoom = view.visibility === "seen" ? view.spatial.room : null;
-      const ownerPoint = separatedOwnerPoint(
-        ownerPositionRef.current,
-        view.ownerSpatial.room,
-        publicDogPoint,
-        dogRoom,
-      );
+      const ownerPoint = ownerPositionRef.current;
       const entities: Array<{ footY: number; draw: () => void }> = [
         {
           footY: ownerPoint.y,
@@ -941,12 +1217,48 @@ export function HouseCanvas({
       ? cuePoint(encounter, currentDogPoint)
       : null;
     const computerPoint = spatialPoint(
-      COMPUTER_LOCATION.room,
-      COMPUTER_LOCATION.x,
-      COMPUTER_LOCATION.y,
+      WORLD_STATIONS.computer.room,
+      WORLD_STATIONS.computer.x,
+      WORLD_STATIONS.computer.y,
     );
+    const foodPoint = spatialPoint(
+      WORLD_STATIONS.foodBowl.room,
+      WORLD_STATIONS.foodBowl.x,
+      WORLD_STATIONS.foodBowl.y,
+    );
+    const waterPoint = spatialPoint(
+      WORLD_STATIONS.waterBowl.room,
+      WORLD_STATIONS.waterBowl.x,
+      WORLD_STATIONS.waterBowl.y,
+    );
+    const bathPoint = spatialPoint(
+      WORLD_STATIONS.bath.room,
+      WORLD_STATIONS.bath.x,
+      WORLD_STATIONS.bath.y,
+    );
+    const visiblePoopPoint = poopTarget
+      ? targetPoint(poopTarget)
+      : view.activePoop
+      ? view.activePoop.location === "pad"
+        ? spatialPoint(view.activePoop.room, 0.72, 0.82)
+        : spatialPoint(view.activePoop.room, 0.16, 0.86)
+      : null;
     const hits = (target: Point, radius: number) =>
       Math.hypot(point.x - target.x, point.y - target.y) <= radius;
+    const moveToTarget = (
+      target: WorldInteractionTarget | null,
+      fallback: GroundMoveTarget,
+    ) => {
+      if (target?.nearby) {
+        onInteract();
+        return;
+      }
+      const destination: GroundMoveTarget = target
+        ? { room: target.room, x: target.x, y: target.y }
+        : fallback;
+      setGroundMarker(destination);
+      onGroundMove(destination);
+    };
 
     if (
       encounter !== null &&
@@ -956,10 +1268,6 @@ export function HouseCanvas({
         CUE_HIT_RADIUS,
       )
     ) {
-      if (interaction.encounterReady) {
-        onInteract();
-        return;
-      }
       const cueTarget: GroundMoveTarget = encounter.cue.anchor
         ? {
           room: encounter.cue.room,
@@ -973,11 +1281,10 @@ export function HouseCanvas({
         ? {
           room: encounter.cue.room,
           x: view.spatial.x,
-          y: view.spatial.y,
+            y: view.spatial.y,
         }
         : { room: encounter.cue.room, x: 0.5, y: 0.5 };
-      setGroundMarker(cueTarget);
-      onGroundMove(cueTarget);
+      moveToTarget(cueInteractionTarget, cueTarget);
       return;
     }
 
@@ -987,13 +1294,34 @@ export function HouseCanvas({
         COMPUTER_HIT_RADIUS,
       )
     ) {
-      if (interaction.nearbyTarget === "computer") {
-        onInteract();
-        return;
-      }
-      const computerTarget: GroundMoveTarget = { ...COMPUTER_LOCATION };
-      setGroundMarker(computerTarget);
-      onGroundMove(computerTarget);
+      moveToTarget(computerTarget, { ...WORLD_STATIONS.computer });
+      return;
+    }
+
+    if (hits({ x: foodPoint.x, y: foodPoint.y - 24 }, BOWL_HIT_RADIUS)) {
+      moveToTarget(foodBowlTarget, { ...WORLD_STATIONS.foodBowl });
+      return;
+    }
+
+    if (hits({ x: waterPoint.x, y: waterPoint.y - 24 }, BOWL_HIT_RADIUS)) {
+      moveToTarget(waterBowlTarget, { ...WORLD_STATIONS.waterBowl });
+      return;
+    }
+
+    if (visiblePoopPoint && hits(visiblePoopPoint, POOP_HIT_RADIUS)) {
+      const fallback: GroundMoveTarget = view.activePoop
+        ? {
+          room: view.activePoop.room,
+          x: view.activePoop.location === "pad" ? 0.72 : 0.16,
+          y: view.activePoop.location === "pad" ? 0.82 : 0.86,
+        }
+        : { room: "toilet", x: 0.5, y: 0.5 };
+      moveToTarget(poopTarget, fallback);
+      return;
+    }
+
+    if (hits({ x: bathPoint.x, y: bathPoint.y - 18 }, BATH_HIT_RADIUS)) {
+      moveToTarget(bathTarget, { ...WORLD_STATIONS.bath });
       return;
     }
 
@@ -1004,7 +1332,19 @@ export function HouseCanvas({
         DOG_HIT_RADIUS,
       )
     ) {
-      onInteract();
+      const fallback: GroundMoveTarget = view.spatial.room !== null &&
+          view.spatial.x !== null && view.spatial.y !== null
+        ? {
+          room: view.spatial.room,
+          x: view.spatial.x,
+          y: view.spatial.y,
+        }
+        : {
+          room: view.ownerSpatial.room,
+          x: view.ownerSpatial.x,
+          y: view.ownerSpatial.y,
+        };
+      moveToTarget(dogInteractionTarget, fallback);
       return;
     }
     const target = groundTargetAt(point);
@@ -1018,6 +1358,12 @@ export function HouseCanvas({
     view.environmentPlacements.barriers.length > 0
       ? `칸막이 ${view.environmentPlacements.barriers.length}개`
       : null,
+    view.environmentPlacements.foodBowl.itemId
+      ? `사료 그릇 ${view.environmentPlacements.foodBowl.level}%`
+      : "사료 그릇 비어 있음",
+    `물그릇 ${view.environmentPlacements.waterBowl.level}%${
+      view.environmentPlacements.waterBowl.clean ? " 깨끗함" : " 세척 필요"
+    }`,
   ].filter(Boolean).join(", ");
   const dogLabel = view.visibility === "seen"
     ? "강아지가 보입니다."
@@ -1028,10 +1374,18 @@ export function HouseCanvas({
   const publicCuePoint = encounter
     ? cuePoint(encounter, publicDogPoint)
     : null;
-  const proximityPrompt = encounter
-    ? interaction.encounterReady
-      ? "[E] 관찰"
-      : "가까이 가기"
+  const cueEdge = encounter && publicCuePoint &&
+      encounter.cue.room !== view.ownerSpatial.room
+    ? cueEdgeIndicator(view.ownerSpatial.room, publicCuePoint)
+    : null;
+  const primaryContextAction = interaction.contextActions.find(
+    (action) => action.enabled,
+  ) ?? interaction.contextActions[0] ?? null;
+  const proximityPrompt = interaction.nearbyTarget
+    ? `[E] ${primaryContextAction?.label ??
+      worldTargetLabel(interaction.nearbyTarget)}`
+    : encounter
+    ? `${ROOMS[encounter.cue.room].label} 신호로 이동`
     : null;
 
   return (
@@ -1072,11 +1426,27 @@ export function HouseCanvas({
             {cueIcon[encounter.cue.kind]}
           </span>
         )}
+        {cueEdge && (
+          <span
+            className={`canvas-edge-indicator safety-${encounter?.safetyLevel ?? "routine"}`}
+            style={{
+              left: `${cueEdge.point.x / WIDTH * 100}%`,
+              top: `${cueEdge.point.y / HEIGHT * 100}%`,
+              transform: `translate(-50%, -50%) rotate(${cueEdge.angle}deg)`,
+            }}
+            aria-label={`${encounter ? ROOMS[encounter.cue.room].label : "다른 방"}에 강아지 신호가 있습니다.`}
+            role="status"
+          >
+            ➜
+          </span>
+        )}
         {proximityPrompt && (
           <span
-            className={`proximity-prompt${interaction.encounterReady ? " is-ready" : ""}`}
+            className={`proximity-prompt${interaction.nearbyTarget ? " is-ready" : ""}`}
             role="status"
-            title={interaction.encounterDistance === null
+            title={interaction.nearbyTarget
+              ? `${worldTargetLabel(interaction.nearbyTarget)} 근처`
+              : interaction.encounterDistance === null
               ? undefined
               : `신호까지 거리 ${interaction.encounterDistance.toFixed(2)}`}
           >
