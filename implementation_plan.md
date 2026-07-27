@@ -1,5 +1,13 @@
 # WEBGAMES Portal Plan
 
+## 기다려멍 Phase B2 — 조작감
+
+- [x] B2a — 64ms 입력 폴링을 실제 경과시간 기반 rAF 루프로 전환
+- [x] B2b — non-repeat 이동 keydown에 기준 1프레임 즉시 이동 적용
+- [x] B2c — 보호자 위치 트윈을 96ms에서 16ms로 단축
+- [x] B2d — 직진·슬라이드 실패 시 강아지 원자적 재배치 후 직진 재시도
+- [ ] B2 검수 — 지정 계약·TypeScript·B1 회귀 커맨드 독립 실행
+
 ## Goal
 
 여러 웹게임을 모아 광고 수익을 내는 포털. `/` 홈에서 게임을 고르고 `/games/<id>/`에서 플레이한다 (Vite 멀티엔트리 MPA).

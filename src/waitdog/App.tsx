@@ -118,7 +118,6 @@ interface DirectInputActions {
   closeSurface: () => void;
 }
 
-const DIRECT_CONTROL_STEP_MS = 64;
 const MIN_INPUT_DELTA_MS = 16;
 const MAX_INPUT_DELTA_MS = 250;
 const PERSISTENCE_TRAILING_MS = 240;
@@ -788,7 +787,7 @@ export default function App() {
         Math.max(
           MIN_INPUT_DELTA_MS,
           lastDirectTickAtRef.current === null
-            ? DIRECT_CONTROL_STEP_MS
+            ? BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS
             : now - lastDirectTickAtRef.current,
         ),
       );
@@ -908,6 +907,16 @@ export default function App() {
         setSecondaryFeedback(null);
         clickMoveTargetRef.current = null;
         heldMoveKeysRef.current.add(event.code);
+        if (!event.repeat) {
+          const vector = MOVE_KEY_VECTORS[event.code];
+          simRef.current.moveOwnerBy({
+            dx: vector.dx,
+            dy: vector.dy,
+            elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+          });
+          lastDirectTickAtRef.current = performance.now();
+          commitView(simRef.current.getDogView());
+        }
         return;
       }
 
@@ -943,16 +952,20 @@ export default function App() {
     };
     const handleWindowBlur = () => clearDirectInput();
 
-    const intervalId = window.setInterval(
-      directControlTick,
-      DIRECT_CONTROL_STEP_MS,
-    );
+    let animationFrameId = 0;
+    const directControlFrame = () => {
+      directControlTick();
+      animationFrameId = window.requestAnimationFrame(directControlFrame);
+    };
+    if (phase === "live") {
+      animationFrameId = window.requestAnimationFrame(directControlFrame);
+    }
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", handleWindowBlur);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      window.clearInterval(intervalId);
+      window.cancelAnimationFrame(animationFrameId);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleWindowBlur);
@@ -962,7 +975,7 @@ export default function App() {
       );
       clearDirectInput();
     };
-  }, []);
+  }, [phase]);
 
   useEffect(() => {
     if (phaseRef.current !== "live") return;

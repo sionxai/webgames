@@ -1160,7 +1160,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       y: this.ownerSpatial.y,
     };
     const moved = transition === null
-      ? this.tryMoveOwnerWithinRoom(nextX, nextY, false)
+      ? this.tryMoveOwnerWithinRoom(nextX, nextY)
       : this.trySetOwnerPosition(
         transition.room,
         transition.x,
@@ -3622,24 +3622,39 @@ class WaitdogSimulation implements WaitdogUiSim {
         return true;
       }
     }
-    if (
-      safeX !== this.ownerSpatial.x &&
-      !this.ownerPathIntersectsDog(safeX, this.ownerSpatial.y) &&
-      this.trySetOwnerPosition(
-        this.ownerSpatial.room,
-        safeX,
-        this.ownerSpatial.y,
-      )
-    ) {
-      return true;
-    }
-    return safeY !== this.ownerSpatial.y &&
-      !this.ownerPathIntersectsDog(this.ownerSpatial.x, safeY) &&
-      this.trySetOwnerPosition(
-        this.ownerSpatial.room,
-        this.ownerSpatial.x,
-        safeY,
-      );
+    const previousOwnerSpatial = clone(this.ownerSpatial);
+    const previousOwner = clone(this.owner);
+    const previousDogSpatial = clone(this.spatial);
+    const previousDogRoom = this.dogRoom;
+    this.ownerSpatial.x = safeX;
+    this.ownerSpatial.y = safeY;
+    const safeDogPoint = this.safeDogPointNearOwner();
+    this.ownerSpatial = previousOwnerSpatial;
+    this.owner = previousOwner;
+    this.spatial = {
+      ...this.spatial,
+      room: safeDogPoint.room,
+      x: safeDogPoint.x,
+      y: safeDogPoint.y,
+      targetRoom: safeDogPoint.room,
+      targetX: safeDogPoint.x,
+      targetY: safeDogPoint.y,
+      route: [],
+      activity: "idle",
+      moving: false,
+    };
+    this.dogRoom = safeDogPoint.room;
+    const movedAfterDogRelocation =
+      !this.ownerPathIntersectsDog(safeX, safeY) &&
+      this.trySetOwnerPosition(this.ownerSpatial.room, safeX, safeY) &&
+      !ownerDogFootprintsOverlap(this.ownerSpatial, this.spatial);
+    if (movedAfterDogRelocation) return true;
+
+    this.ownerSpatial = previousOwnerSpatial;
+    this.owner = previousOwner;
+    this.spatial = previousDogSpatial;
+    this.dogRoom = previousDogRoom;
+    return false;
   }
 
   private ownerDogSlideTarget(

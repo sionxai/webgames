@@ -70,7 +70,7 @@ type ArtLoadState =
 const WIDTH = 900;
 const HEIGHT = 900;
 const DOG_POSITION_TWEEN_MS = 520;
-const OWNER_POSITION_TWEEN_MS = 96;
+const OWNER_POSITION_TWEEN_MS = 16;
 
 const ROOMS: Record<RoomId, RoomRect> = {
   living: {
