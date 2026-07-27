@@ -1219,7 +1219,7 @@ canvas:focus-visible {
 
 .lifestyle-page {
   min-height: 100dvh;
-  padding-bottom: 116px;
+  padding-bottom: 0;
 }
 
 .lifestyle-topbar {
@@ -2967,7 +2967,7 @@ canvas:focus-visible {
 
 .lifestyle-page {
   padding-top: 10px;
-  padding-bottom: 96px;
+  padding-bottom: 0;
 }
 
 .lifestyle-topbar {
@@ -3092,16 +3092,17 @@ canvas:focus-visible {
 .canvas-stage {
   width: min(
     100%,
-    clamp(420px, calc(100dvh - 235px), 680px)
+    clamp(420px, calc(100dvh - 260px), 680px)
   );
+  max-height: calc(100dvh - 260px);
   aspect-ratio: 1;
   margin-inline: auto;
 }
 
 .canvas-stage canvas {
   width: 100%;
-  height: 100%;
-  aspect-ratio: auto;
+  height: auto;
+  aspect-ratio: 1;
   touch-action: manipulation;
 }
 
@@ -3443,6 +3444,10 @@ canvas:focus-visible {
 @media (max-width: 899px) {
   .lifestyle-page {
     padding: 7px 8px calc(166px + env(safe-area-inset-bottom));
+  }
+
+  .lifestyle-page:has(.direct-controls) {
+    padding-bottom: 214px;
   }
 
   .lifestyle-topbar {

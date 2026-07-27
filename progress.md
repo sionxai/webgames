@@ -1,5 +1,11 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-27 — 기다려멍 Phase B3
+
+- 데스크톱 `.lifestyle-page`의 기본 하단 여백을 제거하고, 후행 v5 `@media (max-width: 899px)`에도 `.lifestyle-page:has(.direct-controls) { padding-bottom: 214px; }`를 명시해 최종 cascade에서 모바일 스틱 여백을 보존했다.
+- `.canvas-stage`의 기존 `calc(100dvh - 235px)` 폭 계산에 같은 `max-height`를 추가하고 canvas를 `width: 100%; height: auto; aspect-ratio: 1`로 유지했다.
+- 수용 기준 첫 커맨드는 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. 사용자 지시에 따라 나머지 두 커맨드는 실행하지 않고 전체 검증을 미실행으로 반환한다.
+
 ## 2026-07-27 — 기다려멍 Phase B1
 
 - `suggestAutoEncounter(excludeId?)`를 순수 조회로 공개하고 App의 기존 1초 live 루프가 실제 시간 진행 뒤 자동 미션을 시작하도록 연결했다.
