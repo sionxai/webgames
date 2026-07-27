@@ -18,6 +18,7 @@ import {
   characterExpr,
   characterFrames,
 } from "@/lib/shared/characters";
+import { loadStats, recordPlayDay, type PlayerStats } from "@/lib/client/store";
 import { gradeFor, nextGrade } from "@/lib/shared/constants";
 import { soundForGradeName } from "@/lib/shared/sounds";
 
@@ -56,6 +57,11 @@ export function TapZone() {
   const { total, session, tap } = useTaps();
   // 서버 권위 판정이 없는 구성이라 상한(capped) 상태는 존재하지 않는다.
   const capped = false;
+  const [stats, setStats] = useState<PlayerStats>({
+    bestCps: 0,
+    streakDays: 0,
+  });
+  const playDayRecordedRef = useRef(false);
   const [floaters, setFloaters] = useState<Floater[]>([]);
   const [ripples, setRipples] = useState<Ripple[]>([]);
   const [combo, setCombo] = useState<Combo | null>(null);
@@ -98,8 +104,8 @@ export function TapZone() {
   const next = nextGrade(total);
   const progress = next ? Math.min(1, total / next.min) : 1;
   // 최고 기록·연속일 배지는 값이 있을 때만 뜬다(0이면 숨김).
-  const best = 0;
-  const streakDays = 0;
+  const best = stats.bestCps;
+  const streakDays = stats.streakDays;
   const displayTotal = useCountUp(total);
   const character = characterById(undefined);
   const motion = characterFrames(character);
@@ -221,9 +227,30 @@ export function TapZone() {
       setDrowsy(false);
       if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
       inactivityTimerRef.current = setTimeout(() => setDrowsy(true), 12_000);
+
+      // 오늘의 첫 딸깍에만 연속일을 갱신한다. 실패해도 플레이는 막지 않는다.
+      if (!playDayRecordedRef.current) {
+        playDayRecordedRef.current = true;
+        void recordPlayDay().then((streakDays) => {
+          if (typeof streakDays === "number") {
+            setStats((current) => ({ ...current, streakDays }));
+          }
+        });
+      }
     },
     [showEffects]
   );
+
+  // 최고 CPS·연속일을 불러온다(로그인 전이거나 실패하면 배지가 뜨지 않는다).
+  useEffect(() => {
+    let cancelled = false;
+    void loadStats().then((loaded) => {
+      if (!cancelled && loaded) setStats(loaded);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

@@ -10,9 +10,16 @@ service cloud.firestore {
       allow write: if request.auth != null && request.auth.uid == uid
         && request.resource.data.bestCps is number
         && request.resource.data.bestCps >= 0
+        // 사람이 낼 수 있는 범위를 넘는 조작 기록을 막는다.
         && request.resource.data.bestCps <= 30
         && request.resource.data.nickname is string
-        && request.resource.data.nickname.size() <= 20;
+        && request.resource.data.nickname.size() <= 20
+        && request.resource.data.streakDays is number
+        && request.resource.data.streakDays >= 0
+        && request.resource.data.streakDays <= 36500
+        && (request.resource.data.lastPlayDay == null
+            || (request.resource.data.lastPlayDay is string
+                && request.resource.data.lastPlayDay.size() <= 10));
     }
 
     match /dadadak_schools/{schoolId} {
