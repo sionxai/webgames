@@ -889,6 +889,9 @@ const drawHeardRoomIndicators = (
   now: number,
   reducedMotion: boolean,
 ) => {
+  // 강아지가 눈에 보이면 다른 방에서 들릴 소리도 없다. 인접 방이라는 이유만으로
+  // 표시하면 강아지를 눈앞에 두고도 "옆방에서 소리가 난다"는 거짓 신호가 된다.
+  if (view.visibility === "seen") return;
   const pulse = reducedMotion ? 0 : (Math.sin(now / 220) + 1) * 5;
   for (const room of ROOM_ORDER) {
     if (view.roomVisibility[room] !== "heard") continue;

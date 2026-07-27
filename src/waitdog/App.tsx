@@ -44,10 +44,13 @@ import {
   type WorldInteractionTarget,
   type WorldTargetId,
 } from "./services/waitdogSim";
+import { BALANCE } from "./constants/balance";
+import { createRng } from "./core/rng";
 import type {
   BarrierItemId,
   CatalogCategory,
   CatalogItemId,
+  EncounterId,
   LifestyleActionResult,
   PadItemId,
   RoomId,
@@ -79,6 +82,14 @@ const waitdogCloudSave = createCloudSave("waitdog", 2);
 const waitdogLocalExistedAtStartup =
   typeof window !== "undefined" &&
   window.localStorage.getItem(WAITDOG_PROFILE_KEY) !== null;
+
+const autoEncounterCooldown = (seed: number, absoluteMinute: number): number => {
+  const cooldown = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_COOLDOWN_MINUTES;
+  return createRng((seed ^ absoluteMinute) >>> 0).integer(
+    cooldown.MIN,
+    cooldown.MAX,
+  );
+};
 
 interface BootstrapState {
   sim: WaitdogUiSim;
@@ -433,6 +444,10 @@ export default function App() {
   const directInputActionsRef = useRef<DirectInputActions | null>(null);
   const persistenceTimerRef = useRef<number | null>(null);
   const persistencePendingRef = useRef(false);
+  const nextAutoEncounterDueRef = useRef(
+    view.t + autoEncounterCooldown(initial.settings.seed, view.t),
+  );
+  const lastAutoEncounterIdRef = useRef<EncounterId | null>(null);
   const persistProfileRef = useRef<
     (silent: boolean, suppressCloudPush: boolean) => void
   >(() => undefined);
@@ -495,6 +510,12 @@ export default function App() {
     commitSettings({ ...settingsRef.current, speed: next });
   };
 
+  const resetAutoEncounterSchedule = (nextView: WaitdogUiView): void => {
+    nextAutoEncounterDueRef.current = nextView.t +
+      autoEncounterCooldown(settingsRef.current.seed, nextView.t);
+    lastAutoEncounterIdRef.current = null;
+  };
+
   const applyCloudPayload = (payload: string): boolean => {
     const next = bootstrapFromPayload(payload);
     if (next.storageMessage !== null) return false;
@@ -526,6 +547,9 @@ export default function App() {
     surfaceRef.current = null;
     externalClockRef.current = false;
     automationRemainderRef.current = 0;
+    nextAutoEncounterDueRef.current = nextView.t +
+      autoEncounterCooldown(next.settings.seed, nextView.t);
+    lastAutoEncounterIdRef.current = null;
     clearDirectInput();
     setPhase(next.phase);
     setView(nextView);
@@ -714,7 +738,33 @@ export default function App() {
     if (phase !== "live" || speed === 0 || ended) return;
     const intervalId = window.setInterval(() => {
       if (externalClockRef.current || simulationIsPaused()) return;
-      advanceSimulation(GAME_MINUTES_PER_SECOND * speedRef.current);
+      const advanced = advanceSimulation(
+        GAME_MINUTES_PER_SECOND * speedRef.current,
+      );
+      if (advanced.minutes === 0) return;
+
+      const current = simRef.current.getDogView();
+      if (
+        current.activeEncounter !== null ||
+        current.work.alert !== null ||
+        current.work.active ||
+        surfaceRef.current !== null ||
+        current.minuteOfDay >= DAY_END_MINUTE ||
+        current.t < nextAutoEncounterDueRef.current
+      ) return;
+
+      const encounterId = simRef.current.suggestAutoEncounter(
+        lastAutoEncounterIdRef.current,
+      );
+      if (encounterId === null) return;
+
+      const result = simRef.current.startEncounter(encounterId);
+      if (!result.ok) return;
+
+      lastAutoEncounterIdRef.current = encounterId;
+      nextAutoEncounterDueRef.current = current.t +
+        autoEncounterCooldown(settingsRef.current.seed, current.t);
+      commitView(simRef.current.getDogView());
     }, 1000);
     return () => window.clearInterval(intervalId);
   }, [ended, phase, speed]);
@@ -918,6 +968,7 @@ export default function App() {
     if (phaseRef.current !== "live") return;
     const result = simRef.current.ensureFirstEncounter();
     const next = simRef.current.getDogView();
+    resetAutoEncounterSchedule(next);
     commitView(next);
     if (
       result.ok &&
@@ -1550,6 +1601,7 @@ export default function App() {
     simRef.current.newDay();
     const next = simRef.current.getDogView();
     automationRemainderRef.current = 0;
+    resetAutoEncounterSchedule(next);
     speedRef.current = 1;
     setSpeed(1);
     commitSettings({
@@ -1574,6 +1626,7 @@ export default function App() {
     simRef.current.newDay();
     const next = simRef.current.getDogView();
     automationRemainderRef.current = 0;
+    resetAutoEncounterSchedule(next);
     speedRef.current = 1;
     setSpeed(1);
     commitSettings({
@@ -1604,6 +1657,9 @@ export default function App() {
     resourcesRef.current = nextResources;
     speedRef.current = 1;
     automationRemainderRef.current = 0;
+    nextAutoEncounterDueRef.current = nextSim.getDogView().t +
+      autoEncounterCooldown(nextSettings.seed, nextSim.getDogView().t);
+    lastAutoEncounterIdRef.current = null;
     setSettings(nextSettings);
     setResources(nextResources);
     setHypotheses([]);

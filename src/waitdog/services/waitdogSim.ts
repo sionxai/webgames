@@ -183,6 +183,7 @@ export interface WorldInteractionTarget {
 
 export interface WaitdogWorkView {
   state: "idle" | "moving" | "ready" | "working" | "alert" | "complete";
+  active: boolean;
   progress: number;
   seated: boolean;
   canStart: boolean;
@@ -265,6 +266,7 @@ export interface WaitdogUiSim extends WaitdogSim {
   serialize(): WaitdogSnapshot;
   restore(snapshot: unknown): void;
   ensureFirstEncounter(): LifestyleActionResult;
+  suggestAutoEncounter(excludeId?: EncounterId | null): EncounterId | null;
   startNextEncounter(): LifestyleActionResult;
   startEncounter(encounterId: EncounterId): LifestyleActionResult;
   selectEncounterCause(choiceId: string): LifestyleActionResult;
@@ -1924,6 +1926,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       pausedForEncounter: this.encounterDirector.active !== null,
       work: {
         state: workState,
+        active: this.work.active,
         progress: this.work.progress,
         seated: this.work.seated,
         canStart: this.encounterDirector.active === null &&
@@ -2125,12 +2128,6 @@ class WaitdogSimulation implements WaitdogUiSim {
       );
       this.poop();
     }
-    // TODO(A1): tick() 안에서 자동 발생시키면 advanceMinutes() 의 기존 가드
-    // (encounterDirector.active !== null 이면 즉시 return) 때문에 시뮬레이션이 스스로 정지한다.
-    // 미해소 encounter 가 소화·배변 등 모든 자율 행동을 멈춰 계약 테스트가 교착한다.
-    // 자동 발생 트리거는 일시정지 모델을 소유한 App 계층으로 옮겨야 한다(재승인 대기 중).
-    // 아래 헬퍼는 그 이전까지 호출하지 않는다.
-    // this.startAutomaticEncounterIfNeeded();
     if (
       this.pendingEatAt !== null && this.absoluteMinute >= this.pendingEatAt
     ) {
@@ -2180,58 +2177,16 @@ class WaitdogSimulation implements WaitdogUiSim {
     return { ok: transition.ok, reason: transition.reason };
   }
 
-  private startAutomaticEncounterIfNeeded(): void {
+  suggestAutoEncounter(
+    excludeId: EncounterId | null = null,
+  ): EncounterId | null {
     if (
       this.encounterDirector.active !== null ||
       this.work.active ||
       this.work.alert !== null ||
       this.minuteOfDay >= BALANCE.TIME.DAY_END
     ) {
-      return;
-    }
-    let lastStartedAt = (this.day - BALANCE.NUMBER.ONE) *
-      BALANCE.TIME.DAY_LENGTH + BALANCE.TIME.DAY_START;
-    let lastEncounterId: EncounterId | undefined;
-    for (let index = this.log.length - 1; index >= 0; index -= 1) {
-      const entry = this.log[index];
-      if (entry?.type === "encounterStarted") {
-        lastStartedAt = entry.t;
-        const encounterId = entry.detail.encounterId;
-        if (
-          typeof encounterId === "string" &&
-          (ENCOUNTER_IDS as readonly string[]).includes(encounterId)
-        ) {
-          lastEncounterId = encounterId as EncounterId;
-        }
-        break;
-      }
-    }
-
-    let dueAt: number | undefined;
-    for (let index = this.log.length - 1; index >= 0; index -= 1) {
-      const entry = this.log[index];
-      if (
-        entry?.type === "encounterScheduled" &&
-        entry.detail.anchorAt === lastStartedAt &&
-        typeof entry.detail.dueAt === "number"
-      ) {
-        dueAt = entry.detail.dueAt;
-        break;
-      }
-    }
-    if (dueAt === undefined) {
-      const cooldown = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_COOLDOWN_MINUTES;
-      // 공용 this.rng 를 소비하면 시드 기반 결정론이 어긋나 배변 인과 등 기존 계약이 깨진다.
-      // 앵커 시각에서 파생한 독립 스트림을 써서 메인 스트림을 건드리지 않는다.
-      const scheduleRng = createRng((this.seed ^ lastStartedAt) >>> 0);
-      dueAt = lastStartedAt + scheduleRng.integer(cooldown.MIN, cooldown.MAX);
-      this.record("encounterScheduled", this.dogRoom, {
-        anchorAt: lastStartedAt,
-        dueAt,
-      });
-    }
-    if (this.absoluteMinute < dueAt) {
-      return;
+      return null;
     }
 
     const references = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_SCORE_REFERENCE;
@@ -2263,24 +2218,14 @@ class WaitdogSimulation implements WaitdogUiSim {
     ];
     const dominant = candidates
       .filter((candidate) =>
-        candidate.encounterId !== lastEncounterId &&
+        candidate.encounterId !== excludeId &&
         (candidate.encounterId !== "potty" || this.activePoop === null)
       )
       .sort((first, second) =>
         second.score - first.score ||
         first.tiePriority - second.tiePriority
       )[0];
-    if (dominant !== undefined) {
-      this.commitEncounterTransition(
-        startEncounterByIdState(
-          this.encounterDirector,
-          dominant.encounterId,
-          this.seed,
-        ),
-        {},
-        true,
-      );
-    }
+    return dominant?.encounterId ?? null;
   }
 
   private activeEncounterWasAutomaticallyStarted(): boolean {

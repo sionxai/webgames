@@ -1,5 +1,12 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-27 — 기다려멍 Phase B1
+
+- `suggestAutoEncounter(excludeId?)`를 순수 조회로 공개하고 App의 기존 1초 live 루프가 실제 시간 진행 뒤 자동 미션을 시작하도록 연결했다.
+- 다음 발생 시각과 직전 종류는 비영속 ref로 관리하며, 설정 seed와 현재 absolute minute에서 60~120분 쿨다운을 파생한다.
+- `git diff --check && npx tsc --noEmit`은 `SecItemCopyMatching failed -50`/exit 139가 발생했고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다.
+- TODO: 운용자가 수용 기준 3개 커맨드를 정상 Node/npm 환경에서 실행하고 브라우저에서 하루 발생 횟수 8~16회를 실측한다.
+
 ## 2026-07-27 — 기다려멍 Phase A
 
 - 사용자 승인 범위: `waitdogSim.ts`, `HouseCanvas.tsx`, `balance.ts`, `implementation_plan.md`, `progress.md`만 수정 가능. A1 측정 스크립트는 `/tmp`에만 둔다.
