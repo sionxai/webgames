@@ -13,6 +13,7 @@ import {
 import { LifestyleDialog } from "./components/LifestyleDialog";
 import { MorningPlan } from "./components/MorningPlan";
 import { TopBar, type GameSpeed } from "./components/TopBar";
+import { TutorialOverlay } from "./components/TutorialOverlay";
 import {
   WorldActionBar,
   type WorldActionTarget,
@@ -78,6 +79,7 @@ const STORAGE_LOAD_MESSAGE =
 const STORAGE_SAVE_MESSAGE =
   "저장 공간에 기록하지 못했습니다. 현재 화면의 진행은 계속됩니다.";
 const WAITDOG_LOCAL_SAVED_AT_KEY = "portal_cloud_save_local_updated_at_waitdog";
+const WAITDOG_TUTORIAL_KEY = "waitdog_tutorial_v1";
 const waitdogCloudSave = createCloudSave("waitdog", 2);
 const waitdogLocalExistedAtStartup =
   typeof window !== "undefined" &&
@@ -273,7 +275,9 @@ const surfacePauseLabel = (surface: LifestyleSurface): string => {
 const blockedPauseReason = (
   currentView: WaitdogUiView,
   surface: LifestyleSurface | null,
+  tutorialOpen: boolean,
 ): string | null => {
+  if (tutorialOpen) return "튜토리얼 열림";
   if (currentView.activeEncounter !== null) return "미션 응답 대기";
   if (currentView.work.alert !== null) return "업무 알림 응답 대기";
   if (surface !== null) return surfacePauseLabel(surface);
@@ -403,6 +407,8 @@ export default function App() {
     view.visibility === "seen" ? view.room : null,
   );
   const [openSurface, setOpenSurface] = useState<LifestyleSurface | null>(null);
+  const [tutorialEnabled, setTutorialEnabled] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
   const [encounterFeedback, setEncounterFeedback] = useState<string | null>(
     null,
   );
@@ -426,6 +432,8 @@ export default function App() {
   const resourcesRef = useRef(resources);
   const hypothesesRef = useRef(hypotheses);
   const surfaceRef = useRef(openSurface);
+  const tutorialOpenRef = useRef(tutorialOpen);
+  const tutorialInitializedRef = useRef(false);
   const externalClockRef = useRef(false);
   const automationRemainderRef = useRef(0);
   const storageNoticeRef = useRef(initial.storageMessage !== null);
@@ -457,11 +465,12 @@ export default function App() {
   resourcesRef.current = resources;
   hypothesesRef.current = hypotheses;
   surfaceRef.current = openSurface;
+  tutorialOpenRef.current = tutorialOpen;
 
   const sim = simRef.current;
   const ended = view.minuteOfDay >= DAY_END_MINUTE;
   const activeEncounter = view.activeEncounter;
-  const pausedReason = blockedPauseReason(view, openSurface);
+  const pausedReason = blockedPauseReason(view, openSurface, tutorialOpen);
   const proposedSchedule = generateDaySchedule(
     view.day,
     settings.seed,
@@ -476,6 +485,58 @@ export default function App() {
     workHoldRef.current = false;
     lastDirectTickAtRef.current = null;
   };
+
+  const closeTutorial = () => {
+    tutorialOpenRef.current = false;
+    setTutorialOpen(false);
+  };
+
+  const toggleTutorial = () => {
+    const nextEnabled = !tutorialEnabled;
+    try {
+      window.localStorage.setItem(
+        WAITDOG_TUTORIAL_KEY,
+        nextEnabled ? "on" : "off",
+      );
+      setTutorialEnabled(nextEnabled);
+      if (nextEnabled) {
+        clearDirectInput();
+        tutorialOpenRef.current = true;
+        setTutorialOpen(true);
+      } else {
+        closeTutorial();
+      }
+    } catch {
+      setTutorialEnabled(false);
+      closeTutorial();
+    }
+  };
+
+  useEffect(() => {
+    if (tutorialInitializedRef.current) return;
+    tutorialInitializedRef.current = true;
+    try {
+      const stored = window.localStorage.getItem(WAITDOG_TUTORIAL_KEY);
+      if (stored === null) {
+        window.localStorage.setItem(WAITDOG_TUTORIAL_KEY, "on");
+        setTutorialEnabled(true);
+        tutorialOpenRef.current = true;
+        setTutorialOpen(true);
+        return;
+      }
+      setTutorialEnabled(stored === "on");
+      tutorialOpenRef.current = false;
+      setTutorialOpen(false);
+    } catch {
+      setTutorialEnabled(false);
+      tutorialOpenRef.current = false;
+      setTutorialOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tutorialOpen) clearDirectInput();
+  }, [tutorialOpen]);
 
   const flushPendingPersistence = (silent: boolean) => {
     if (!persistencePendingRef.current) return;
@@ -682,7 +743,11 @@ export default function App() {
     phaseRef.current !== "live" ||
     speedRef.current === 0 ||
     viewRef.current.minuteOfDay >= DAY_END_MINUTE ||
-    blockedPauseReason(viewRef.current, surfaceRef.current) !== null;
+    blockedPauseReason(
+      viewRef.current,
+      surfaceRef.current,
+      tutorialOpenRef.current,
+    ) !== null;
 
   const advanceSimulation = (requestedMinutes: number): AdvanceResult => {
     if (simulationIsPaused()) {
@@ -748,6 +813,7 @@ export default function App() {
         current.work.alert !== null ||
         current.work.active ||
         surfaceRef.current !== null ||
+        tutorialOpenRef.current ||
         current.minuteOfDay >= DAY_END_MINUTE ||
         current.t < nextAutoEncounterDueRef.current
       ) return;
@@ -774,6 +840,7 @@ export default function App() {
       if (
         phaseRef.current !== "live" ||
         surfaceRef.current !== null ||
+        tutorialOpenRef.current ||
         current.minuteOfDay >= DAY_END_MINUTE ||
         !current.interaction.directControlEnabled
       ) {
@@ -874,6 +941,19 @@ export default function App() {
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (tutorialOpenRef.current) {
+        if (
+          event.code === "Escape" &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.shiftKey
+        ) {
+          event.preventDefault();
+          closeTutorial();
+        }
+        return;
+      }
       const actions = directInputActionsRef.current;
       if (!actions || event.isComposing) return;
 
@@ -1103,7 +1183,11 @@ export default function App() {
           moving: current.spatial.moving,
         }
         : null;
-      const automaticPause = blockedPauseReason(current, surfaceRef.current);
+      const automaticPause = blockedPauseReason(
+        current,
+        surfaceRef.current,
+        tutorialOpenRef.current,
+      );
       const pause = phaseRef.current !== "live"
         ? `phase:${phaseRef.current}`
         : current.minuteOfDay >= DAY_END_MINUTE
@@ -1345,6 +1429,7 @@ export default function App() {
       workHoldRef.current = false;
       return;
     }
+    if (tutorialOpenRef.current) return;
     const current = viewRef.current;
     const moving = heldMoveKeysRef.current.size > 0 ||
       virtualMoveRef.current.dx !== 0 ||
@@ -1363,6 +1448,7 @@ export default function App() {
   };
 
   const handleGroundMove = (target: GroundMoveTarget) => {
+    if (tutorialOpenRef.current) return;
     workHoldRef.current = false;
     clickMoveTargetRef.current = target;
     clearWorldFeedback();
@@ -1373,6 +1459,7 @@ export default function App() {
       virtualMoveRef.current = ZERO_DIRECT_VECTOR;
       return;
     }
+    if (tutorialOpenRef.current) return;
     workHoldRef.current = false;
     clickMoveTargetRef.current = null;
     virtualMoveRef.current = vector;
@@ -1402,6 +1489,7 @@ export default function App() {
   };
 
   const executeWorldAction = (actionId: string) => {
+    if (tutorialOpenRef.current) return;
     if (actionId === WORK_ALERT_INTERRUPT_ACTION) {
       resolveWorkAlert("interrupt");
       return;
@@ -1456,6 +1544,7 @@ export default function App() {
   };
 
   const handleNearbyInteraction = () => {
+    if (tutorialOpenRef.current) return;
     const current = viewRef.current;
     if (current.work.alert !== null) {
       setWorldFeedback("1~2 중 업무 알림 대응을 선택하세요.");
@@ -1815,6 +1904,7 @@ export default function App() {
 
   const directControlsDisabled = ended ||
     openSurface !== null ||
+    tutorialOpen ||
     !view.interaction.directControlEnabled;
   const nearbyTarget = nearbyWorldTarget(view);
   const cueTarget = view.interaction.targets.find((target) =>
@@ -1906,7 +1996,9 @@ export default function App() {
         salaryBonusPercent={view.economy.salaryBonusPercent}
         pausedReason={pausedReason}
         ended={ended}
+        tutorialEnabled={tutorialEnabled}
         onSpeedChange={commitSpeed}
+        onTutorialToggle={toggleTutorial}
       />
 
       <div className="lifestyle-layout">
@@ -1925,7 +2017,7 @@ export default function App() {
             prompt={worldPrompt}
             cause={activeEncounter?.inferredCause ?? null}
             actions={actionBarItems}
-            disabled={ended || openSurface !== null}
+            disabled={ended || openSurface !== null || tutorialOpen}
             interactLabel={interactionLabel}
             interactDisabled={interactDisabled}
             workProgress={visibleWorkProgress}
@@ -1971,6 +2063,7 @@ export default function App() {
           onUpgrade={buyUpgrade}
         />
       )}
+      {tutorialOpen && <TutorialOverlay onClose={closeTutorial} />}
     </main>
   );
 }

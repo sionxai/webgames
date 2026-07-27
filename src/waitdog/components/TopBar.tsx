@@ -13,7 +13,9 @@ export interface TopBarProps {
   salaryBonusPercent: number;
   pausedReason: string | null;
   ended: boolean;
+  tutorialEnabled: boolean;
   onSpeedChange: (speed: GameSpeed) => void;
+  onTutorialToggle: () => void;
 }
 
 const ROOM_NAMES: Record<RoomId, string> = {
@@ -46,7 +48,9 @@ export function TopBar({
   salaryBonusPercent,
   pausedReason,
   ended,
+  tutorialEnabled,
   onSpeedChange,
+  onTutorialToggle,
 }: TopBarProps) {
   const ownerState = pausedReason ??
     (ownerMoving ? "이동 중" : `${ROOM_NAMES[ownerRoom]}에 머무는 중`);
@@ -105,6 +109,14 @@ export function TopBar({
       </div>
 
       <div className="speed-control" role="group" aria-label="게임 배속">
+        <button
+          className="tutorial-toggle"
+          type="button"
+          aria-pressed={tutorialEnabled}
+          onClick={onTutorialToggle}
+        >
+          도움말
+        </button>
         {SPEEDS.map((item) => (
           <button
             className={speed === item.value ? "is-active" : ""}

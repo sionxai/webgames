@@ -1,5 +1,13 @@
 # WEBGAMES Portal Plan
 
+## 기다려멍 — 튜토리얼 오버레이
+
+- [x] 독립 localStorage 키 기반 최초 자동 표시와 토글 상태
+- [x] 6페이지 dialog, 페이지 이동, Esc, 포커스 트랩·복귀
+- [x] 별도 tutorialOpen 상태를 일시정지와 직접 입력 차단에 연결
+- [x] TopBar 도움말 토글과 반응형 오버레이 스타일
+- [ ] 지정 계약·TypeScript 커맨드 검증
+
 ## 기다려멍 Phase B2 — 조작감
 
 - [x] B2a — 64ms 입력 폴링을 실제 경과시간 기반 rAF 루프로 전환

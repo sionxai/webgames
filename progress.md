@@ -1,5 +1,15 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-27 — 기다려멍 튜토리얼 오버레이
+
+- 사용자 승인 범위: `TutorialOverlay.tsx`, `App.tsx`, `TopBar.tsx`, `waitdog.css`, `implementation_plan.md`, `progress.md`.
+- `waitdog_tutorial_v1` 독립 키와 on/off 값으로 최초 자동 표시 및 도움말 토글을 구현했다. 저장 접근 실패 시 해당 세션은 disabled/closed로 유지한다.
+- `tutorialOpen`을 surface 타입과 분리하고 최우선 일시정지 사유, 키보드/직접 조작 차단에 연결했다. 열릴 때 `clearDirectInput()`으로 held key를 제거한다.
+- 6페이지 지정 문구, 이전/다음/시작하기/닫기, Esc, focus trap·복귀, dialog ARIA를 구현했다.
+- `npx tsc --noEmit`은 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. 나머지 npm/npx 검증은 실행하지 않았다.
+- Checker 재작업: 튜토리얼 저장 초기화를 렌더 밖 mount effect로 옮기고 StrictMode 재실행 가드를 추가했다. App이 Esc 닫기를 단독 소유하며 keydown 최우선 차단하고, work hold/바닥 이동/가상 이동/world action/nearby interaction 경계에도 tutorial guard를 추가했다.
+- TODO: 운용자가 정상 Node/npm 환경에서 지정 수용 기준 3개 커맨드와 브라우저 실측을 수행한다.
+
 ## 2026-07-27 — 기다려멍 Phase B3
 
 - 데스크톱 `.lifestyle-page`의 기본 하단 여백을 제거하고, 후행 v5 `@media (max-width: 899px)`에도 `.lifestyle-page:has(.direct-controls) { padding-bottom: 214px; }`를 명시해 최종 cascade에서 모바일 스틱 여백을 보존했다.

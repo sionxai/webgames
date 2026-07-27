@@ -3052,6 +3052,107 @@ canvas:focus-visible {
   font-size: 0.75rem;
 }
 
+.lifestyle-topbar .speed-control .tutorial-toggle {
+  min-width: 52px;
+}
+
+.lifestyle-topbar .speed-control .tutorial-toggle[aria-pressed="true"] {
+  color: white;
+  background: var(--wd-coral-dark);
+}
+
+.tutorial-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 42, 38, 0.68);
+  padding: 20px;
+}
+
+.tutorial-dialog {
+  position: relative;
+  width: min(560px, 100%);
+  border: 2px solid rgba(47, 98, 88, 0.2);
+  border-radius: 24px;
+  color: var(--wd-ink);
+  background: #fffdf8;
+  box-shadow: 0 24px 70px rgba(18, 43, 37, 0.32);
+  padding: 44px 28px 24px;
+}
+
+.tutorial-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+}
+
+.tutorial-page {
+  min-height: 190px;
+}
+
+.tutorial-count {
+  color: var(--wd-coral-dark);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.tutorial-page h2 {
+  margin: 10px 0 14px;
+  font-size: clamp(1.45rem, 4vw, 2rem);
+}
+
+.tutorial-page p {
+  margin: 0;
+  color: var(--wd-muted);
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.8;
+  white-space: pre-line;
+}
+
+.tutorial-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.tutorial-dialog button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 10px;
+  color: white;
+  background: var(--wd-mint-dark);
+  padding: 8px 16px;
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.tutorial-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.tutorial-actions button:last-child {
+  background: var(--wd-coral-dark);
+}
+
+@media (max-width: 520px) {
+  .tutorial-backdrop {
+    padding: 12px;
+  }
+
+  .tutorial-dialog {
+    padding: 42px 20px 20px;
+  }
+
+  .tutorial-page {
+    min-height: 240px;
+  }
+}
+
 .lifestyle-layout {
   grid-template-columns: minmax(0, 1fr);
   width: min(940px, 100%);
