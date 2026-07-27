@@ -1018,7 +1018,10 @@ class WaitdogSimulation implements WaitdogUiSim {
     ) {
       return { ok: false, reason: "후속 보상 선택지가 올바르지 않습니다." };
     }
-    if (!this.encounterInteractionState().ready) {
+    if (
+      !this.encounterInteractionState().ready &&
+      !this.activeEncounterWasAutomaticallyStarted()
+    ) {
       return {
         ok: false,
         reason: "상황 신호 가까이 이동한 뒤 상호작용해 주세요.",
@@ -2122,6 +2125,12 @@ class WaitdogSimulation implements WaitdogUiSim {
       );
       this.poop();
     }
+    // TODO(A1): tick() 안에서 자동 발생시키면 advanceMinutes() 의 기존 가드
+    // (encounterDirector.active !== null 이면 즉시 return) 때문에 시뮬레이션이 스스로 정지한다.
+    // 미해소 encounter 가 소화·배변 등 모든 자율 행동을 멈춰 계약 테스트가 교착한다.
+    // 자동 발생 트리거는 일시정지 모델을 소유한 App 계층으로 옮겨야 한다(재승인 대기 중).
+    // 아래 헬퍼는 그 이전까지 호출하지 않는다.
+    // this.startAutomaticEncounterIfNeeded();
     if (
       this.pendingEatAt !== null && this.absoluteMinute >= this.pendingEatAt
     ) {
@@ -2147,8 +2156,21 @@ class WaitdogSimulation implements WaitdogUiSim {
   private commitEncounterTransition(
     transition: EncounterTransition,
     inventoryDelta: Partial<EconomyState["inventory"]> = {},
+    automatic = false,
   ): LifestyleActionResult {
+    const previousActive = this.encounterDirector.active;
     this.encounterDirector = transition.state;
+    if (previousActive === null && this.encounterDirector.active !== null) {
+      this.record("encounterStarted", this.dogRoom, {
+        encounterId: this.encounterDirector.active.encounterId,
+        ...(automatic
+          ? {
+            automatic: true,
+            instanceId: this.encounterDirector.active.instanceId,
+          }
+          : {}),
+      });
+    }
     if (this.encounterDirector.active !== null) {
       this.stopOwnerMovement("responding");
     }
@@ -2156,6 +2178,121 @@ class WaitdogSimulation implements WaitdogUiSim {
       this.applyEncounterCompletion(inventoryDelta);
     }
     return { ok: transition.ok, reason: transition.reason };
+  }
+
+  private startAutomaticEncounterIfNeeded(): void {
+    if (
+      this.encounterDirector.active !== null ||
+      this.work.active ||
+      this.work.alert !== null ||
+      this.minuteOfDay >= BALANCE.TIME.DAY_END
+    ) {
+      return;
+    }
+    let lastStartedAt = (this.day - BALANCE.NUMBER.ONE) *
+      BALANCE.TIME.DAY_LENGTH + BALANCE.TIME.DAY_START;
+    let lastEncounterId: EncounterId | undefined;
+    for (let index = this.log.length - 1; index >= 0; index -= 1) {
+      const entry = this.log[index];
+      if (entry?.type === "encounterStarted") {
+        lastStartedAt = entry.t;
+        const encounterId = entry.detail.encounterId;
+        if (
+          typeof encounterId === "string" &&
+          (ENCOUNTER_IDS as readonly string[]).includes(encounterId)
+        ) {
+          lastEncounterId = encounterId as EncounterId;
+        }
+        break;
+      }
+    }
+
+    let dueAt: number | undefined;
+    for (let index = this.log.length - 1; index >= 0; index -= 1) {
+      const entry = this.log[index];
+      if (
+        entry?.type === "encounterScheduled" &&
+        entry.detail.anchorAt === lastStartedAt &&
+        typeof entry.detail.dueAt === "number"
+      ) {
+        dueAt = entry.detail.dueAt;
+        break;
+      }
+    }
+    if (dueAt === undefined) {
+      const cooldown = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_COOLDOWN_MINUTES;
+      // 공용 this.rng 를 소비하면 시드 기반 결정론이 어긋나 배변 인과 등 기존 계약이 깨진다.
+      // 앵커 시각에서 파생한 독립 스트림을 써서 메인 스트림을 건드리지 않는다.
+      const scheduleRng = createRng((this.seed ^ lastStartedAt) >>> 0);
+      dueAt = lastStartedAt + scheduleRng.integer(cooldown.MIN, cooldown.MAX);
+      this.record("encounterScheduled", this.dogRoom, {
+        anchorAt: lastStartedAt,
+        dueAt,
+      });
+    }
+    if (this.absoluteMinute < dueAt) {
+      return;
+    }
+
+    const references = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_SCORE_REFERENCE;
+    const candidates: Array<{
+      encounterId: EncounterId;
+      score: number;
+      tiePriority: number;
+    }> = [
+      {
+        encounterId: "potty",
+        score: this.stats.bowelPressure / references.bowelPressure,
+        tiePriority: 0,
+      },
+      {
+        encounterId: "overexcited",
+        score: this.stats.excitement / references.excitement,
+        tiePriority: 1,
+      },
+      {
+        encounterId: "anxiety",
+        score: this.stats.stress / references.stress,
+        tiePriority: 2,
+      },
+      {
+        encounterId: "settle",
+        score: this.stats.boredom / references.boredom,
+        tiePriority: 3,
+      },
+    ];
+    const dominant = candidates
+      .filter((candidate) =>
+        candidate.encounterId !== lastEncounterId &&
+        (candidate.encounterId !== "potty" || this.activePoop === null)
+      )
+      .sort((first, second) =>
+        second.score - first.score ||
+        first.tiePriority - second.tiePriority
+      )[0];
+    if (dominant !== undefined) {
+      this.commitEncounterTransition(
+        startEncounterByIdState(
+          this.encounterDirector,
+          dominant.encounterId,
+          this.seed,
+        ),
+        {},
+        true,
+      );
+    }
+  }
+
+  private activeEncounterWasAutomaticallyStarted(): boolean {
+    const active = this.encounterDirector.active;
+    if (active === null) return false;
+    for (let index = this.log.length - 1; index >= 0; index -= 1) {
+      const entry = this.log[index];
+      if (entry?.type !== "encounterStarted") continue;
+      return entry.detail.automatic === true &&
+        entry.detail.instanceId === active.instanceId;
+    }
+    return false;
   }
 
   private applyEncounterCompletion(
@@ -3363,14 +3500,36 @@ class WaitdogSimulation implements WaitdogUiSim {
       return { ok: false, reason: blockedReason };
     }
     this.leaveWorkSeatForMovement();
-    if (
-      !this.trySetOwnerPosition(
-        room,
-        transition.entry.x,
-        transition.entry.y,
-      )
-    ) {
-      return { ok: false, reason: "문 건너편에 강아지가 있어 기다려 주세요." };
+    if (!this.trySetOwnerPosition(room, transition.entry.x, transition.entry.y)) {
+      const previousOwnerSpatial = clone(this.ownerSpatial);
+      const previousOwner = clone(this.owner);
+      const previousDogSpatial = clone(this.spatial);
+      this.ownerSpatial.room = room;
+      this.ownerSpatial.x = transition.entry.x;
+      this.ownerSpatial.y = transition.entry.y;
+      this.owner = { ...this.owner, room };
+      const safeDogPoint = this.safeDogPointNearOwner();
+      this.spatial = {
+        ...this.spatial,
+        room: safeDogPoint.room,
+        x: safeDogPoint.x,
+        y: safeDogPoint.y,
+        targetRoom: safeDogPoint.room,
+        targetX: safeDogPoint.x,
+        targetY: safeDogPoint.y,
+        route: [],
+        activity: "idle",
+        moving: false,
+      };
+      if (ownerDogFootprintsOverlap(this.ownerSpatial, this.spatial)) {
+        this.ownerSpatial = previousOwnerSpatial;
+        this.owner = previousOwner;
+        this.spatial = previousDogSpatial;
+        return {
+          ok: false,
+          reason: "문 건너편에 강아지가 있어 기다려 주세요.",
+        };
+      }
     }
     this.finishDirectOwnerStep();
     return { ok: true, reason: null };

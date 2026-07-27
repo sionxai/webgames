@@ -883,6 +883,34 @@ const drawRoomLabels = (
   }
 };
 
+const drawHeardRoomIndicators = (
+  context: CanvasRenderingContext2D,
+  view: WaitdogUiView,
+  now: number,
+  reducedMotion: boolean,
+) => {
+  const pulse = reducedMotion ? 0 : (Math.sin(now / 220) + 1) * 5;
+  for (const room of ROOM_ORDER) {
+    if (view.roomVisibility[room] !== "heard") continue;
+    const center = centerOf(room);
+    context.save();
+    context.fillStyle = "rgba(255, 248, 223, 0.94)";
+    context.strokeStyle = "#ef7f68";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.arc(center.x, center.y, 34 + pulse, 0, Math.PI * 2);
+    context.fill();
+    context.stroke();
+    context.fillStyle = "#27483f";
+    context.font = "900 24px sans-serif";
+    context.textAlign = "center";
+    context.fillText("♪", center.x, center.y - 2);
+    context.font = "800 13px sans-serif";
+    context.fillText("소리 들림", center.x, center.y + 20);
+    context.restore();
+  }
+};
+
 const cueEdgeIndicator = (
   ownerRoom: RoomId,
   cue: Point,
@@ -1182,6 +1210,12 @@ export function HouseCanvas({
       }
       drawMasksAndSpotlight(context, view, encounter, publicDogPoint);
       drawRoomLabels(context, view);
+      drawHeardRoomIndicators(
+        context,
+        view,
+        now,
+        reducedMotionRef.current,
+      );
 
       if (view.visibility === "hidden" && lastSeenRoom !== null) {
         const center = centerOf(lastSeenRoom);

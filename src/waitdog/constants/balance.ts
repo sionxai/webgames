@@ -243,6 +243,16 @@ export const BALANCE = {
       FIRST_START_SECONDS: 5,
       HINT_IDLE_SECONDS: 8,
       HINT_INTERVAL_ENCOUNTERS: 3,
+      AUTO_COOLDOWN_MINUTES: {
+        MIN: 60,
+        MAX: 120,
+      },
+      AUTO_SCORE_REFERENCE: {
+        bowelPressure: 10,
+        excitement: 28,
+        stress: 18,
+        boredom: 32,
+      },
       BASE_SCORE: 100,
       BASE_CARE_POINTS: 1,
     },

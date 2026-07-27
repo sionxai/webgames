@@ -409,3 +409,16 @@ Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, �
 - 실제 `STATIC_GAMES` 소유 지점은 `plugins/staticGamesPlugin.ts`이므로 여기에 `{ id: 'dadadak', dir: 'games/dadadak/out', exclude: [] }`를 추가한다.
 - `npm install`, Next/Vite build, git commit/push, Firestore 배포는 실행하지 않는다.
 - 다른 게임과 포털 홈 컴포넌트, 게임 규칙·CPS 계산식은 수정하지 않는다.
+## Waitdog Phase A — 2026-07-27
+
+- [x] Read specA, repository state, and applicable instructions.
+- [x] Confirm approved file scope and snapshot/determinism priorities.
+- [x] Inspect existing encounter state, collision helpers, and canvas visibility rendering.
+- [x] Implement A2 safe dog displacement at blocked door entries.
+- [x] Implement A3 heard-room indicator with reduced-motion behavior.
+- [x] Run all three acceptance commands and inspect their actual results.
+- [ ] A1 encounter auto-start — **deferred to Phase B**. Auto-spawning from `tick()` is
+      structurally impossible: `advanceMinutes()` returns early while an encounter is active,
+      so the spawn freezes digestion/poop/decision and deadlocks the contract suite.
+      The scoring helper is kept but its call site is disabled (`TODO(A1)`); the trigger must
+      move to the App layer, which owns the pause model.

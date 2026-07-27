@@ -1,5 +1,32 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-27 — 기다려멍 Phase A
+
+- 사용자 승인 범위: `waitdogSim.ts`, `HouseCanvas.tsx`, `balance.ts`, `implementation_plan.md`, `progress.md`만 수정 가능. A1 측정 스크립트는 `/tmp`에만 둔다.
+- 기준 HEAD: `83d6f4d19ca8b44a0d03e6f9aa63615a6f796c47`; 작업 시작 시 추적/미추적 변경 없음.
+- 우선 계약: 스냅샷 스키마 무변경 선호, 기존 상태로 쿨다운 파생을 먼저 검토, 기존 RNG 외 난수 금지.
+- 진행 중: A1/A2/A3 관련 심볼과 계약을 읽기 전용 정찰 중.
+### 결과: A2·A3 완료, A1은 Phase B로 이관
+
+- A2 완료: 문 entry가 강아지 footprint와 겹치면 entry 기준 `safeDogPointNearOwner()`로 강아지를 비키고
+  spatial target/route/activity를 정리한 뒤 overlap을 재검사한다. 안전 지점이 없으면 3개 상태를 모두 원복한다.
+  실측 600회 — `passed=598 blockedByDog=0 dogRoomDesync=0 badRollback=0`.
+- A3 완료: `roomVisibility === "heard"`인 모든 방 중심에 좌표 비노출 “소리 들림” 표시를 그리며
+  reduced-motion에서는 펄스를 고정한다. 로컬 서버 육안 확인 완료.
+  알려진 결함(Phase B 폴리시 대상): 표시가 방 중앙에 그려져 인카운터 말풍선과 겹친다.
+- **A1 이관(미구현)**: `tick()` 안에서 자동 발생시키는 접근은 설계상 불가능. `waitdogSim.ts`의
+  `advanceMinutes()`는 `encounterDirector.active !== null`이면 즉시 return 하므로, tick 이 인카운터를
+  띄우는 순간 이후 모든 advance 가 no-op 이 되어 소화·배변·강아지 판단이 전부 정지한다.
+  실측: 정상은 +200분에 소화 완료·배변 발생, tick 자동발생 적용 시 `digestionComplete: 0` 이고
+  `decision`/`action` 이벤트가 사라져 계약이 "expected a causal poop event"로 교착.
+  → `startAutomaticEncounterIfNeeded()` 호출을 `TODO(A1)` 주석과 함께 비활성화(점수 로직은 재사용 위해 보존).
+  → 자동 발생 트리거는 일시정지 모델을 소유한 App 계층으로 옮겨 Phase B 에서 완료한다.
+- 운용 메모: 시뮬을 인카운터 너머로 진행시키는 측정 하네스는 반드시 인카운터를 실제로 해소해야 한다
+  (`scripts/waitdog-contract.ts`의 `solveActiveEncounter` 방식). 해소하지 않으면 "활성 상태의 분"을 세게 되어
+  발생 건수를 크게 과대측정한다 — 1차 측정의 "12회"가 이 오류였다.
+- 최종 검증(운용자 직접 실행): `CONTRACT OK 557 assertions`, `Contract verification complete: 141 assertions`,
+  `tsc --noEmit` 오류 0개(선언만 되어 있고 미설치였던 `firebase` 설치 후 기준선 13개도 해소).
+
 ## 2026-07-22
 
 - 사용자 승인 완료.
