@@ -76,13 +76,15 @@ export const GAMES: GameEntry[] = [
     status: 'live'
   },
   {
-    id: 'coming-soon-2',
-    title: 'DADADAK',
-    genre: '준비 중',
-    tagline: '서버 오픈과 함께 공개 예정',
-    description: '실시간 대전 게임 — 서버 준비 중입니다.',
-    path: '',
+    id: 'dadadak',
+    title: '다다닥',
+    // 1:1 매치·방 대결은 아직 없으므로 '실시간 대결'로 표기하지 않는다
+    genre: '클릭 스피드 측정',
+    tagline: '10초 안에 몇 번이나 누를 수 있나요?',
+    description:
+      '폰 터치나 키보드로 솔로 CPS를 측정하고, 브라우저에 딸깍을 쌓으며 전체·지역·학교 비공식 랭킹에 도전하세요.',
+    path: '/games/dadadak/',
     thumbnail: null,
-    status: 'coming-soon'
+    status: 'live'
   }
 ];

@@ -3,7 +3,7 @@
     "rules": "database.rules.json"
   },
   "firestore": {
-    "rules": "games/bakara/firestore.rules",
+    "rules": "firestore.rules",
     "indexes": "games/bakara/firestore.indexes.json"
   }
 }

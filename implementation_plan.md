@@ -383,3 +383,29 @@
 - 1280×720, 390×844, 480×1000에서 Canvas와 문맥 행동이 첫 화면에 있고 고정 컨트롤·탭·카드가 서로 겹치지 않는다.
 - v1/v2/v3 snapshot은 v4로 안전하게 복원되고 손상 snapshot은 라이브 상태를 오염시키지 않으며 급여·재고가 중복 지급/차감되지 않는다.
 - 기다려멍 계약, Forge 계약, TypeScript, production build, 공식 웹게임 Playwright 클라이언트, 독립 R2 Checker가 실제 대상을 실행해 통과한다.
+
+---
+
+# 다다닥 D1 — 서버 제거·Firestore 전환·포털 병합
+
+## Goal
+
+Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, 홈·솔로 CPS·탭·랭킹·클리커·개인정보 경로만 정적 export 가능한 포털 게임으로 전환한다.
+
+## Work Packages
+
+- [x] DD1 — 기준 HEAD·워크트리·명세 확인 및 살릴 페이지 API/세션 의존성 정찰
+- [x] DD2 — Next.js 정적 export 설정, 서버/API/꺼진 경로 제거, 의존성 정리
+- [x] DD3 — Firebase 초기화와 고정 `store.ts` 데이터 어댑터 구현
+- [x] DD4 — 홈·솔로·탭·랭킹·클리커·개인정보 페이지의 정적 클라이언트 배선
+- [x] DD5 — 포털 정적 게임 등록·카드·무시 규칙·루트 Firestore 규칙 병합
+- [x] DD6 — 빌드 없는 정적 검사 및 독립 R3 Checker 검수
+
+## Fixed Decisions
+
+- SourceRef는 `portal_dadadak_d1_spec.md` working-tree 버전의 0~6절이다.
+- `store.ts`의 네 공개 함수 시그니처와 Firebase 설정·스키마·익명 인증 fallback 계약을 그대로 지킨다.
+- 꺼진 동적 경로와 정적 경로는 파일 자체를 제거해 정적 export 대상에서 제외하고, 살린 화면에는 해당 링크를 남기지 않는다.
+- 실제 `STATIC_GAMES` 소유 지점은 `plugins/staticGamesPlugin.ts`이므로 여기에 `{ id: 'dadadak', dir: 'games/dadadak/out', exclude: [] }`를 추가한다.
+- `npm install`, Next/Vite build, git commit/push, Firestore 배포는 실행하지 않는다.
+- 다른 게임과 포털 홈 컴포넌트, 게임 규칙·CPS 계산식은 수정하지 않는다.

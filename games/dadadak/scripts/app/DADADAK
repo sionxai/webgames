@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+
+set -u
+
+READY="http://localhost:3500/"
+OPEN_URL="http://localhost:3500/"
+JOB_LABEL="com.dadadak.server"
+USER_DOMAIN="gui/$(/usr/bin/id -u)"
+STOP_FLAG="$HOME/Library/Application Support/DADADAK/server-stopped"
+APP_LOG="$HOME/Library/Logs/DADADAK/app.log"
+
+/bin/mkdir -p "$(/usr/bin/dirname "$APP_LOG")"
+log_app() { printf '%s %s\n' "$(/bin/date '+%F %T')" "$1" >>"$APP_LOG"; }
+
+log_app "start"
+
+ready_ok() {
+  /usr/bin/curl -fsS -m 2 -o /dev/null "$READY" 2>/dev/null
+}
+
+notify_startup_failure() {
+  /usr/bin/osascript -e 'display notification "서버 기동 실패 — ~/Library/Logs/DADADAK/server.log 확인" with title "DADADAK"' >/dev/null 2>&1 || true
+}
+
+/bin/rm -f "$STOP_FLAG"
+log_app "stop flag removed: $STOP_FLAG"
+
+if ! ready_ok; then
+  log_app "ready not ok; kickstart"
+  /bin/launchctl kickstart "${USER_DOMAIN}/${JOB_LABEL}" >/dev/null 2>&1 || true
+
+  ready=0
+  for _ in {1..45}; do
+    /bin/sleep 2
+    if ready_ok; then
+      ready=1
+      break
+    fi
+  done
+
+  if [ "$ready" -ne 1 ]; then
+    notify_startup_failure
+    exit 1
+  fi
+else
+  log_app "ready ok"
+fi
+
+if [ -d "/Applications/Google Chrome.app" ]; then
+  focus_existing_window() {
+    /usr/bin/osascript <<'APPLESCRIPT' >/dev/null 2>&1
+set targetUrl to "localhost:3500"
+tell application "Google Chrome"
+  repeat with chromeWindow in windows
+    try
+      if (URL of active tab of chromeWindow) contains targetUrl then
+        set index of chromeWindow to 1
+        activate
+        return
+      end if
+    end try
+  end repeat
+end tell
+error "DADADAK window not found"
+APPLESCRIPT
+  }
+
+  focus_existing_window || /usr/bin/open -na "Google Chrome" --args --app="$OPEN_URL"
+else
+  /usr/bin/open "$OPEN_URL"
+fi
+log_app "window open/focus"
+
+exit 0
