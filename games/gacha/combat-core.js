@@ -562,17 +562,17 @@ function characterImageCandidates(classInfo, tier) {
   variants.forEach((variant) => {
     if (!variant) return;
     const base = `${prefix}${variant}`;
-    filenames.push(`${base}.png`);
+    filenames.push(`${base}.webp`);
     const lowerName = base.toLowerCase();
-    if (!filenames.includes(`${lowerName}.png`)) {
-      filenames.push(`${lowerName}.png`);
+    if (!filenames.includes(`${lowerName}.webp`)) {
+      filenames.push(`${lowerName}.webp`);
     }
     const upperName = base.toUpperCase();
-    if (!filenames.includes(`${upperName}.png`)) {
-      filenames.push(`${upperName}.png`);
+    if (!filenames.includes(`${upperName}.webp`)) {
+      filenames.push(`${upperName}.webp`);
     }
   });
-  filenames.push(`${prefix}.png`);
+  filenames.push(`${prefix}.webp`);
   const unique = Array.from(new Set(filenames.filter(Boolean)));
   return unique.map((name) => `assets/me/${dir}/${name}`);
 }

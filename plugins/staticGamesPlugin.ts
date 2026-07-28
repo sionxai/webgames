@@ -26,7 +26,13 @@ const STATIC_GAMES = [
       'package-lock.json',
       'eslint.config*',
       'test-*.js',
-      '.env*'
+      '.env*',
+      // 코드 어디에서도 참조하지 않는 21MB짜리 레벨 이미지.
+      // 나중에 쓸 수 있으니 저장소에는 남기고 배포본에서만 뺀다.
+      'assets/xp/**',
+      // 백업·실험용 사본은 배포본에 넣지 않는다
+      'index_backup*.html',
+      'index_broken.html'
     ]
   },
   { id: 'life-rpg', dir: 'games/life-rpg/out', exclude: [] },
