@@ -895,7 +895,11 @@ const drawHeardRoomIndicators = (
   const pulse = reducedMotion ? 0 : (Math.sin(now / 220) + 1) * 5;
   for (const room of ROOM_ORDER) {
     if (view.roomVisibility[room] !== "heard") continue;
-    const center = centerOf(room);
+    const rect = ROOMS[room];
+    const center = {
+      x: rect.x + rect.width / 2,
+      y: rect.y + rect.height * 0.78,
+    };
     context.save();
     context.fillStyle = "rgba(255, 248, 223, 0.94)";
     context.strokeStyle = "#ef7f68";

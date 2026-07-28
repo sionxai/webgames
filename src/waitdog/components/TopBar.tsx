@@ -10,6 +10,8 @@ export interface TopBarProps {
   ownerMoving: boolean;
   money: number;
   carePoints: number;
+  foodLevel: number;
+  waterLevel: number;
   salaryBonusPercent: number;
   pausedReason: string | null;
   ended: boolean;
@@ -45,6 +47,8 @@ export function TopBar({
   ownerMoving,
   money,
   carePoints,
+  foodLevel,
+  waterLevel,
   salaryBonusPercent,
   pausedReason,
   ended,
@@ -54,6 +58,14 @@ export function TopBar({
 }: TopBarProps) {
   const ownerState = pausedReason ??
     (ownerMoving ? "이동 중" : `${ROOM_NAMES[ownerRoom]}에 머무는 중`);
+  const bowlsEmpty = foodLevel === 0 || waterLevel === 0;
+  const bowlStatus = foodLevel === 0 && waterLevel === 0
+    ? "밥·물 비었음"
+    : foodLevel === 0
+    ? "밥 비었음"
+    : waterLevel === 0
+    ? "물 비었음"
+    : "밥·물 확인";
 
   return (
     <header className="top-bar lifestyle-topbar">
@@ -79,6 +91,13 @@ export function TopBar({
         <span>
           <small>돌봄</small>
           <strong>{carePoints}P</strong>
+        </span>
+        <span
+          className={bowlsEmpty ? "bowl-status is-warning" : "bowl-status"}
+          aria-live="polite"
+        >
+          <small>그릇</small>
+          <strong>{bowlStatus}</strong>
         </span>
       </div>
 

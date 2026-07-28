@@ -323,8 +323,8 @@ const placementFor = (
 };
 
 const roomLabel = (room: RoomId): string => {
-  if (room === "living") return "거실";
-  if (room === "kitchen") return "주방";
+  if (room === "living") return "생활방";
+  if (room === "kitchen") return "부엌";
   return "화장실";
 };
 
@@ -1993,6 +1993,8 @@ export default function App() {
         ownerMoving={view.ownerSpatial.moving}
         money={view.economy.money}
         carePoints={view.economy.carePoints}
+        foodLevel={view.environmentPlacements.foodBowl.level}
+        waterLevel={view.environmentPlacements.waterBowl.level}
         salaryBonusPercent={view.economy.salaryBonusPercent}
         pausedReason={pausedReason}
         ended={ended}

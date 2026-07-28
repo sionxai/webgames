@@ -1259,6 +1259,16 @@ canvas:focus-visible {
   white-space: nowrap;
 }
 
+.economy-hud .bowl-status.is-warning {
+  border-color: rgba(196, 72, 47, 0.45);
+  background: #fff0e9;
+}
+
+.economy-hud .bowl-status.is-warning small,
+.economy-hud .bowl-status.is-warning strong {
+  color: #a43b27;
+}
+
 .lifestyle-layout {
   display: grid;
   grid-template-columns: minmax(560px, 650px) minmax(420px, 1fr);
@@ -3001,7 +3011,7 @@ canvas:focus-visible {
 }
 
 .lifestyle-topbar .economy-hud {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
 }
 

@@ -3379,7 +3379,7 @@ class WaitdogSimulation implements WaitdogUiSim {
         { room: this.ownerSpatial.room, ...transition.exit },
         [{
           id: `door:${room}`,
-          label: `${this.roomLabel(room)}로 이동`,
+          label: `${this.roomLabel(room)}${this.directionalParticle(room)} 이동`,
           enabled: true,
           reason: null,
         }],
@@ -3413,9 +3413,17 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   private roomLabel(room: RoomId): string {
-    if (room === "living") return "거실";
-    if (room === "kitchen") return "주방";
+    if (room === "living") return "생활방";
+    if (room === "kitchen") return "부엌";
     return "화장실";
+  }
+
+  private directionalParticle(room: RoomId): "로" | "으로" {
+    const label = this.roomLabel(room);
+    const code = label.charCodeAt(label.length - 1);
+    if (code < 0xac00 || code > 0xd7a3) return "로";
+    const jong = (code - 0xac00) % 28;
+    return jong === 0 || jong === 8 ? "로" : "으로";
   }
 
   private ownerNearStation(
