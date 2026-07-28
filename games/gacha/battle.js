@@ -266,11 +266,11 @@ const BOSS_CONFIG = {
 };
 
 const BOSS_IMAGE_MAP = {
-  boss150: 'assets/boss/boss1.png',
-  boss300: 'assets/boss/boss2.png',
-  boss450: 'assets/boss/boss3.png',
-  boss550: 'assets/boss/boss4.png',
-  boss800: 'assets/boss/boss5.png'
+  boss150: 'assets/boss/boss1.webp',
+  boss300: 'assets/boss/boss2.webp',
+  boss450: 'assets/boss/boss3.webp',
+  boss550: 'assets/boss/boss4.webp',
+  boss800: 'assets/boss/boss5.webp'
 };
 
 const MONSTER_IMAGE_DIR = 'assets/xp';
@@ -1997,7 +1997,7 @@ function updatePetCompanion() {
     return;
   }
   if (els.petCompanionImg) {
-    els.petCompanionImg.src = 'assets/pet/ho1.png';
+    els.petCompanionImg.src = 'assets/pet/ho1.webp';
     els.petCompanionImg.alt = activePet?.name || '호랭찡';
   }
   els.petCompanion.classList.add('show');
