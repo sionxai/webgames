@@ -346,6 +346,31 @@
 - v3 저장 스키마와 클라우드 envelope를 변경하지 않는다. 직접 입력의 held 상태는 저장하지 않는다.
 - 새 외부 의존성과 새 이미지 자산은 추가하지 않는다.
 
+---
+
+# Waitdog F — 새 모션 에셋 연결 (2026-07-30)
+
+## Goal
+
+제공된 `waitdog-owner-v1.webp`와 `waitdog-dog-c-v1.webp`를 기존 Canvas 렌더러에 연결해 보호자 프레임 애니메이션과 강아지 sit/sniff 모션을 추가한다.
+
+## Work Packages
+
+- [x] F-0 — 기준 HEAD·미커밋 이미지 2개·스펙·관련 로더 구조 확인
+- [x] F-1 — `artAssets.ts`에 owner/dogC 키와 owner/sit/sniff 모션 계약 추가
+- [x] F-2 — `drawOwner`를 owner 시트 프레임 렌더링으로 교체하고 절차적 효과 제거
+- [x] F-3 — `dogMotionFor` 우선순위 매핑 확장 및 이미지 로더 초기화 보완
+- [ ] F-4 — 수용 기준 3개 커맨드 실행 및 독립 R1 검수 (첫 명령이 지정 환경 오류로 2회 종료되어 검증 미실행)
+
+## Fixed Decisions
+
+- 수정 범위는 `src/waitdog/constants/artAssets.ts`, `src/waitdog/components/HouseCanvas.tsx`, `implementation_plan.md`, `progress.md`뿐이다.
+- 새 이미지를 생성·수정하지 않으며 제공된 미추적 WebP 2개를 그대로 사용한다.
+- `balance.ts`, `scripts/*`, `campaign.ts`, `entities.sort`, 720p 레이아웃 규칙은 변경하지 않는다.
+- 보호자 렌더 높이 110px과 그림자 반지름 21/8을 유지한다.
+- 보호자의 기존 바운스·기울기·정지 호흡·그림자 펄스는 제거하고 방향 반전만 유지한다.
+- 브라우저 실측은 스펙에 따라 운용자가 수행하며, 구현 검증은 지정된 수용 기준 3개 커맨드로 한다.
+
 ## Waitdog C1~C3 — 2026-07-28
 
 - [x] C1 — 방 이름을 생활방/부엌/화장실로 통일하고 종성 규칙으로 `로`/`으로`를 선택

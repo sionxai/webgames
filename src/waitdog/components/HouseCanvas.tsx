@@ -6,6 +6,7 @@ import {
 } from "react";
 import {
   DOG_MOTIONS,
+  OWNER_MOTIONS,
   PROP_SPRITE_INDEX,
   SPRITE_GRID,
   WAITDOG_ART_ASSETS,
@@ -550,23 +551,13 @@ const drawOwner = (
   facingLeft: boolean,
   reducedMotion: boolean,
 ) => {
-  const stepPhase = now / 1000 * 2.5 * Math.PI * 2;
-  const bounce = reducedMotion || !moving ? 0 : Math.sin(stepPhase) * 3.5;
-  const breath = reducedMotion || moving
-    ? 0
-    : Math.sin(now / 1000 * 0.7 * Math.PI * 2);
-  const shadowPulse = reducedMotion || !moving ? 0 : Math.sin(stepPhase) * 2;
-  const tilt = reducedMotion || !moving
-    ? 0
-    : (facingLeft ? -1 : 1) * 2 * Math.PI / 180;
-
   context.save();
   context.fillStyle = "rgba(37, 55, 69, 0.16)";
   context.beginPath();
   context.ellipse(
     point.x,
     point.y,
-    21 + shadowPulse,
+    21,
     8,
     0,
     0,
@@ -574,23 +565,23 @@ const drawOwner = (
   );
   context.fill();
   context.restore();
-  const animatedPoint = { x: point.x, y: point.y + bounce + breath };
   context.save();
-  context.translate(animatedPoint.x, animatedPoint.y);
-  context.rotate(tilt);
-  context.translate(-animatedPoint.x, -animatedPoint.y);
   if (images) {
+    const motion = OWNER_MOTIONS[moving ? "walk" : "idle"];
+    const frame = reducedMotion
+      ? 0
+      : Math.floor(now / (1000 / motion.fps)) % SPRITE_GRID.columns;
     const height = 110;
-    const sourceWidth = images.props.naturalWidth / SPRITE_GRID.columns;
-    const sourceHeight = images.props.naturalHeight / SPRITE_GRID.rows;
+    const sourceWidth = images.owner.naturalWidth / SPRITE_GRID.columns;
+    const sourceHeight = images.owner.naturalHeight / SPRITE_GRID.rows;
     const width = height * sourceWidth / sourceHeight;
     drawSpriteCell(
       context,
-      images.props,
-      PROP_SPRITE_INDEX.owner % SPRITE_GRID.columns,
-      Math.floor(PROP_SPRITE_INDEX.owner / SPRITE_GRID.columns),
-      animatedPoint.x - width / 2,
-      animatedPoint.y - height,
+      images.owner,
+      frame,
+      motion.row,
+      point.x - width / 2,
+      point.y - height,
       width,
       height,
       facingLeft,
@@ -600,9 +591,9 @@ const drawOwner = (
   }
   context.fillStyle = "#325ea8";
   context.beginPath();
-  context.arc(animatedPoint.x, animatedPoint.y - 80, 17, 0, Math.PI * 2);
+  context.arc(point.x, point.y - 80, 17, 0, Math.PI * 2);
   context.fill();
-  context.fillRect(animatedPoint.x - 14, animatedPoint.y - 62, 28, 58);
+  context.fillRect(point.x - 14, point.y - 62, 28, 58);
   context.restore();
 };
 
@@ -612,10 +603,14 @@ const dogMotionFor = (view: WaitdogUiView): DogMotionId => {
   if (view.spatial.moving) return "move";
   if (activity === "moveToMat") return "mat";
   if (
-    activity === "eatPoop" || activity === "sniffLeave" ||
-    activity === "sniffFloor" || activity === "seekFood" ||
-    activity === "seekWater"
-  ) return "approach";
+    activity === "sniffFloor" || activity === "sniffLeave" ||
+    activity === "eatPoop"
+  ) return "sniff";
+  if (activity === "seekFood" || activity === "seekWater") return "approach";
+  if (
+    activity === "watchOwner" || activity === "rest" ||
+    activity === "idle"
+  ) return "sit";
   return "idle";
 };
 
@@ -1015,6 +1010,8 @@ export function HouseCanvas({
       background: new Image(),
       dogA: new Image(),
       dogB: new Image(),
+      dogC: new Image(),
+      owner: new Image(),
       props: new Image(),
     };
     const entries = Object.entries(WAITDOG_ART_ASSETS) as Array<
