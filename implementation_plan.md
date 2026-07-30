@@ -165,6 +165,19 @@
 
 ---
 
+# 기다려멍 재기획 1단계 — 손맛과 목표
+
+- [x] D1 — 보호자/강아지 스프라이트 축소 및 새 시각 경계 충돌 상수 `90 / 112 / 8` 적용
+- [x] D2 — `drawOwner` 방향·바운스·그림자 펄스·기울기·호흡과 reduced-motion 처리
+- [x] D3 — App 계층 행동 감지, `waitdog_basics_v1` 저장, 일정·미션·체크리스트 패널
+- [x] 720p 계약 정적 확인: 상단바 구조와 `.canvas-stage calc(100dvh - 260px)` 보존
+- [ ] 수용 기준 검사 — 첫 계약 명령이 `SecItemCopyMatching failed -50`/exit 139로 2회 종료되어 검증 미실행
+
+고정 범위: `balance.ts`, `HouseCanvas.tsx`, `App.tsx`, `waitdog.css`와 기록 문서만 수정한다.
+`campaign.ts`, 스냅샷/프로필 스키마, sim 이벤트·필드, 스크립트, 상호작용 반경은 변경하지 않는다.
+
+---
+
 # 기다려, 멍! — 생활형 훈련게임 v3 개편
 
 ## SourceRefs

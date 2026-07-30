@@ -97,7 +97,7 @@ const ROOMS: Record<RoomId, RoomRect> = {
 };
 
 const ROOM_ORDER: RoomId[] = ["living", "kitchen", "toilet"];
-const DOG_HIT_RADIUS = 92;
+const DOG_HIT_RADIUS = 71;
 const CUE_HIT_RADIUS = 126;
 const COMPUTER_HIT_RADIUS = 88;
 const BOWL_HIT_RADIUS = 72;
@@ -545,32 +545,65 @@ const drawOwner = (
   context: CanvasRenderingContext2D,
   point: Point,
   images: ArtImages | null,
+  now: number,
+  moving: boolean,
+  facingLeft: boolean,
+  reducedMotion: boolean,
 ) => {
+  const stepPhase = now / 1000 * 2.5 * Math.PI * 2;
+  const bounce = reducedMotion || !moving ? 0 : Math.sin(stepPhase) * 3.5;
+  const breath = reducedMotion || moving
+    ? 0
+    : Math.sin(now / 1000 * 0.7 * Math.PI * 2);
+  const shadowPulse = reducedMotion || !moving ? 0 : Math.sin(stepPhase) * 2;
+  const tilt = reducedMotion || !moving
+    ? 0
+    : (facingLeft ? -1 : 1) * 2 * Math.PI / 180;
+
   context.save();
   context.fillStyle = "rgba(37, 55, 69, 0.16)";
   context.beginPath();
-  context.ellipse(point.x, point.y, 28, 10, 0, 0, Math.PI * 2);
+  context.ellipse(
+    point.x,
+    point.y,
+    21 + shadowPulse,
+    8,
+    0,
+    0,
+    Math.PI * 2,
+  );
   context.fill();
   context.restore();
+  const animatedPoint = { x: point.x, y: point.y + bounce + breath };
+  context.save();
+  context.translate(animatedPoint.x, animatedPoint.y);
+  context.rotate(tilt);
+  context.translate(-animatedPoint.x, -animatedPoint.y);
   if (images) {
-    const height = 145;
+    const height = 110;
     const sourceWidth = images.props.naturalWidth / SPRITE_GRID.columns;
     const sourceHeight = images.props.naturalHeight / SPRITE_GRID.rows;
-    drawProp(
+    const width = height * sourceWidth / sourceHeight;
+    drawSpriteCell(
       context,
       images.props,
-      PROP_SPRITE_INDEX.owner,
-      point,
-      height * sourceWidth / sourceHeight,
+      PROP_SPRITE_INDEX.owner % SPRITE_GRID.columns,
+      Math.floor(PROP_SPRITE_INDEX.owner / SPRITE_GRID.columns),
+      animatedPoint.x - width / 2,
+      animatedPoint.y - height,
+      width,
       height,
+      facingLeft,
     );
+    context.restore();
     return;
   }
   context.fillStyle = "#325ea8";
   context.beginPath();
-  context.arc(point.x, point.y - 80, 17, 0, Math.PI * 2);
+  context.arc(animatedPoint.x, animatedPoint.y - 80, 17, 0, Math.PI * 2);
   context.fill();
-  context.fillRect(point.x - 14, point.y - 62, 28, 58);
+  context.fillRect(animatedPoint.x - 14, animatedPoint.y - 62, 28, 58);
+  context.restore();
 };
 
 const dogMotionFor = (view: WaitdogUiView): DogMotionId => {
@@ -599,7 +632,7 @@ const drawDog = (
   context.save();
   context.fillStyle = "rgba(75, 57, 39, 0.18)";
   context.beginPath();
-  context.ellipse(point.x, point.y - 2, 40, 12, 0, 0, Math.PI * 2);
+  context.ellipse(point.x, point.y - 2, 31, 9, 0, 0, Math.PI * 2);
   context.fill();
   context.restore();
   if (images) {
@@ -608,7 +641,7 @@ const drawDog = (
     const frame = reducedMotion
       ? 0
       : Math.floor(now / (1000 / motion.fps)) % SPRITE_GRID.columns;
-    const width = 110;
+    const width = 85;
     const sourceWidth = image.naturalWidth / SPRITE_GRID.columns;
     const sourceHeight = image.naturalHeight / SPRITE_GRID.rows;
     const height = width * sourceHeight / sourceWidth;
@@ -730,43 +763,43 @@ const drawCueEffect = (
   if (encounter.cue.kind === "bark" || encounter.cue.kind === "whine") {
     for (const radius of [28, 48, 68]) {
       context.beginPath();
-      context.arc(point.x, point.y - 70, radius + pulse * 0.25, -0.8, 0.8);
+      context.arc(point.x, point.y - 54, radius + pulse * 0.25, -0.8, 0.8);
       context.stroke();
     }
   } else if (encounter.cue.kind === "biteWarning") {
     context.beginPath();
-    context.moveTo(point.x, point.y - 150 - pulse);
-    context.lineTo(point.x - 58, point.y - 54);
-    context.lineTo(point.x + 58, point.y - 54);
+    context.moveTo(point.x, point.y - 116 - pulse);
+    context.lineTo(point.x - 58, point.y - 42);
+    context.lineTo(point.x + 58, point.y - 42);
     context.closePath();
     context.fill();
     context.stroke();
     context.fillStyle = "#c93e35";
     context.font = "900 48px sans-serif";
     context.textAlign = "center";
-    context.fillText("!", point.x, point.y - 78);
+    context.fillText("!", point.x, point.y - 60);
   } else if (encounter.cue.kind === "flee") {
     context.setLineDash([16, 10]);
     context.beginPath();
-    context.moveTo(point.x - 90, point.y - 50);
-    context.lineTo(point.x + 76 + pulse, point.y - 50);
+    context.moveTo(point.x - 90, point.y - 39);
+    context.lineTo(point.x + 76 + pulse, point.y - 39);
     context.stroke();
     context.beginPath();
-    context.moveTo(point.x + 76 + pulse, point.y - 50);
-    context.lineTo(point.x + 48 + pulse, point.y - 72);
-    context.moveTo(point.x + 76 + pulse, point.y - 50);
-    context.lineTo(point.x + 48 + pulse, point.y - 28);
+    context.moveTo(point.x + 76 + pulse, point.y - 39);
+    context.lineTo(point.x + 48 + pulse, point.y - 56);
+    context.moveTo(point.x + 76 + pulse, point.y - 39);
+    context.lineTo(point.x + 48 + pulse, point.y - 22);
     context.stroke();
   } else if (encounter.cue.kind === "anxiety") {
     context.setLineDash([7, 8]);
     for (const radius of [48, 72]) {
       context.beginPath();
-      context.arc(point.x, point.y - 55, radius + pulse * 0.3, 0, Math.PI * 2);
+      context.arc(point.x, point.y - 43, radius + pulse * 0.3, 0, Math.PI * 2);
       context.stroke();
     }
   } else {
     context.beginPath();
-    context.arc(point.x, point.y - 45, 58 + pulse * 0.35, 0, Math.PI * 2);
+    context.arc(point.x, point.y - 35, 58 + pulse * 0.35, 0, Math.PI * 2);
     context.stroke();
   }
 
@@ -774,7 +807,7 @@ const drawCueEffect = (
   context.font = "950 19px sans-serif";
   const width = context.measureText(label).width + 42;
   const labelX = Math.max(10, Math.min(WIDTH - width - 10, point.x - width / 2));
-  const labelY = Math.max(20, point.y - 190);
+  const labelY = Math.max(20, point.y - 147);
   const accent = encounter.safetyLevel === "high" ? "#c93e35" : "#ef7f68";
   context.fillStyle = "rgba(255, 255, 255, 0.98)";
   context.strokeStyle = accent;
@@ -800,8 +833,8 @@ const drawCueEffect = (
   context.setLineDash([]);
   for (const offset of [-1, 1]) {
     context.beginPath();
-    context.moveTo(point.x + offset * 42, point.y - 88);
-    context.lineTo(point.x + offset * (59 + pulse * 0.2), point.y - 101);
+    context.moveTo(point.x + offset * 42, point.y - 68);
+    context.lineTo(point.x + offset * (59 + pulse * 0.2), point.y - 78);
     context.stroke();
   }
   context.restore();
@@ -825,7 +858,7 @@ const drawMasksAndSpotlight = (
     context.fillStyle = "rgba(24, 37, 40, 0.2)";
     context.beginPath();
     context.rect(0, 0, WIDTH, HEIGHT);
-    context.arc(point.x, point.y - 48, 145, 0, Math.PI * 2, true);
+    context.arc(point.x, point.y - 37, 145, 0, Math.PI * 2, true);
     context.fill("evenodd");
     const rect = ROOMS[encounter.cue.room];
     context.strokeStyle = encounter.safetyLevel === "high" ? "#c93e35" : "#ffd86d";
@@ -957,6 +990,7 @@ export function HouseCanvas({
   const ownerPositionRef = useRef<Point>(
     spatialPoint(view.ownerSpatial.room, view.ownerSpatial.x, view.ownerSpatial.y),
   );
+  const ownerFacingLeftRef = useRef(false);
   const dogTransitionRef = useRef<PositionTransition | null>(null);
   const ownerTransitionRef = useRef<PositionTransition | null>(null);
   const [artLoad, setArtLoad] = useState<ArtLoadState>({ status: "loading" });
@@ -1078,6 +1112,9 @@ export function HouseCanvas({
     const currentOwner = ownerTransitionRef.current
       ? positionDuring(ownerTransitionRef.current, startedAt)
       : ownerPositionRef.current;
+    if (Math.abs(nextOwner.x - currentOwner.x) > 0.01) {
+      ownerFacingLeftRef.current = nextOwner.x < currentOwner.x;
+    }
     if (reducedMotionRef.current) {
       ownerPositionRef.current = nextOwner;
       ownerTransitionRef.current = null;
@@ -1187,7 +1224,15 @@ export function HouseCanvas({
       const entities: Array<{ footY: number; draw: () => void }> = [
         {
           footY: ownerPoint.y,
-          draw: () => drawOwner(context, ownerPoint, images),
+          draw: () => drawOwner(
+            context,
+            ownerPoint,
+            images,
+            now,
+            view.ownerSpatial.moving,
+            ownerFacingLeftRef.current,
+            reducedMotionRef.current,
+          ),
         },
       ];
       if (publicDogPoint !== null) {
@@ -1305,7 +1350,7 @@ export function HouseCanvas({
       encounter !== null &&
       currentCuePoint !== null &&
       hits(
-        { x: currentCuePoint.x, y: currentCuePoint.y - 64 },
+        { x: currentCuePoint.x, y: currentCuePoint.y - 49 },
         CUE_HIT_RADIUS,
       )
     ) {
@@ -1369,7 +1414,7 @@ export function HouseCanvas({
     if (
       currentDogPoint !== null &&
       hits(
-        { x: currentDogPoint.x, y: currentDogPoint.y - 48 },
+        { x: currentDogPoint.x, y: currentDogPoint.y - 37 },
         DOG_HIT_RADIUS,
       )
     ) {
@@ -1460,7 +1505,7 @@ export function HouseCanvas({
             className={`canvas-cue-beacon safety-${encounter.safetyLevel}`}
             style={{
               left: `${publicCuePoint.x / WIDTH * 100}%`,
-              top: `${(publicCuePoint.y - 58) / HEIGHT * 100}%`,
+              top: `${(publicCuePoint.y - 45) / HEIGHT * 100}%`,
             }}
             aria-hidden="true"
           >

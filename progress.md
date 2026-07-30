@@ -1,5 +1,15 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-30 — 기다려멍 재기획 1단계 D1/D2/D3
+
+- D1 재작업에서 보호자 높이를 110px, 강아지 폭을 85px로 축소하고 그림자·강아지 클릭/표시 오프셋을 비례 조정했으며 충돌 footprint를 `90 / 112 / 8`로 갱신했다.
+- 기존 D1의 발밑 기준 `74 / 26 / 2` 방식은 이번 스프라이트 축소 방식으로 대체했다. 기존 scale·상호작용 반경은 계속 보존한다.
+- D2 `drawOwner`에 이동 방향 flip, 2.5걸음/초·3.5px 바운스, `rx 21±2px` 그림자, 최대 2도 기울기, 정지 1px 호흡을 추가했다. reduced-motion은 방향 전환만 유지한다.
+- D3 App 계층의 성공 결과만으로 이동/E 상호작용/돌봄P 증가/밥·물 액션/업무 진행을 감지한다. 정확히 5개 boolean을 `waitdog_basics_v1`에 저장하며 저장 실패 시 체크리스트만 숨긴다.
+- 목표·체크리스트 패널은 하우스 캔버스와 기존 액션바 사이에 배치했다. 기존 TopBar 구조와 `.canvas-stage`의 `calc(100dvh - 260px)` 규칙은 수정하지 않았다.
+- D1 재작업 검증에서 첫 계약 명령은 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. `npm run test:contract`와 `npx tsc --noEmit`은 지침에 따라 미실행이다.
+- 완료 미션 수는 canonical economy ledger에서 현재 Day의 `careReward` encounter entry 개수를 계산하므로 같은 날 새로고침 뒤에도 복원된다.
+
 ## 2026-07-27 — 기다려멍 튜토리얼 오버레이
 
 - 사용자 승인 범위: `TutorialOverlay.tsx`, `App.tsx`, `TopBar.tsx`, `waitdog.css`, `implementation_plan.md`, `progress.md`.

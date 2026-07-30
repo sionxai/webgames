@@ -3630,38 +3630,13 @@ class WaitdogSimulation implements WaitdogUiSim {
         return true;
       }
     }
-    const previousOwnerSpatial = clone(this.ownerSpatial);
-    const previousOwner = clone(this.owner);
-    const previousDogSpatial = clone(this.spatial);
-    const previousDogRoom = this.dogRoom;
-    this.ownerSpatial.x = safeX;
-    this.ownerSpatial.y = safeY;
-    const safeDogPoint = this.safeDogPointNearOwner();
-    this.ownerSpatial = previousOwnerSpatial;
-    this.owner = previousOwner;
-    this.spatial = {
-      ...this.spatial,
-      room: safeDogPoint.room,
-      x: safeDogPoint.x,
-      y: safeDogPoint.y,
-      targetRoom: safeDogPoint.room,
-      targetX: safeDogPoint.x,
-      targetY: safeDogPoint.y,
-      route: [],
-      activity: "idle",
-      moving: false,
-    };
-    this.dogRoom = safeDogPoint.room;
-    const movedAfterDogRelocation =
-      !this.ownerPathIntersectsDog(safeX, safeY) &&
-      this.trySetOwnerPosition(this.ownerSpatial.room, safeX, safeY) &&
-      !ownerDogFootprintsOverlap(this.ownerSpatial, this.spatial);
-    if (movedAfterDogRelocation) return true;
-
-    this.ownerSpatial = previousOwnerSpatial;
-    this.owner = previousOwner;
-    this.spatial = previousDogSpatial;
-    this.dogRoom = previousDogRoom;
+    // B2d 에서 여기에 "강아지를 비켜나게 한 뒤 재시도" 단계를 뒀으나 제거했다.
+    // 그건 충돌 영역이 발밑이 아니라 스프라이트 크기로 잡혀(통행금지 폭 248px >
+    // 부엌 폭 233px) 보호자가 갇히던 것을 우회하려는 것이었다. D1 에서 충돌을
+    // 발밑 그림자 기준(74 x 26, 타원)으로 바로잡아 그냥 돌아갈 수 있게 됐으므로
+    // 우회로가 필요 없다. 또 걸어가서 강아지를 밀어내는 것은 설계 원칙에 어긋난다
+    // (계약 C5: 직접 이동은 강아지를 움직이지 않는다).
+    // 문 통과(moveOwnerThroughDoor)의 비키기는 진입점이 고정돼 대안이 없으므로 유지한다.
     return false;
   }
 

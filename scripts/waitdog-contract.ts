@@ -2236,8 +2236,11 @@ const closeEnough = (
   second: number,
   tolerance = 1e-9,
 ): boolean => Math.abs(first - second) <= tolerance;
-const OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX = (122 + 110) / 2;
-const OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX = 145;
+// HouseCanvas 의 실제 그리기 크기에서 유도한다. 2026-07-30 축소:
+// 보호자 h145(폭 122) → h110(폭 93), 강아지 폭 110 → 85.
+// 방(부엌 travel 폭 233px)에 두 캐릭터가 나란히 설 수 있게 하려는 변경이다.
+const OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX = (93 + 85) / 2;
+const OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX = 110;
 const ownerDogSpriteBoundsSeparated = (
   state: Pick<WaitdogFullState, "ownerSpatial" | "spatial">,
 ): boolean => {
@@ -2577,16 +2580,26 @@ assert(
   "C4 in-range reinforcement did not complete the encounter economy",
 );
 
+// 2026-07-30 설계 변경(사용자 결정): "스프라이트가 시각적으로 겹치지 않는다" 불변식은 유지하되,
+// 스프라이트를 방 크기에 맞게 줄여 그 불변식과 자유로운 이동이 동시에 성립하게 한다.
+// 종전에는 보호자 122px + 강아지 110px = 232px 가 부엌 travel 폭 233px 과 거의 같아
+// 두 캐릭터가 나란히 설 수 없었고, 그래서 통행금지 영역이 방보다 넓어지는 결과가 됐다.
+// 축소 후: 보호자 h145→110(폭 93), 강아지 폭 110→85 → 가로 반합 89px(부엌 폭의 38%).
+// 충돌 상수는 새 스프라이트 경계에 맞춘다(가로 반합 89 바로 위, 세로 보호자 높이 110 바로 위).
 assert(
   BALANCE.LIFESTYLE.OWNER.INTERACTION_RADIUS === 0.12 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .HORIZONTAL_CLEARANCE_PX >= 120 &&
+        .HORIZONTAL_CLEARANCE_PX >= 88 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .VERTICAL_CLEARANCE_PX >= 150 &&
+        .HORIZONTAL_CLEARANCE_PX <= 100 &&
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
+        .VERTICAL_CLEARANCE_PX >= 108 &&
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
+        .VERTICAL_CLEARANCE_PX <= 120 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
         .SUPERELLIPSE_EXPONENT >= 8 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE > 1,
-  "C4 encounter proximity did not preserve sprite-sized visual clearance",
+  "C4 encounter proximity did not keep sprite-sized visual clearance",
 );
 
 const whineProximity = createSim(10_302);

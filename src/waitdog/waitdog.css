@@ -3182,6 +3182,66 @@ canvas:focus-visible {
   gap: 8px;
 }
 
+.daily-goals {
+  display: grid;
+  gap: 7px;
+  padding: 8px 12px;
+  border: 1px solid rgba(91, 67, 51, 0.14);
+  border-radius: 16px;
+  color: var(--wd-ink);
+  background: rgba(255, 252, 244, 0.96);
+  box-shadow: 0 6px 18px rgba(66, 47, 33, 0.08);
+}
+
+.daily-goals__summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(140px, 0.8fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.daily-goals__summary > span {
+  display: grid;
+  min-width: 0;
+}
+
+.daily-goals__summary small {
+  color: var(--wd-muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.daily-goals__summary strong {
+  overflow: hidden;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.basics-checklist {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.basics-checklist li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  color: var(--wd-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.basics-checklist li.is-complete {
+  color: #28785a;
+}
+
 .lifestyle-layout > .house-card,
 .world-live-column > .house-card {
   padding: 8px;
@@ -3200,12 +3260,15 @@ canvas:focus-visible {
   display: none;
 }
 
+/* 348px = 캔버스 위 크롬 162 + 아래 크롬 178(여백 18 + 목표 패널 78 + 여백 8 + 액션바 74) + 여유 8.
+   D3 에서 목표 패널(.daily-goals)이 들어오면서 아래 크롬이 78+26px 늘었다.
+   clamp 하한도 420 → 320 으로 내려야 한다. 420 이면 720p 에서 하한이 이겨 다시 넘친다. */
 .canvas-stage {
   width: min(
     100%,
-    clamp(420px, calc(100dvh - 260px), 680px)
+    clamp(320px, calc(100dvh - 348px), 680px)
   );
-  max-height: calc(100dvh - 260px);
+  max-height: calc(100dvh - 348px);
   aspect-ratio: 1;
   margin-inline: auto;
 }
@@ -3721,6 +3784,22 @@ canvas:focus-visible {
 }
 
 @media (max-width: 520px) {
+  .daily-goals__summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .daily-goals__summary > span:nth-child(2) {
+    display: none;
+  }
+
+  .basics-checklist {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .basics-checklist li {
+    white-space: normal;
+  }
+
   .lifestyle-topbar .brand-block h1 {
     display: none;
   }

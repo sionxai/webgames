@@ -80,6 +80,7 @@ const STORAGE_SAVE_MESSAGE =
   "저장 공간에 기록하지 못했습니다. 현재 화면의 진행은 계속됩니다.";
 const WAITDOG_LOCAL_SAVED_AT_KEY = "portal_cloud_save_local_updated_at_waitdog";
 const WAITDOG_TUTORIAL_KEY = "waitdog_tutorial_v1";
+const WAITDOG_BASICS_KEY = "waitdog_basics_v1";
 const waitdogCloudSave = createCloudSave("waitdog", 2);
 const waitdogLocalExistedAtStartup =
   typeof window !== "undefined" &&
@@ -119,6 +120,63 @@ interface DirectInputActions {
   openSurface: (surface: LifestyleSurface) => void;
   closeSurface: () => void;
 }
+
+interface BasicsChecklist {
+  moved: boolean;
+  interacted: boolean;
+  mission: boolean;
+  bowl: boolean;
+  work: boolean;
+}
+
+const EMPTY_BASICS: BasicsChecklist = {
+  moved: false,
+  interacted: false,
+  mission: false,
+  bowl: false,
+  work: false,
+};
+
+const isBasicsChecklist = (value: unknown): value is BasicsChecklist => {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return keys.length === 5 &&
+    keys.every((key) => key in EMPTY_BASICS) &&
+    Object.keys(EMPTY_BASICS).every((key) =>
+      typeof record[key] === "boolean"
+    );
+};
+
+const loadBasics = (): {
+  enabled: boolean;
+  checklist: BasicsChecklist;
+} => {
+  if (typeof window === "undefined") {
+    return { enabled: false, checklist: EMPTY_BASICS };
+  }
+  try {
+    const stored = window.localStorage.getItem(WAITDOG_BASICS_KEY);
+    if (stored === null) {
+      window.localStorage.setItem(
+        WAITDOG_BASICS_KEY,
+        JSON.stringify(EMPTY_BASICS),
+      );
+      return { enabled: true, checklist: EMPTY_BASICS };
+    }
+    const parsed: unknown = JSON.parse(stored);
+    return isBasicsChecklist(parsed)
+      ? { enabled: true, checklist: parsed }
+      : { enabled: false, checklist: EMPTY_BASICS };
+  } catch {
+    return { enabled: false, checklist: EMPTY_BASICS };
+  }
+};
+
+const formatScheduleMinute = (minute: number): string =>
+  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${
+    String(minute % 60).padStart(2, "0")
+  }`;
 
 const MIN_INPUT_DELTA_MS = 16;
 const MAX_INPUT_DELTA_MS = 250;
@@ -409,6 +467,15 @@ export default function App() {
   const [openSurface, setOpenSurface] = useState<LifestyleSurface | null>(null);
   const [tutorialEnabled, setTutorialEnabled] = useState(false);
   const [tutorialOpen, setTutorialOpen] = useState(false);
+  const basicsInitialRef = useRef<ReturnType<typeof loadBasics> | null>(null);
+  if (basicsInitialRef.current === null) basicsInitialRef.current = loadBasics();
+  const [basicsEnabled, setBasicsEnabled] = useState(
+    basicsInitialRef.current.enabled,
+  );
+  const [basics, setBasics] = useState<BasicsChecklist>(
+    basicsInitialRef.current.checklist,
+  );
+  const [basicsRevealed, setBasicsRevealed] = useState(false);
   const [encounterFeedback, setEncounterFeedback] = useState<string | null>(
     null,
   );
@@ -458,6 +525,9 @@ export default function App() {
   const persistProfileRef = useRef<
     (silent: boolean, suppressCloudPush: boolean) => void
   >(() => undefined);
+  const markBasicRef = useRef<(key: keyof BasicsChecklist) => void>(
+    () => undefined,
+  );
   phaseRef.current = phase;
   viewRef.current = view;
   speedRef.current = speed;
@@ -466,6 +536,20 @@ export default function App() {
   hypothesesRef.current = hypotheses;
   surfaceRef.current = openSurface;
   tutorialOpenRef.current = tutorialOpen;
+  markBasicRef.current = (key) => {
+    if (!basicsEnabled) return;
+    setBasics((current) => {
+      if (current[key]) return current;
+      const next = { ...current, [key]: true };
+      try {
+        window.localStorage.setItem(WAITDOG_BASICS_KEY, JSON.stringify(next));
+        return next;
+      } catch {
+        setBasicsEnabled(false);
+        return current;
+      }
+    });
+  };
 
   const sim = simRef.current;
   const ended = view.minuteOfDay >= DAY_END_MINUTE;
@@ -500,14 +584,17 @@ export default function App() {
       );
       setTutorialEnabled(nextEnabled);
       if (nextEnabled) {
+        setBasicsRevealed(true);
         clearDirectInput();
         tutorialOpenRef.current = true;
         setTutorialOpen(true);
       } else {
+        setBasicsRevealed(false);
         closeTutorial();
       }
     } catch {
       setTutorialEnabled(false);
+      setBasicsRevealed(false);
       closeTutorial();
     }
   };
@@ -904,6 +991,9 @@ export default function App() {
             `업무 100% 완료 · ${next.work.salaryPreview.toLocaleString("ko-KR")}원이 정산되었습니다.`,
           );
         }
+        if (result.ok && next.work.progress > beforeProgress) {
+          markBasicRef.current("work");
+        }
         commitView(next);
         return;
       }
@@ -916,6 +1006,7 @@ export default function App() {
         commitView(simRef.current.getDogView());
         return;
       }
+      markBasicRef.current("moved");
 
       const next = simRef.current.getDogView();
       const clickTarget = clickMoveTargetRef.current;
@@ -989,11 +1080,12 @@ export default function App() {
         heldMoveKeysRef.current.add(event.code);
         if (!event.repeat) {
           const vector = MOVE_KEY_VECTORS[event.code];
-          simRef.current.moveOwnerBy({
+          const result = simRef.current.moveOwnerBy({
             dx: vector.dx,
             dy: vector.dy,
             elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
           });
+          if (result.ok) markBasicRef.current("moved");
           lastDirectTickAtRef.current = performance.now();
           commitView(simRef.current.getDogView());
         }
@@ -1488,7 +1580,7 @@ export default function App() {
     setWorldFeedback("업무를 이어갑니다. R을 누르고 진행하세요.");
   };
 
-  const executeWorldAction = (actionId: string) => {
+  const executeWorldAction = (actionId: string, fromInteraction = false) => {
     if (tutorialOpenRef.current) return;
     if (actionId === WORK_ALERT_INTERRUPT_ACTION) {
       resolveWorkAlert("interrupt");
@@ -1501,11 +1593,30 @@ export default function App() {
 
     workHoldRef.current = false;
     const encounterResultId = viewRef.current.activeEncounter?.id ?? null;
+    const careRewardPrefix =
+      `care:day:${viewRef.current.day}:encounter:`;
+    const priorCareRewardCount = simRef.current.getFullState().economy.ledger
+      .filter((entry) =>
+        entry.kind === "careReward" &&
+        entry.id.startsWith(careRewardPrefix)
+      ).length;
     const result = simRef.current.performWorldAction(actionId);
     const next = syncAfterCommand();
     if (!result.ok) {
       setWorldFeedback(result.reason ?? "행동을 실행하지 못했습니다.");
       return;
+    }
+    if (fromInteraction) markBasicRef.current("interacted");
+    if (actionId.startsWith("food:") || actionId.startsWith("water:")) {
+      markBasicRef.current("bowl");
+    }
+    const nextCareRewardCount = simRef.current.getFullState().economy.ledger
+      .filter((entry) =>
+        entry.kind === "careReward" &&
+        entry.id.startsWith(careRewardPrefix)
+      ).length;
+    if (nextCareRewardCount > priorCareRewardCount) {
+      markBasicRef.current("mission");
     }
 
     if (actionId === "encounter:dismiss") {
@@ -1555,7 +1666,7 @@ export default function App() {
       actions.length === 1 &&
       isAutoInteractAction(actions[0].id)
     ) {
-      executeWorldAction(actions[0].id);
+      executeWorldAction(actions[0].id, true);
       return;
     }
     if (actions.length > 0) {
@@ -1979,6 +2090,29 @@ export default function App() {
     view.work.alert !== null ||
     view.work.progress >= 100;
   const visibleWorkProgress = view.work.seated ? view.work.progress : null;
+  const careRewardPrefix = `care:day:${view.day}:encounter:`;
+  const todayMissionCount = simRef.current.getFullState().economy.ledger.filter(
+    (entry) =>
+      entry.kind === "careReward" &&
+      entry.id.startsWith(careRewardPrefix),
+  ).length;
+  const scheduleItem = settings.daySchedule.find((item) =>
+    view.minuteOfDay >= item.startMinute &&
+    view.minuteOfDay < item.endMinute
+  ) ?? settings.daySchedule.find((item) =>
+    item.startMinute > view.minuteOfDay
+  ) ?? null;
+  const scheduleIsNext = scheduleItem !== null &&
+    view.minuteOfDay < scheduleItem.startMinute;
+  const basicsComplete = Object.values(basics).every(Boolean);
+  const showBasics = basicsEnabled && (!basicsComplete || basicsRevealed);
+  const basicsItems: ReadonlyArray<[keyof BasicsChecklist, string]> = [
+    ["moved", "이동해보기"],
+    ["interacted", "E로 상호작용"],
+    ["mission", "돌봄 미션 1회 완료"],
+    ["bowl", "밥 또는 물 채우기"],
+    ["work", "업무 1회 진행"],
+  ];
 
   return (
     <main
@@ -2014,6 +2148,42 @@ export default function App() {
             onGroundMove={handleGroundMove}
             onInteract={handleNearbyInteraction}
           />
+          <aside className="daily-goals" aria-label="오늘의 목표">
+            <div className="daily-goals__summary">
+              <span>
+                <small>{scheduleIsNext ? "다음 일정" : "오늘의 일정"}</small>
+                <strong>
+                  {scheduleItem === null
+                    ? "다음 —"
+                    : `${scheduleIsNext ? "다음 — " : ""}${scheduleItem.title}`}
+                </strong>
+              </span>
+              <span>
+                <small>시간</small>
+                <strong>
+                  {scheduleItem === null
+                    ? "—"
+                    : `${formatScheduleMinute(scheduleItem.startMinute)}–${
+                      formatScheduleMinute(scheduleItem.endMinute)
+                    }`}
+                </strong>
+              </span>
+              <span>
+                <small>완료 미션</small>
+                <strong>{todayMissionCount}회</strong>
+              </span>
+            </div>
+            {showBasics && (
+              <ul className="basics-checklist" aria-label="기본 조작 체크리스트">
+                {basicsItems.map(([key, label]) => (
+                  <li className={basics[key] ? "is-complete" : ""} key={key}>
+                    <span aria-hidden="true">{basics[key] ? "✓" : "○"}</span>
+                    {label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
           <WorldActionBar
             target={actionBarTarget}
             prompt={worldPrompt}
