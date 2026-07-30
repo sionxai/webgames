@@ -3266,9 +3266,10 @@ canvas:focus-visible {
 .canvas-stage {
   width: min(
     100%,
-    clamp(320px, calc(100dvh - 348px), 680px)
+    clamp(320px, calc(100dvh - 356px), 680px)
   );
-  max-height: calc(100dvh - 348px);
+  max-width: calc(100dvh - 356px);
+  max-height: calc(100dvh - 356px);
   aspect-ratio: 1;
   margin-inline: auto;
 }
