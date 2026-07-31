@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useRef,
@@ -42,7 +43,7 @@ const clampProgress = (value: number): number =>
 
 const isHoldKey = (key: string): boolean => key === " " || key === "Enter";
 
-export function WorldActionBar({
+function WorldActionBarComponent({
   target,
   prompt,
   cause = null,
@@ -246,3 +247,51 @@ export function WorldActionBar({
     </section>
   );
 }
+
+const sameTarget = (
+  previous: WorldActionTarget | null,
+  next: WorldActionTarget | null,
+): boolean =>
+  previous === next ||
+  (
+    previous !== null &&
+    next !== null &&
+    previous.icon === next.icon &&
+    previous.label === next.label
+  );
+
+const sameActions = (
+  previous: readonly WorldContextAction[],
+  next: readonly WorldContextAction[],
+): boolean =>
+  previous === next ||
+  (
+    previous.length === next.length &&
+    previous.every((action, index) => {
+      const candidate = next[index];
+      return action.id === candidate.id &&
+        action.label === candidate.label &&
+        action.icon === candidate.icon &&
+        action.shortcut === candidate.shortcut &&
+        action.disabled === candidate.disabled &&
+        action.disabledReason === candidate.disabledReason;
+    })
+  );
+
+export const WorldActionBar = memo(
+  WorldActionBarComponent,
+  (previous, next) =>
+    sameTarget(previous.target, next.target) &&
+    previous.prompt === next.prompt &&
+    previous.cause === next.cause &&
+    sameActions(previous.actions, next.actions) &&
+    previous.disabled === next.disabled &&
+    previous.interactLabel === next.interactLabel &&
+    previous.interactDisabled === next.interactDisabled &&
+    previous.workProgress === next.workProgress &&
+    previous.workHoldLabel === next.workHoldLabel &&
+    previous.workHoldDisabled === next.workHoldDisabled &&
+    previous.onAction === next.onAction &&
+    previous.onInteract === next.onInteract &&
+    previous.onWorkHoldChange === next.onWorkHoldChange,
+);

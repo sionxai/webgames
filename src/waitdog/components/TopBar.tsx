@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { RoomId } from "../types";
 
 export type GameSpeed = 0 | 1 | 2 | 4;
@@ -39,7 +40,7 @@ const formatClock = (minuteOfDay: number): string => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
-export function TopBar({
+function TopBarComponent({
   day,
   minuteOfDay,
   speed,
@@ -154,3 +155,5 @@ export function TopBar({
     </header>
   );
 }
+
+export const TopBar = memo(TopBarComponent);

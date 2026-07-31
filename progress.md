@@ -271,3 +271,10 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
   마지막 줄 `ERROR: SecItemCopyMatching failed -50`. 지침에 따라
   `npm run test:contract`와 `npx tsc --noEmit`은 실행하지 않았다.
 - TODO: 정상 Node/npm 환경에서 수용 기준 3개 커맨드를 다시 실행한다.
+## 2026-07-31 — 기다려멍 R2a 렌더 소유권 이전
+
+- `viewRef`는 프레임마다 최신 view를 보유하고, React `view` state는 명시적 UI 서명이 바뀔 때만 갱신하도록 분리했다. 좌표·target·`t`·`absoluteMinute`는 서명에서 제외했다.
+- HouseCanvas는 안정된 `getView()`로 rAF마다 최신 프레임 데이터를 읽고, 그리기 효과 의존성에서 `view`를 제거했다.
+- Checker 재작업에서 프레임 helper를 ref 갱신 전용으로 축소하고, 별도 경계 helper만 UI 서명을 비교해 이산 commit으로 넘기도록 소유권을 분명히 했다. Canvas 포인터 hit-test와 배변 target도 `getView()`의 최신 view를 사용한다.
+- HouseCanvas, WorldActionBar, TopBar를 memo 처리하고 App에서 전달하는 관련 콜백을 `useCallback`으로 안정화했다. 개발 모드 렌더 카운터도 추가했다.
+- 검증 환경 차단: `npx tsc --noEmit`이 최초와 정확히 1회 재시도 모두 exit 139, 마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 종료했다. 지침에 따라 나머지 npm 검증은 실행하지 않았다.

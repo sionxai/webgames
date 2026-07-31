@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BottomNav, type LifestyleSurface } from "./components/BottomNav";
 import { CampaignEnd } from "./components/CampaignEnd";
 import { DayReview } from "./components/DayReview";
@@ -85,6 +85,45 @@ const waitdogCloudSave = createCloudSave("waitdog", 2);
 const waitdogLocalExistedAtStartup =
   typeof window !== "undefined" &&
   window.localStorage.getItem(WAITDOG_PROFILE_KEY) !== null;
+
+const viewUiSignature = (view: WaitdogUiView): string => {
+  const encounter = view.activeEncounter;
+  return [
+    view.day,
+    view.minuteOfDay,
+    view.blocked ? 1 : 0,
+    view.pausedForEncounter ? 1 : 0,
+    view.owner.focusLocked ? 1 : 0,
+    view.visibility,
+    view.ownerSpatial.room,
+    view.ownerSpatial.moving ? 1 : 0,
+    view.economy.money,
+    view.economy.carePoints,
+    view.economy.salaryBonusPercent,
+    view.environmentPlacements.foodBowl.level,
+    view.environmentPlacements.waterBowl.level,
+    view.work.state,
+    Math.round(view.work.progress),
+    view.work.seated ? 1 : 0,
+    view.work.alert === null ? 0 : 1,
+    encounter?.id ?? "",
+    encounter?.stage ?? "",
+    encounter?.kind ?? "",
+    encounter?.causeChoices.map((choice) => choice.id).join(",") ?? "",
+    encounter?.responseChoices.map((choice) => choice.id).join(",") ?? "",
+    encounter?.reinforcementChoices.map((choice) => choice.id).join(",") ?? "",
+    view.interaction.nearbyTarget ?? "",
+    view.interaction.contextActions
+      .map((action) => `${action.id}:${action.enabled ? 1 : 0}`)
+      .join(","),
+    view.interaction.encounterReady ? 1 : 0,
+    view.interaction.directControlEnabled ? 1 : 0,
+    view.roomVisibility.living,
+    view.roomVisibility.kitchen,
+    view.roomVisibility.toilet,
+    view.activePoop === null ? 0 : 1,
+  ].join("|");
+};
 
 const autoEncounterCooldown = (seed: number, absoluteMinute: number): number => {
   const cooldown = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_COOLDOWN_MINUTES;
@@ -448,6 +487,12 @@ const nearbyWorldTarget = (
 };
 
 export default function App() {
+  // 개발 모드 렌더 계측. 프로젝트에 vite/client 타입이 없어 import.meta 를 좁혀서 읽는다.
+  if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+    (window as unknown as { __waitdogRenderCount?: number }).__waitdogRenderCount =
+      ((window as unknown as { __waitdogRenderCount?: number })
+        .__waitdogRenderCount ?? 0) + 1;
+  }
   const bootstrapRef = useRef<BootstrapState | null>(null);
   if (bootstrapRef.current === null) bootstrapRef.current = bootstrap();
   const initial = bootstrapRef.current;
@@ -494,6 +539,7 @@ export default function App() {
 
   const phaseRef = useRef(phase);
   const viewRef = useRef(view);
+  const viewUiSignatureRef = useRef(viewUiSignature(view));
   const speedRef = useRef(speed);
   const settingsRef = useRef(settings);
   const resourcesRef = useRef(resources);
@@ -528,8 +574,46 @@ export default function App() {
   const markBasicRef = useRef<(key: keyof BasicsChecklist) => void>(
     () => undefined,
   );
+  const groundMoveHandlerRef = useRef<(target: GroundMoveTarget) => void>(
+    () => undefined,
+  );
+  const nearbyInteractionHandlerRef = useRef<() => void>(() => undefined);
+  const worldActionHandlerRef = useRef<(actionId: string) => void>(
+    () => undefined,
+  );
+  const workHoldHandlerRef = useRef<(holding: boolean) => void>(
+    () => undefined,
+  );
+  const speedChangeHandlerRef = useRef<(next: GameSpeed) => void>(
+    () => undefined,
+  );
+  const tutorialToggleHandlerRef = useRef<() => void>(() => undefined);
+  const getView = useCallback(() => viewRef.current, []);
+  const onGroundMove = useCallback(
+    (target: GroundMoveTarget) => groundMoveHandlerRef.current(target),
+    [],
+  );
+  const onNearbyInteraction = useCallback(
+    () => nearbyInteractionHandlerRef.current(),
+    [],
+  );
+  const onWorldAction = useCallback(
+    (actionId: string) => worldActionHandlerRef.current(actionId),
+    [],
+  );
+  const onWorkHoldChange = useCallback(
+    (holding: boolean) => workHoldHandlerRef.current(holding),
+    [],
+  );
+  const onSpeedChange = useCallback(
+    (next: GameSpeed) => speedChangeHandlerRef.current(next),
+    [],
+  );
+  const onTutorialToggle = useCallback(
+    () => tutorialToggleHandlerRef.current(),
+    [],
+  );
   phaseRef.current = phase;
-  viewRef.current = view;
   speedRef.current = speed;
   settingsRef.current = settings;
   resourcesRef.current = resources;
@@ -641,9 +725,24 @@ export default function App() {
     setPhase(next);
   };
 
+  const commitFrameView = (next: WaitdogUiView) => {
+    viewRef.current = next;
+  };
+
   const commitView = (next: WaitdogUiView) => {
     viewRef.current = next;
+    const nextSignature = viewUiSignature(next);
+    if (viewUiSignatureRef.current === nextSignature) return;
+    viewUiSignatureRef.current = nextSignature;
     setView(next);
+  };
+
+  const commitFrameViewAtUiBoundary = (next: WaitdogUiView) => {
+    if (viewUiSignatureRef.current === viewUiSignature(next)) {
+      commitFrameView(next);
+      return;
+    }
+    commitView(next);
   };
 
   const commitSettings = (next: CampaignSettings) => {
@@ -688,6 +787,7 @@ export default function App() {
     simRef.current = next.sim;
     phaseRef.current = next.phase;
     viewRef.current = nextView;
+    viewUiSignatureRef.current = viewUiSignature(nextView);
     speedRef.current = next.settings.speed;
     settingsRef.current = next.settings;
     resourcesRef.current = next.resources;
@@ -994,7 +1094,7 @@ export default function App() {
         if (result.ok && next.work.progress > beforeProgress) {
           markBasicRef.current("work");
         }
-        commitView(next);
+        commitFrameViewAtUiBoundary(next);
         return;
       }
 
@@ -1003,7 +1103,7 @@ export default function App() {
         if (clickMoveTargetRef.current !== null) {
           clickMoveTargetRef.current = null;
         }
-        commitView(simRef.current.getDogView());
+        commitFrameViewAtUiBoundary(simRef.current.getDogView());
         return;
       }
       markBasicRef.current("moved");
@@ -1028,7 +1128,7 @@ export default function App() {
       ) {
         clickMoveTargetRef.current = null;
       }
-      commitView(next);
+      commitFrameViewAtUiBoundary(next);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1087,7 +1187,7 @@ export default function App() {
           });
           if (result.ok) markBasicRef.current("moved");
           lastDirectTickAtRef.current = performance.now();
-          commitView(simRef.current.getDogView());
+          commitFrameViewAtUiBoundary(simRef.current.getDogView());
         }
         return;
       }
@@ -1718,6 +1818,13 @@ export default function App() {
     commitSurface(surface);
   };
 
+  groundMoveHandlerRef.current = handleGroundMove;
+  nearbyInteractionHandlerRef.current = handleNearbyInteraction;
+  worldActionHandlerRef.current = executeWorldAction;
+  workHoldHandlerRef.current = setWorkHoldActive;
+  speedChangeHandlerRef.current = commitSpeed;
+  tutorialToggleHandlerRef.current = toggleTutorial;
+
   const updateStoreCategory = (category: CatalogCategory) => {
     commitSettings({
       ...settingsRef.current,
@@ -2133,8 +2240,8 @@ export default function App() {
         pausedReason={pausedReason}
         ended={ended}
         tutorialEnabled={tutorialEnabled}
-        onSpeedChange={commitSpeed}
-        onTutorialToggle={toggleTutorial}
+        onSpeedChange={onSpeedChange}
+        onTutorialToggle={onTutorialToggle}
       />
 
       <div className="lifestyle-layout">
@@ -2145,8 +2252,9 @@ export default function App() {
             disabled={directControlsDisabled}
             compact={activeEncounter !== null}
             encounter={activeEncounter}
-            onGroundMove={handleGroundMove}
-            onInteract={handleNearbyInteraction}
+            getView={getView}
+            onGroundMove={onGroundMove}
+            onInteract={onNearbyInteraction}
           />
           <aside className="daily-goals" aria-label="오늘의 목표">
             <div className="daily-goals__summary">
@@ -2195,9 +2303,9 @@ export default function App() {
             workProgress={visibleWorkProgress}
             workHoldLabel="업무"
             workHoldDisabled={workHoldDisabled}
-            onAction={executeWorldAction}
-            onInteract={handleNearbyInteraction}
-            onWorkHoldChange={setWorkHoldActive}
+            onAction={onWorldAction}
+            onInteract={onNearbyInteraction}
+            onWorkHoldChange={onWorkHoldChange}
           />
         </div>
       </div>

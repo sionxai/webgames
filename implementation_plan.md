@@ -491,3 +491,12 @@ Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, �
       so the spawn freezes digestion/poop/decision and deadlocks the contract suite.
       The scoring helper is kept but its call site is disabled (`TODO(A1)`); the trigger must
       move to the App layer, which owns the pause model.
+# 기다려멍 R2a — 렌더 소유권 이전
+
+- [x] 허용목록 기반 UI 서명과 프레임/이산 view 커밋 경로 분리
+- [x] HouseCanvas rAF의 최신 `getView()` 조회 및 `view` 효과 의존성 제거
+- [x] HouseCanvas, WorldActionBar, TopBar memo 및 App 콜백 안정화
+- [x] 개발 전용 `window.__waitdogRenderCount` 추가
+- [ ] 수용 커맨드 검증 — `SecItemCopyMatching failed -50`가 최초/1회 재시도 모두 발생해 환경 차단
+
+고정 범위: 렌더 소유권만 이전하며 좌표, 카메라, 이동, 충돌, 게임 규칙과 화면은 변경하지 않는다.

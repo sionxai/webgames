@@ -1,4 +1,5 @@
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -35,6 +36,7 @@ export interface HouseCanvasProps {
   disabled: boolean;
   compact: boolean;
   encounter: EncounterPublicView | null;
+  getView: () => WaitdogUiView;
   onGroundMove: (target: GroundMoveTarget) => void;
   onInteract: () => void;
 }
@@ -969,12 +971,13 @@ const cueEdgeIndicator = (
   };
 };
 
-export function HouseCanvas({
+function HouseCanvasComponent({
   view,
   lastSeenRoom,
   disabled,
   compact,
   encounter,
+  getView,
   onGroundMove,
   onInteract,
 }: HouseCanvasProps) {
@@ -993,14 +996,6 @@ export function HouseCanvas({
     null,
   );
   const interaction = view.interaction;
-  const foodBowlTarget = interactionTarget(view, "foodBowl");
-  const waterBowlTarget = interactionTarget(view, "waterBowl");
-  const computerTarget = interactionTarget(view, "computer");
-  const poopTarget = interactionTarget(view, "activePoop");
-  const bathTarget = interactionTarget(view, "bath");
-  const dogInteractionTarget = interactionTarget(view, "dog");
-  const cueInteractionTarget = interactionTarget(view, "cue");
-  const workSeated = view.work.seated;
 
   useEffect(() => {
     let active = true;
@@ -1083,53 +1078,67 @@ export function HouseCanvas({
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context) return;
-    const startedAt = performance.now();
-    const nextDog = dogPoint(view);
-    if (nextDog !== null) {
-      const currentDog = dogTransitionRef.current
-        ? positionDuring(dogTransitionRef.current, startedAt)
-        : dogPositionRef.current;
-      if (reducedMotionRef.current) {
-        dogPositionRef.current = nextDog;
-        dogTransitionRef.current = null;
-      } else {
-        dogTransitionRef.current = {
-          from: currentDog,
-          to: nextDog,
-          startedAt,
-          duration: DOG_POSITION_TWEEN_MS,
-        };
-      }
-    }
-    const nextOwner = spatialPoint(
-      view.ownerSpatial.room,
-      view.ownerSpatial.x,
-      view.ownerSpatial.y,
-    );
-    const currentOwner = ownerTransitionRef.current
-      ? positionDuring(ownerTransitionRef.current, startedAt)
-      : ownerPositionRef.current;
-    if (Math.abs(nextOwner.x - currentOwner.x) > 0.01) {
-      ownerFacingLeftRef.current = nextOwner.x < currentOwner.x;
-    }
-    if (reducedMotionRef.current) {
-      ownerPositionRef.current = nextOwner;
-      ownerTransitionRef.current = null;
-    } else {
-      ownerTransitionRef.current = {
-        from: currentOwner,
-        to: nextOwner,
-        startedAt,
-        duration: OWNER_POSITION_TWEEN_MS,
-      };
-    }
-
     let animationFrame = 0;
     const draw = (now: number) => {
+      const frameView = getView();
+      const nextDog = dogPoint(frameView);
+      const dogTarget = dogTransitionRef.current?.to ??
+        dogPositionRef.current;
+      if (
+        nextDog !== null &&
+        (
+          dogTarget.x !== nextDog.x ||
+          dogTarget.y !== nextDog.y
+        )
+      ) {
+        const currentDog = dogTransitionRef.current
+          ? positionDuring(dogTransitionRef.current, now)
+          : dogPositionRef.current;
+        if (reducedMotionRef.current) {
+          dogPositionRef.current = nextDog;
+          dogTransitionRef.current = null;
+        } else {
+          dogTransitionRef.current = {
+            from: currentDog,
+            to: nextDog,
+            startedAt: now,
+            duration: DOG_POSITION_TWEEN_MS,
+          };
+        }
+      }
+      const nextOwner = spatialPoint(
+        frameView.ownerSpatial.room,
+        frameView.ownerSpatial.x,
+        frameView.ownerSpatial.y,
+      );
+      const ownerTarget = ownerTransitionRef.current?.to ??
+        ownerPositionRef.current;
+      if (
+        ownerTarget.x !== nextOwner.x ||
+        ownerTarget.y !== nextOwner.y
+      ) {
+        const currentOwner = ownerTransitionRef.current
+          ? positionDuring(ownerTransitionRef.current, now)
+          : ownerPositionRef.current;
+        if (Math.abs(nextOwner.x - currentOwner.x) > 0.01) {
+          ownerFacingLeftRef.current = nextOwner.x < currentOwner.x;
+        }
+        if (reducedMotionRef.current) {
+          ownerPositionRef.current = nextOwner;
+          ownerTransitionRef.current = null;
+        } else {
+          ownerTransitionRef.current = {
+            from: currentOwner,
+            to: nextOwner,
+            startedAt: now,
+            duration: OWNER_POSITION_TWEEN_MS,
+          };
+        }
+      }
       const images = artLoad.status === "ready" ? artLoad.images : null;
       context.clearRect(0, 0, WIDTH, HEIGHT);
       if (images) context.drawImage(images.background, 0, 0, WIDTH, HEIGHT);
-      else drawFallbackFloor(context, view.roomVisibility);
+      else drawFallbackFloor(context, frameView.roomVisibility);
 
       if (images) {
         drawProp(context, images.props, PROP_SPRITE_INDEX.mat, { x: 158, y: 833 }, 150);
@@ -1144,9 +1153,9 @@ export function HouseCanvas({
         context,
         computerPoint,
         {
-          seated: workSeated,
-          progress: view.work.progress,
-          state: view.work.state,
+          seated: frameView.work.seated,
+          progress: frameView.work.progress,
+          state: frameView.work.state,
         },
       );
       drawBowl(
@@ -1157,10 +1166,10 @@ export function HouseCanvas({
           WORLD_STATIONS.foodBowl.y,
         ),
         "food",
-        view.environmentPlacements.foodBowl.level,
-        view.environmentPlacements.foodBowl.itemId === "food-comfort"
+        frameView.environmentPlacements.foodBowl.level,
+        frameView.environmentPlacements.foodBowl.itemId === "food-comfort"
           ? "comfort"
-          : view.environmentPlacements.foodBowl.itemId === "food-basic"
+          : frameView.environmentPlacements.foodBowl.itemId === "food-basic"
           ? "basic"
           : "empty",
         images,
@@ -1173,8 +1182,8 @@ export function HouseCanvas({
           WORLD_STATIONS.waterBowl.y,
         ),
         "water",
-        view.environmentPlacements.waterBowl.level,
-        view.environmentPlacements.waterBowl.clean ? "clean" : "dirty",
+        frameView.environmentPlacements.waterBowl.level,
+        frameView.environmentPlacements.waterBowl.clean ? "clean" : "dirty",
         images,
       );
       drawBath(
@@ -1185,9 +1194,10 @@ export function HouseCanvas({
           WORLD_STATIONS.bath.y,
         ),
       );
-      drawPadPlacement(context, view, images);
-      drawPoop(context, view, images, poopTarget);
-      view.environmentPlacements.barriers.forEach((barrier) =>
+      const framePoopTarget = interactionTarget(frameView, "activePoop");
+      drawPadPlacement(context, frameView, images);
+      drawPoop(context, frameView, images, framePoopTarget);
+      frameView.environmentPlacements.barriers.forEach((barrier) =>
         drawBarrier(context, barrier)
       );
       if (groundMarker) {
@@ -1216,7 +1226,9 @@ export function HouseCanvas({
         }
       }
 
-      const publicDogPoint = view.visibility === "seen" ? dogPositionRef.current : null;
+      const publicDogPoint = frameView.visibility === "seen"
+        ? dogPositionRef.current
+        : null;
       const ownerPoint = ownerPositionRef.current;
       const entities: Array<{ footY: number; draw: () => void }> = [
         {
@@ -1226,7 +1238,7 @@ export function HouseCanvas({
             ownerPoint,
             images,
             now,
-            view.ownerSpatial.moving,
+            frameView.ownerSpatial.moving,
             ownerFacingLeftRef.current,
             reducedMotionRef.current,
           ),
@@ -1238,7 +1250,7 @@ export function HouseCanvas({
           draw: () => drawDog(
             context,
             publicDogPoint,
-            view,
+            frameView,
             images,
             now,
             reducedMotionRef.current,
@@ -1257,16 +1269,16 @@ export function HouseCanvas({
           reducedMotionRef.current,
         );
       }
-      drawMasksAndSpotlight(context, view, encounter, publicDogPoint);
-      drawRoomLabels(context, view);
+      drawMasksAndSpotlight(context, frameView, encounter, publicDogPoint);
+      drawRoomLabels(context, frameView);
       drawHeardRoomIndicators(
         context,
-        view,
+        frameView,
         now,
         reducedMotionRef.current,
       );
 
-      if (view.visibility === "hidden" && lastSeenRoom !== null) {
+      if (frameView.visibility === "hidden" && lastSeenRoom !== null) {
         const center = centerOf(lastSeenRoom);
         context.fillStyle = "rgba(255,255,255,.92)";
         context.beginPath();
@@ -1282,10 +1294,19 @@ export function HouseCanvas({
     };
     animationFrame = window.requestAnimationFrame(draw);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [artLoad, encounter, groundMarker, lastSeenRoom, view]);
+  }, [artLoad, encounter, getView, groundMarker, lastSeenRoom]);
 
   const handlePointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (disabled) return;
+    const currentView = getView();
+    const currentEncounter = currentView.activeEncounter;
+    const currentFoodBowlTarget = interactionTarget(currentView, "foodBowl");
+    const currentWaterBowlTarget = interactionTarget(currentView, "waterBowl");
+    const currentComputerTarget = interactionTarget(currentView, "computer");
+    const currentPoopTarget = interactionTarget(currentView, "activePoop");
+    const currentBathTarget = interactionTarget(currentView, "bath");
+    const currentDogInteractionTarget = interactionTarget(currentView, "dog");
+    const currentCueInteractionTarget = interactionTarget(currentView, "cue");
     const canvas = canvasRef.current;
     if (!canvas) return;
     const bounds = canvas.getBoundingClientRect();
@@ -1293,11 +1314,11 @@ export function HouseCanvas({
       x: (event.clientX - bounds.left) * (canvas.width / bounds.width),
       y: (event.clientY - bounds.top) * (canvas.height / bounds.height),
     };
-    const currentDogPoint = view.visibility === "seen"
+    const currentDogPoint = currentView.visibility === "seen"
       ? dogPositionRef.current
       : null;
-    const currentCuePoint = encounter
-      ? cuePoint(encounter, currentDogPoint)
+    const currentCuePoint = currentEncounter
+      ? cuePoint(currentEncounter, currentDogPoint)
       : null;
     const computerPoint = spatialPoint(
       WORLD_STATIONS.computer.room,
@@ -1319,12 +1340,12 @@ export function HouseCanvas({
       WORLD_STATIONS.bath.x,
       WORLD_STATIONS.bath.y,
     );
-    const visiblePoopPoint = poopTarget
-      ? targetPoint(poopTarget)
-      : view.activePoop
-      ? view.activePoop.location === "pad"
-        ? spatialPoint(view.activePoop.room, 0.72, 0.82)
-        : spatialPoint(view.activePoop.room, 0.16, 0.86)
+    const visiblePoopPoint = currentPoopTarget
+      ? targetPoint(currentPoopTarget)
+      : currentView.activePoop
+      ? currentView.activePoop.location === "pad"
+        ? spatialPoint(currentView.activePoop.room, 0.72, 0.82)
+        : spatialPoint(currentView.activePoop.room, 0.16, 0.86)
       : null;
     const hits = (target: Point, radius: number) =>
       Math.hypot(point.x - target.x, point.y - target.y) <= radius;
@@ -1344,30 +1365,30 @@ export function HouseCanvas({
     };
 
     if (
-      encounter !== null &&
+      currentEncounter !== null &&
       currentCuePoint !== null &&
       hits(
         { x: currentCuePoint.x, y: currentCuePoint.y - 49 },
         CUE_HIT_RADIUS,
       )
     ) {
-      const cueTarget: GroundMoveTarget = encounter.cue.anchor
+      const cueTarget: GroundMoveTarget = currentEncounter.cue.anchor
         ? {
-          room: encounter.cue.room,
-          x: encounter.cue.anchor.x,
-          y: encounter.cue.anchor.y,
+          room: currentEncounter.cue.room,
+          x: currentEncounter.cue.anchor.x,
+          y: currentEncounter.cue.anchor.y,
         }
-        : view.visibility === "seen" &&
-            view.spatial.room === encounter.cue.room &&
-            view.spatial.x !== null &&
-            view.spatial.y !== null
+        : currentView.visibility === "seen" &&
+            currentView.spatial.room === currentEncounter.cue.room &&
+            currentView.spatial.x !== null &&
+            currentView.spatial.y !== null
         ? {
-          room: encounter.cue.room,
-          x: view.spatial.x,
-            y: view.spatial.y,
+          room: currentEncounter.cue.room,
+          x: currentView.spatial.x,
+          y: currentView.spatial.y,
         }
-        : { room: encounter.cue.room, x: 0.5, y: 0.5 };
-      moveToTarget(cueInteractionTarget, cueTarget);
+        : { room: currentEncounter.cue.room, x: 0.5, y: 0.5 };
+      moveToTarget(currentCueInteractionTarget, cueTarget);
       return;
     }
 
@@ -1377,34 +1398,34 @@ export function HouseCanvas({
         COMPUTER_HIT_RADIUS,
       )
     ) {
-      moveToTarget(computerTarget, { ...WORLD_STATIONS.computer });
+      moveToTarget(currentComputerTarget, { ...WORLD_STATIONS.computer });
       return;
     }
 
     if (hits({ x: foodPoint.x, y: foodPoint.y - 24 }, BOWL_HIT_RADIUS)) {
-      moveToTarget(foodBowlTarget, { ...WORLD_STATIONS.foodBowl });
+      moveToTarget(currentFoodBowlTarget, { ...WORLD_STATIONS.foodBowl });
       return;
     }
 
     if (hits({ x: waterPoint.x, y: waterPoint.y - 24 }, BOWL_HIT_RADIUS)) {
-      moveToTarget(waterBowlTarget, { ...WORLD_STATIONS.waterBowl });
+      moveToTarget(currentWaterBowlTarget, { ...WORLD_STATIONS.waterBowl });
       return;
     }
 
     if (visiblePoopPoint && hits(visiblePoopPoint, POOP_HIT_RADIUS)) {
-      const fallback: GroundMoveTarget = view.activePoop
+      const fallback: GroundMoveTarget = currentView.activePoop
         ? {
-          room: view.activePoop.room,
-          x: view.activePoop.location === "pad" ? 0.72 : 0.16,
-          y: view.activePoop.location === "pad" ? 0.82 : 0.86,
+          room: currentView.activePoop.room,
+          x: currentView.activePoop.location === "pad" ? 0.72 : 0.16,
+          y: currentView.activePoop.location === "pad" ? 0.82 : 0.86,
         }
         : { room: "toilet", x: 0.5, y: 0.5 };
-      moveToTarget(poopTarget, fallback);
+      moveToTarget(currentPoopTarget, fallback);
       return;
     }
 
     if (hits({ x: bathPoint.x, y: bathPoint.y - 18 }, BATH_HIT_RADIUS)) {
-      moveToTarget(bathTarget, { ...WORLD_STATIONS.bath });
+      moveToTarget(currentBathTarget, { ...WORLD_STATIONS.bath });
       return;
     }
 
@@ -1415,19 +1436,19 @@ export function HouseCanvas({
         DOG_HIT_RADIUS,
       )
     ) {
-      const fallback: GroundMoveTarget = view.spatial.room !== null &&
-          view.spatial.x !== null && view.spatial.y !== null
+      const fallback: GroundMoveTarget = currentView.spatial.room !== null &&
+          currentView.spatial.x !== null && currentView.spatial.y !== null
         ? {
-          room: view.spatial.room,
-          x: view.spatial.x,
-          y: view.spatial.y,
+          room: currentView.spatial.room,
+          x: currentView.spatial.x,
+          y: currentView.spatial.y,
         }
         : {
-          room: view.ownerSpatial.room,
-          x: view.ownerSpatial.x,
-          y: view.ownerSpatial.y,
+          room: currentView.ownerSpatial.room,
+          x: currentView.ownerSpatial.x,
+          y: currentView.ownerSpatial.y,
         };
-      moveToTarget(dogInteractionTarget, fallback);
+      moveToTarget(currentDogInteractionTarget, fallback);
       return;
     }
     const target = groundTargetAt(point);
@@ -1540,3 +1561,5 @@ export function HouseCanvas({
     </section>
   );
 }
+
+export const HouseCanvas = memo(HouseCanvasComponent);
