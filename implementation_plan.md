@@ -1,5 +1,21 @@
 # WEBGAMES Portal Plan
 
+## 기다려멍 — 튜토리얼 오버레이
+
+- [x] 독립 localStorage 키 기반 최초 자동 표시와 토글 상태
+- [x] 6페이지 dialog, 페이지 이동, Esc, 포커스 트랩·복귀
+- [x] 별도 tutorialOpen 상태를 일시정지와 직접 입력 차단에 연결
+- [x] TopBar 도움말 토글과 반응형 오버레이 스타일
+- [ ] 지정 계약·TypeScript 커맨드 검증
+
+## 기다려멍 Phase B2 — 조작감
+
+- [x] B2a — 64ms 입력 폴링을 실제 경과시간 기반 rAF 루프로 전환
+- [x] B2b — non-repeat 이동 keydown에 기준 1프레임 즉시 이동 적용
+- [x] B2c — 보호자 위치 트윈을 96ms에서 16ms로 단축
+- [x] B2d — 직진·슬라이드 실패 시 강아지 원자적 재배치 후 직진 재시도
+- [ ] B2 검수 — 지정 계약·TypeScript·B1 회귀 커맨드 독립 실행
+
 ## Goal
 
 여러 웹게임을 모아 광고 수익을 내는 포털. `/` 홈에서 게임을 고르고 `/games/<id>/`에서 플레이한다 (Vite 멀티엔트리 MPA).
@@ -106,6 +122,12 @@
 
 # 기다려, 멍! — 동적 훈련게임 개편 계획
 
+## Phase B1 — 미션 자동 발생
+
+- [x] sim의 자동 발생 로직을 부작용 없는 `suggestAutoEncounter()` 조회로 축소
+- [x] App의 1초 live 루프에 결정론적 비영속 쿨다운과 발생 실행 연결
+- [ ] 수용 기준 3개 커맨드 검증(환경 `SecItemCopyMatching failed -50`로 차단)
+
 ## Goal
 
 고정된 강아지를 오래 지켜보는 화면을, 강아지가 집 안을 자율적으로 탐색하고 플레이어가 몸짓 신호를 포착해 `명령 → 반응 → 정확한 보상`을 연결하는 생활 훈련게임으로 개편한다.
@@ -140,6 +162,19 @@
 - 중요 신호에서 자동 1x 전환과 상황 카드가 작동하며, 올바른 보상과 잘못된 보상의 귀속을 즉시 구분해 안내한다.
 - `render_game_to_text`는 현재 보이는 위치·목표·행동·기회 상태를 제공하고 hidden 정보는 노출하지 않는다.
 - `npm run build`, 기다려멍 계약 검사, 브라우저 실플레이 검증이 실제 대상을 실행해 통과하고 콘솔/page error가 없다.
+
+---
+
+# 기다려멍 재기획 1단계 — 손맛과 목표
+
+- [x] D1 — 보호자/강아지 스프라이트 축소 및 새 시각 경계 충돌 상수 `90 / 112 / 8` 적용
+- [x] D2 — `drawOwner` 방향·바운스·그림자 펄스·기울기·호흡과 reduced-motion 처리
+- [x] D3 — App 계층 행동 감지, `waitdog_basics_v1` 저장, 일정·미션·체크리스트 패널
+- [x] 720p 계약 정적 확인: 상단바 구조와 `.canvas-stage calc(100dvh - 260px)` 보존
+- [ ] 수용 기준 검사 — 첫 계약 명령이 `SecItemCopyMatching failed -50`/exit 139로 2회 종료되어 검증 미실행
+
+고정 범위: `balance.ts`, `HouseCanvas.tsx`, `App.tsx`, `waitdog.css`와 기록 문서만 수정한다.
+`campaign.ts`, 스냅샷/프로필 스키마, sim 이벤트·필드, 스크립트, 상호작용 반경은 변경하지 않는다.
 
 ---
 
@@ -311,6 +346,40 @@
 - v3 저장 스키마와 클라우드 envelope를 변경하지 않는다. 직접 입력의 held 상태는 저장하지 않는다.
 - 새 외부 의존성과 새 이미지 자산은 추가하지 않는다.
 
+---
+
+# Waitdog F — 새 모션 에셋 연결 (2026-07-30)
+
+## Goal
+
+제공된 `waitdog-owner-v1.webp`와 `waitdog-dog-c-v1.webp`를 기존 Canvas 렌더러에 연결해 보호자 프레임 애니메이션과 강아지 sit/sniff 모션을 추가한다.
+
+## Work Packages
+
+- [x] F-0 — 기준 HEAD·미커밋 이미지 2개·스펙·관련 로더 구조 확인
+- [x] F-1 — `artAssets.ts`에 owner/dogC 키와 owner/sit/sniff 모션 계약 추가
+- [x] F-2 — `drawOwner`를 owner 시트 프레임 렌더링으로 교체하고 절차적 효과 제거
+- [x] F-3 — `dogMotionFor` 우선순위 매핑 확장 및 이미지 로더 초기화 보완
+- [ ] F-4 — 수용 기준 3개 커맨드 실행 및 독립 R1 검수 (첫 명령이 지정 환경 오류로 2회 종료되어 검증 미실행)
+
+## Fixed Decisions
+
+- 수정 범위는 `src/waitdog/constants/artAssets.ts`, `src/waitdog/components/HouseCanvas.tsx`, `implementation_plan.md`, `progress.md`뿐이다.
+- 새 이미지를 생성·수정하지 않으며 제공된 미추적 WebP 2개를 그대로 사용한다.
+- `balance.ts`, `scripts/*`, `campaign.ts`, `entities.sort`, 720p 레이아웃 규칙은 변경하지 않는다.
+- 보호자 렌더 높이 110px과 그림자 반지름 21/8을 유지한다.
+- 보호자의 기존 바운스·기울기·정지 호흡·그림자 펄스는 제거하고 방향 반전만 유지한다.
+- 브라우저 실측은 스펙에 따라 운용자가 수행하며, 구현 검증은 지정된 수용 기준 3개 커맨드로 한다.
+
+## Waitdog C1~C3 — 2026-07-28
+
+- [x] C1 — 방 이름을 생활방/부엌/화장실로 통일하고 종성 규칙으로 `로`/`으로`를 선택
+- [x] C2 — 밥·물 상태 HUD 칩, 빈 상태 경고색과 `aria-live="polite"` 추가
+- [x] C2 — 데스크톱 HUD 후반 오버라이드를 3열로 맞춰 상단바 한 줄 유지
+- [x] C3 — heard 배지를 각 방의 가로 중앙·높이 78% 지점으로 이동
+- [ ] 수용 기준 검증 — 첫 커맨드가 `SecItemCopyMatching failed -50`/exit 139로
+      1회 재시도 후에도 실패해 환경 차단. 지침에 따라 나머지 2개는 미실행
+
 ## Definition of Done
 
 - fresh profile에서 30초 안에 키보드 또는 마우스로 보호자를 움직여 첫 미션을 완료할 수 있다.
@@ -409,3 +478,45 @@ Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, �
 - 실제 `STATIC_GAMES` 소유 지점은 `plugins/staticGamesPlugin.ts`이므로 여기에 `{ id: 'dadadak', dir: 'games/dadadak/out', exclude: [] }`를 추가한다.
 - `npm install`, Next/Vite build, git commit/push, Firestore 배포는 실행하지 않는다.
 - 다른 게임과 포털 홈 컴포넌트, 게임 규칙·CPS 계산식은 수정하지 않는다.
+## Waitdog Phase A — 2026-07-27
+
+- [x] Read specA, repository state, and applicable instructions.
+- [x] Confirm approved file scope and snapshot/determinism priorities.
+- [x] Inspect existing encounter state, collision helpers, and canvas visibility rendering.
+- [x] Implement A2 safe dog displacement at blocked door entries.
+- [x] Implement A3 heard-room indicator with reduced-motion behavior.
+- [x] Run all three acceptance commands and inspect their actual results.
+- [ ] A1 encounter auto-start — **deferred to Phase B**. Auto-spawning from `tick()` is
+      structurally impossible: `advanceMinutes()` returns early while an encounter is active,
+      so the spawn freezes digestion/poop/decision and deadlocks the contract suite.
+      The scoring helper is kept but its call site is disabled (`TODO(A1)`); the trigger must
+      move to the App layer, which owns the pause model.
+# 기다려멍 R2a — 렌더 소유권 이전
+
+- [x] 허용목록 기반 UI 서명과 프레임/이산 view 커밋 경로 분리
+- [x] HouseCanvas rAF의 최신 `getView()` 조회 및 `view` 효과 의존성 제거
+- [x] HouseCanvas, WorldActionBar, TopBar memo 및 App 콜백 안정화
+- [x] 개발 전용 `window.__waitdogRenderCount` 추가
+- [ ] 수용 커맨드 검증 — `SecItemCopyMatching failed -50`가 최초/1회 재시도 모두 발생해 환경 차단
+
+고정 범위: 렌더 소유권만 이전하며 좌표, 카메라, 이동, 충돌, 게임 규칙과 화면은 변경하지 않는다.
+
+# 기다려멍 R4 — 이동 조작감 수정
+
+- [x] 기준 HEAD/clean 상태와 승인된 specR4 계약 확인
+- [x] `balance.ts`를 200px/s 직접 이동과 40×28, p=2 발 타원으로 갱신
+- [x] 키보드·가상스틱 및 클릭 이동을 방별 픽셀 공간 등속으로 변경
+- [x] 모션 계약의 기존 정규화 거리/스프라이트 비겹침 단언을 새 설계로 교체
+- [x] 축/방/속도/대각선/강아지 접근/RangeError 핵심 수치 단언 6개 추가
+- [x] 대각선 입력의 화면 각도 보정(63.4도 → 45도) 및 누적 이동 계약 정정
+- [x] Waitdog 390+motion, Forge 141, TypeScript, production build 수용 커맨드 검증
+      — 실행자(Codex) 환경에서는 Node keychain 오류(exit 139)로 차단됐고,
+      운용자(Claude)가 정상 환경에서 직접 실행해 확인:
+      `SIM CONTRACT OK 390` / `MOTION CONTRACT OK 444` /
+      `Contract verification complete: 141 assertions` / tsc 0 오류 / 빌드 성공.
+      추가로 상수 퍼터브 3회로 새 단언의 실효성을 반증 검증했다.
+
+고정 범위: `balance.ts`, `waitdogSim.ts`, 필요 시 `economy.ts`,
+`waitdog-motion-contract.ts`와 기록 파일만 변경한다. door transition, 저장 v3,
+RNG 소비, 기존 slide 구현은 변경하지 않으며 `waitdog-sim-contract.ts`,
+`App.tsx`, `HouseCanvas.tsx`는 수정하지 않는다.

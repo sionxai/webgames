@@ -1,5 +1,73 @@
 Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시스템과 전투 이팩트등 ui ux가 너무 엉성해. 이미지 생성을 이용해서 디자인을 멋지게 디벨롭 해줘.
 
+## 2026-07-30 — 기다려멍 새 모션 에셋 연결 F
+
+- 기준 HEAD `f7d3f413f7e09173e7e8c640b0e5978f8befa3bf`; 시작 시 사용자 제공 미추적 이미지 `waitdog-owner-v1.webp`, `waitdog-dog-c-v1.webp`만 존재.
+- 스펙과 관련 렌더러/로더 정찰 완료. `ArtImages` 타입과 로더 순회는 에셋 키를 자동 추종하지만 초기 `images` 객체에는 신규 키를 수동 추가해야 함.
+- owner/dogC 모션 정의, 보호자 프레임 렌더링, dogMotionFor 매핑, 초기 이미지 객체의 신규 키를 연결함.
+- 첫 수용 명령은 `ERROR: SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 결과였음. 스펙에 따라 나머지 두 커맨드는 실행하지 않아 전체 검증은 미실행.
+- TODO: 정상 Node/npm 환경에서 지정 수용 기준 3개 커맨드와 운용자 브라우저 실측을 수행한다.
+
+## 2026-07-30 — 기다려멍 재기획 1단계 D1/D2/D3
+
+- D1 재작업에서 보호자 높이를 110px, 강아지 폭을 85px로 축소하고 그림자·강아지 클릭/표시 오프셋을 비례 조정했으며 충돌 footprint를 `90 / 112 / 8`로 갱신했다.
+- 기존 D1의 발밑 기준 `74 / 26 / 2` 방식은 이번 스프라이트 축소 방식으로 대체했다. 기존 scale·상호작용 반경은 계속 보존한다.
+- D2 `drawOwner`에 이동 방향 flip, 2.5걸음/초·3.5px 바운스, `rx 21±2px` 그림자, 최대 2도 기울기, 정지 1px 호흡을 추가했다. reduced-motion은 방향 전환만 유지한다.
+- D3 App 계층의 성공 결과만으로 이동/E 상호작용/돌봄P 증가/밥·물 액션/업무 진행을 감지한다. 정확히 5개 boolean을 `waitdog_basics_v1`에 저장하며 저장 실패 시 체크리스트만 숨긴다.
+- 목표·체크리스트 패널은 하우스 캔버스와 기존 액션바 사이에 배치했다. 기존 TopBar 구조와 `.canvas-stage`의 `calc(100dvh - 260px)` 규칙은 수정하지 않았다.
+- D1 재작업 검증에서 첫 계약 명령은 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. `npm run test:contract`와 `npx tsc --noEmit`은 지침에 따라 미실행이다.
+- 완료 미션 수는 canonical economy ledger에서 현재 Day의 `careReward` encounter entry 개수를 계산하므로 같은 날 새로고침 뒤에도 복원된다.
+
+## 2026-07-27 — 기다려멍 튜토리얼 오버레이
+
+- 사용자 승인 범위: `TutorialOverlay.tsx`, `App.tsx`, `TopBar.tsx`, `waitdog.css`, `implementation_plan.md`, `progress.md`.
+- `waitdog_tutorial_v1` 독립 키와 on/off 값으로 최초 자동 표시 및 도움말 토글을 구현했다. 저장 접근 실패 시 해당 세션은 disabled/closed로 유지한다.
+- `tutorialOpen`을 surface 타입과 분리하고 최우선 일시정지 사유, 키보드/직접 조작 차단에 연결했다. 열릴 때 `clearDirectInput()`으로 held key를 제거한다.
+- 6페이지 지정 문구, 이전/다음/시작하기/닫기, Esc, focus trap·복귀, dialog ARIA를 구현했다.
+- `npx tsc --noEmit`은 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. 나머지 npm/npx 검증은 실행하지 않았다.
+- Checker 재작업: 튜토리얼 저장 초기화를 렌더 밖 mount effect로 옮기고 StrictMode 재실행 가드를 추가했다. App이 Esc 닫기를 단독 소유하며 keydown 최우선 차단하고, work hold/바닥 이동/가상 이동/world action/nearby interaction 경계에도 tutorial guard를 추가했다.
+- TODO: 운용자가 정상 Node/npm 환경에서 지정 수용 기준 3개 커맨드와 브라우저 실측을 수행한다.
+
+## 2026-07-27 — 기다려멍 Phase B3
+
+- 데스크톱 `.lifestyle-page`의 기본 하단 여백을 제거하고, 후행 v5 `@media (max-width: 899px)`에도 `.lifestyle-page:has(.direct-controls) { padding-bottom: 214px; }`를 명시해 최종 cascade에서 모바일 스틱 여백을 보존했다.
+- `.canvas-stage`의 기존 `calc(100dvh - 235px)` 폭 계산에 같은 `max-height`를 추가하고 canvas를 `width: 100%; height: auto; aspect-ratio: 1`로 유지했다.
+- 수용 기준 첫 커맨드는 `SecItemCopyMatching failed -50`/exit 139로 종료됐고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다. 사용자 지시에 따라 나머지 두 커맨드는 실행하지 않고 전체 검증을 미실행으로 반환한다.
+
+## 2026-07-27 — 기다려멍 Phase B1
+
+- `suggestAutoEncounter(excludeId?)`를 순수 조회로 공개하고 App의 기존 1초 live 루프가 실제 시간 진행 뒤 자동 미션을 시작하도록 연결했다.
+- 다음 발생 시각과 직전 종류는 비영속 ref로 관리하며, 설정 seed와 현재 absolute minute에서 60~120분 쿨다운을 파생한다.
+- `git diff --check && npx tsc --noEmit`은 `SecItemCopyMatching failed -50`/exit 139가 발생했고, 지침에 따른 1회 재시도도 같은 환경 오류로 종료됐다.
+- TODO: 운용자가 수용 기준 3개 커맨드를 정상 Node/npm 환경에서 실행하고 브라우저에서 하루 발생 횟수 8~16회를 실측한다.
+
+## 2026-07-27 — 기다려멍 Phase A
+
+- 사용자 승인 범위: `waitdogSim.ts`, `HouseCanvas.tsx`, `balance.ts`, `implementation_plan.md`, `progress.md`만 수정 가능. A1 측정 스크립트는 `/tmp`에만 둔다.
+- 기준 HEAD: `83d6f4d19ca8b44a0d03e6f9aa63615a6f796c47`; 작업 시작 시 추적/미추적 변경 없음.
+- 우선 계약: 스냅샷 스키마 무변경 선호, 기존 상태로 쿨다운 파생을 먼저 검토, 기존 RNG 외 난수 금지.
+- 진행 중: A1/A2/A3 관련 심볼과 계약을 읽기 전용 정찰 중.
+### 결과: A2·A3 완료, A1은 Phase B로 이관
+
+- A2 완료: 문 entry가 강아지 footprint와 겹치면 entry 기준 `safeDogPointNearOwner()`로 강아지를 비키고
+  spatial target/route/activity를 정리한 뒤 overlap을 재검사한다. 안전 지점이 없으면 3개 상태를 모두 원복한다.
+  실측 600회 — `passed=598 blockedByDog=0 dogRoomDesync=0 badRollback=0`.
+- A3 완료: `roomVisibility === "heard"`인 모든 방 중심에 좌표 비노출 “소리 들림” 표시를 그리며
+  reduced-motion에서는 펄스를 고정한다. 로컬 서버 육안 확인 완료.
+  알려진 결함(Phase B 폴리시 대상): 표시가 방 중앙에 그려져 인카운터 말풍선과 겹친다.
+- **A1 이관(미구현)**: `tick()` 안에서 자동 발생시키는 접근은 설계상 불가능. `waitdogSim.ts`의
+  `advanceMinutes()`는 `encounterDirector.active !== null`이면 즉시 return 하므로, tick 이 인카운터를
+  띄우는 순간 이후 모든 advance 가 no-op 이 되어 소화·배변·강아지 판단이 전부 정지한다.
+  실측: 정상은 +200분에 소화 완료·배변 발생, tick 자동발생 적용 시 `digestionComplete: 0` 이고
+  `decision`/`action` 이벤트가 사라져 계약이 "expected a causal poop event"로 교착.
+  → `startAutomaticEncounterIfNeeded()` 호출을 `TODO(A1)` 주석과 함께 비활성화(점수 로직은 재사용 위해 보존).
+  → 자동 발생 트리거는 일시정지 모델을 소유한 App 계층으로 옮겨 Phase B 에서 완료한다.
+- 운용 메모: 시뮬을 인카운터 너머로 진행시키는 측정 하네스는 반드시 인카운터를 실제로 해소해야 한다
+  (`scripts/waitdog-contract.ts`의 `solveActiveEncounter` 방식). 해소하지 않으면 "활성 상태의 분"을 세게 되어
+  발생 건수를 크게 과대측정한다 — 1차 측정의 "12회"가 이 오류였다.
+- 최종 검증(운용자 직접 실행): `CONTRACT OK 557 assertions`, `Contract verification complete: 141 assertions`,
+  `tsc --noEmit` 오류 0개(선언만 되어 있고 미설치였던 `firebase` 설치 후 기준선 13개도 해소).
+
 ## 2026-07-22
 
 - 사용자 승인 완료.
@@ -186,3 +254,65 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
 - 실플레이 검증: fresh profile에서 첫 신호 접근 → `E` 관찰 → 원인 공개 → 대응 선택 → 칭찬 보상 → 결과 닫기를 키보드·마우스로 완료했다. 컴퓨터 `E` 착석 후 `R` 홀드/해제로 0→50% 진행·강아지 개입·진행률 보존·50→100% 재개와 급여 1회 지급을 확인했고, 사료·물그릇도 이동 → `E` → 선택/채우기로 재고·수치·월드 표시가 함께 바뀌는 것을 확인했다.
 - 반응형·시각 검증: 공식 웹게임 Playwright 클라이언트 3회와 1280×720·390×844·480×1000 표적 브라우저 플레이에서 캐릭터 분리, 빈 그릇 표시, 월드 액션 바, 모바일 조작부, 가로 오버플로 0, console/page error 0을 확인했다.
 - 독립 R2 Checker는 기준 HEAD `7a08eddb211ceb8dea932f1b9b1b2d8f948b8ed0` 대비 현재 산출물을 타입·빌드·557개 계약과 경계 사례로 재검수해 `PASS`로 판정했다. Checker 환경의 모바일 Chromium 재실행은 불가했으나 root의 실제 390/480px 브라우저 증거와 공식 캡처를 교차 확인했다.
+
+## 2026-07-27 — 기다려멍 Phase B2 구현
+
+- 64ms 직접 입력 폴링을 rAF로 전환하고 non-repeat 이동 keydown에 기준 1프레임 즉시 이동을 적용했다.
+- 보호자 트윈을 16ms로 단축했으며 강아지 트윈은 유지했다.
+- 보호자 이동을 직진, 슬라이드, 강아지 재배치 후 직진 순서로 처리하고 재시도 실패 시 보호자·강아지 공간 상태와 `dogRoom`을 원복하도록 했다.
+- 최종 수용 커맨드 실행과 판정은 독립 Checker 단계에 남겼다.
+
+## 2026-07-28 — 기다려멍 C1~C3
+
+- C1: 플레이어 노출 방 이름을 생활방/부엌/화장실로 통일하고, 마지막 한글 음절의 종성 인덱스로 이동 조사를 선택하도록 변경했다.
+- C2: 돈·돌봄 옆에 밥·물 상태 칩을 추가했다. 빈 상태는 경고색과 `aria-live="polite"`를 사용하며 후반 HUD 레이아웃도 3열로 맞췄다.
+- C3: heard-room 배지를 방 중앙에서 방 높이 78%의 아래쪽으로 옮겼다. seen 조기 반환, heard 전용 표시, reduced-motion 처리와 hidden 표시는 유지했다.
+- 검증 환경 차단: 첫 수용 커맨드는 최초와 정확히 1회 재시도 모두 exit 139,
+  마지막 줄 `ERROR: SecItemCopyMatching failed -50`. 지침에 따라
+  `npm run test:contract`와 `npx tsc --noEmit`은 실행하지 않았다.
+- TODO: 정상 Node/npm 환경에서 수용 기준 3개 커맨드를 다시 실행한다.
+## 2026-07-31 — 기다려멍 R2a 렌더 소유권 이전
+
+- `viewRef`는 프레임마다 최신 view를 보유하고, React `view` state는 명시적 UI 서명이 바뀔 때만 갱신하도록 분리했다. 좌표·target·`t`·`absoluteMinute`는 서명에서 제외했다.
+- HouseCanvas는 안정된 `getView()`로 rAF마다 최신 프레임 데이터를 읽고, 그리기 효과 의존성에서 `view`를 제거했다.
+- Checker 재작업에서 프레임 helper를 ref 갱신 전용으로 축소하고, 별도 경계 helper만 UI 서명을 비교해 이산 commit으로 넘기도록 소유권을 분명히 했다. Canvas 포인터 hit-test와 배변 target도 `getView()`의 최신 view를 사용한다.
+- HouseCanvas, WorldActionBar, TopBar를 memo 처리하고 App에서 전달하는 관련 콜백을 `useCallback`으로 안정화했다. 개발 모드 렌더 카운터도 추가했다.
+- 검증 환경 차단: `npx tsc --noEmit`이 최초와 정확히 1회 재시도 모두 exit 139, 마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 종료했다. 지침에 따라 나머지 npm 검증은 실행하지 않았다.
+
+## 2026-07-31 — 기다려멍 R4 이동 조작감
+
+- Original prompt: specR4에 따라 보호자 이동을 방/축/대각선에 무관한 200px/s로 바꾸고, 발 충돌을 40×28px p=2 타원으로 축소하며 핵심 수치 계약 6개를 추가한다.
+- 기준 HEAD `5b3f90be72cb872e28261ac959f4f57d710b8ca0`, 시작 작업트리 clean.
+- 승인 범위와 금지 파일을 확인했으며, 기존 `allowSlide`/`ownerDogSlideTarget`과 door transition은 그대로 유지한다.
+- 구현: 직접/클릭 이동을 방별 픽셀 공간에서 정규화하고 200px/s로 환산했다.
+  클릭 도착 판정도 픽셀 거리로 바꿨으며 발 충돌을 40×28px p=2 타원으로 축소했다.
+- 계약: 스프라이트 비겹침 단언을 HouseCanvas와 같은 footY 오름차순 깊이 정렬
+  단언으로 교체하고, 픽셀 step 관계와 핵심 수치 단언 6개를 추가했다.
+- 관찰: native esbuild로 번들한 계약을 Deno에서 실행해
+  `SIM CONTRACT OK 390 assertions`, `MOTION CONTRACT OK 350 assertions`를 확인했다.
+  느려진 속도에 맞춰 기존 문/충돌 시나리오의 반복 한도와 시작점을 조정했다.
+- 환경 차단: `npm run test:waitdog`, `npm run test:contract`, `npx tsc --noEmit`,
+  `npm run build`는 모두 exit 139, 마지막 줄 `ERROR: SecItemCopyMatching failed -50`.
+  표적 모션 커맨드는 같은 서명으로 정확히 1회 재시도한 뒤 중단했다.
+- 대체 정적 확인: native esbuild 모션/sim/브라우저 번들 성공, `git diff --check` 성공.
+- Checker 재작업: 핵심 #1~#4는 방향 반전 없이 매 호출 전 동일 중앙 snapshot을
+  복원하는 60개 독립 1-frame trial의 실제 이동량만 누적한다. HouseCanvas 소스를
+  read-only로 로드해 production `entities.sort((first, second) =>
+  first.footY - second.footY)` 존재를 직접 단언하고 comparator 표본 순서도 별도
+  단언한다. 대체 재실행은 `MOTION CONTRACT OK 352 assertions`,
+  `SIM CONTRACT OK 390 assertions`.
+- TODO: 정상 Node/npm 환경에서 네 수용 커맨드를 재실행한다.
+
+## 2026-07-31 — 기다려멍 R4 대각선 방향·누적 계약 재작업
+
+- `moveOwnerBy`의 키보드/가상 스틱 입력을 화면 공간에서 정규화해, 방 종횡비와
+  무관하게 대각선 화면 각도가 45도가 되도록 수정했다. 클릭 이동 경로
+  `moveOwnerFixedStepToward`, 문 전환, 슬라이드 처리는 변경하지 않았다.
+- 생활방 `(1,1)`, `(1,-1)`, `(-1,1)`과 부엌 `(1,1)`의 1프레임 픽셀 변위에서
+  `|dx|`와 `|dy|`의 차가 0.01px 이하인지 단언했다.
+- 누적 이동 검증은 한 번 복원한 뒤 30프레임을 연속 이동하며 모든 프레임 성공과
+  총 100px 이동을 검사하도록 바꿨다.
+- 공식 `npm run test:waitdog`는 재시도 없이 exit 139,
+  마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 중단했다.
+- 네이티브 esbuild + Deno 대체 실행 결과:
+  `MOTION CONTRACT OK 444 assertions`, `SIM CONTRACT OK 390 assertions`.

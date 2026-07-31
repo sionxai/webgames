@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { RoomId } from "../types";
 
 export type GameSpeed = 0 | 1 | 2 | 4;
@@ -10,10 +11,14 @@ export interface TopBarProps {
   ownerMoving: boolean;
   money: number;
   carePoints: number;
+  foodLevel: number;
+  waterLevel: number;
   salaryBonusPercent: number;
   pausedReason: string | null;
   ended: boolean;
+  tutorialEnabled: boolean;
   onSpeedChange: (speed: GameSpeed) => void;
+  onTutorialToggle: () => void;
 }
 
 const ROOM_NAMES: Record<RoomId, string> = {
@@ -35,7 +40,7 @@ const formatClock = (minuteOfDay: number): string => {
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
-export function TopBar({
+function TopBarComponent({
   day,
   minuteOfDay,
   speed,
@@ -43,13 +48,25 @@ export function TopBar({
   ownerMoving,
   money,
   carePoints,
+  foodLevel,
+  waterLevel,
   salaryBonusPercent,
   pausedReason,
   ended,
+  tutorialEnabled,
   onSpeedChange,
+  onTutorialToggle,
 }: TopBarProps) {
   const ownerState = pausedReason ??
     (ownerMoving ? "이동 중" : `${ROOM_NAMES[ownerRoom]}에 머무는 중`);
+  const bowlsEmpty = foodLevel === 0 || waterLevel === 0;
+  const bowlStatus = foodLevel === 0 && waterLevel === 0
+    ? "밥·물 비었음"
+    : foodLevel === 0
+    ? "밥 비었음"
+    : waterLevel === 0
+    ? "물 비었음"
+    : "밥·물 확인";
 
   return (
     <header className="top-bar lifestyle-topbar">
@@ -75,6 +92,13 @@ export function TopBar({
         <span>
           <small>돌봄</small>
           <strong>{carePoints}P</strong>
+        </span>
+        <span
+          className={bowlsEmpty ? "bowl-status is-warning" : "bowl-status"}
+          aria-live="polite"
+        >
+          <small>그릇</small>
+          <strong>{bowlStatus}</strong>
         </span>
       </div>
 
@@ -105,6 +129,14 @@ export function TopBar({
       </div>
 
       <div className="speed-control" role="group" aria-label="게임 배속">
+        <button
+          className="tutorial-toggle"
+          type="button"
+          aria-pressed={tutorialEnabled}
+          onClick={onTutorialToggle}
+        >
+          도움말
+        </button>
         {SPEEDS.map((item) => (
           <button
             className={speed === item.value ? "is-active" : ""}
@@ -123,3 +155,5 @@ export function TopBar({
     </header>
   );
 }
+
+export const TopBar = memo(TopBarComponent);

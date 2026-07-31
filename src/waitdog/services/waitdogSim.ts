@@ -183,6 +183,7 @@ export interface WorldInteractionTarget {
 
 export interface WaitdogWorkView {
   state: "idle" | "moving" | "ready" | "working" | "alert" | "complete";
+  active: boolean;
   progress: number;
   seated: boolean;
   canStart: boolean;
@@ -265,6 +266,7 @@ export interface WaitdogUiSim extends WaitdogSim {
   serialize(): WaitdogSnapshot;
   restore(snapshot: unknown): void;
   ensureFirstEncounter(): LifestyleActionResult;
+  suggestAutoEncounter(excludeId?: EncounterId | null): EncounterId | null;
   startNextEncounter(): LifestyleActionResult;
   startEncounter(encounterId: EncounterId): LifestyleActionResult;
   selectEncounterCause(choiceId: string): LifestyleActionResult;
@@ -1018,7 +1020,10 @@ class WaitdogSimulation implements WaitdogUiSim {
     ) {
       return { ok: false, reason: "후속 보상 선택지가 올바르지 않습니다." };
     }
-    if (!this.encounterInteractionState().ready) {
+    if (
+      !this.encounterInteractionState().ready &&
+      !this.activeEncounterWasAutomaticallyStarted()
+    ) {
       return {
         ok: false,
         reason: "상황 신호 가까이 이동한 뒤 상호작용해 주세요.",
@@ -1136,18 +1141,22 @@ class WaitdogSimulation implements WaitdogUiSim {
     }
     const scaledX = input.dx / componentScale;
     const scaledY = input.dy / componentScale;
-    const magnitude = Math.hypot(scaledX, scaledY);
     const blockedReason = this.directControlBlockedReason();
     if (blockedReason !== null) {
       return { ok: false, reason: blockedReason };
     }
     this.leaveWorkSeatForMovement();
 
+    const travel =
+      BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
+        this.ownerSpatial.room
+      ];
+    const magnitude = Math.hypot(scaledX, scaledY);
+    const stepPx = this.ownerStepDistance(input.elapsedMs);
     const directionX = scaledX / magnitude;
     const directionY = scaledY / magnitude;
-    const step = this.ownerStepDistance(input.elapsedMs);
-    const nextX = this.ownerSpatial.x + directionX * step;
-    const nextY = this.ownerSpatial.y + directionY * step;
+    const nextX = this.ownerSpatial.x + directionX * stepPx / travel.x;
+    const nextY = this.ownerSpatial.y + directionY * stepPx / travel.y;
     const transition = this.directDoorTransition(nextX, nextY, directionX);
     const prior = {
       room: this.ownerSpatial.room,
@@ -1155,7 +1164,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       y: this.ownerSpatial.y,
     };
     const moved = transition === null
-      ? this.tryMoveOwnerWithinRoom(nextX, nextY, false)
+      ? this.tryMoveOwnerWithinRoom(nextX, nextY)
       : this.trySetOwnerPosition(
         transition.room,
         transition.x,
@@ -1921,6 +1930,7 @@ class WaitdogSimulation implements WaitdogUiSim {
       pausedForEncounter: this.encounterDirector.active !== null,
       work: {
         state: workState,
+        active: this.work.active,
         progress: this.work.progress,
         seated: this.work.seated,
         canStart: this.encounterDirector.active === null &&
@@ -2147,8 +2157,21 @@ class WaitdogSimulation implements WaitdogUiSim {
   private commitEncounterTransition(
     transition: EncounterTransition,
     inventoryDelta: Partial<EconomyState["inventory"]> = {},
+    automatic = false,
   ): LifestyleActionResult {
+    const previousActive = this.encounterDirector.active;
     this.encounterDirector = transition.state;
+    if (previousActive === null && this.encounterDirector.active !== null) {
+      this.record("encounterStarted", this.dogRoom, {
+        encounterId: this.encounterDirector.active.encounterId,
+        ...(automatic
+          ? {
+            automatic: true,
+            instanceId: this.encounterDirector.active.instanceId,
+          }
+          : {}),
+      });
+    }
     if (this.encounterDirector.active !== null) {
       this.stopOwnerMovement("responding");
     }
@@ -2156,6 +2179,69 @@ class WaitdogSimulation implements WaitdogUiSim {
       this.applyEncounterCompletion(inventoryDelta);
     }
     return { ok: transition.ok, reason: transition.reason };
+  }
+
+  suggestAutoEncounter(
+    excludeId: EncounterId | null = null,
+  ): EncounterId | null {
+    if (
+      this.encounterDirector.active !== null ||
+      this.work.active ||
+      this.work.alert !== null ||
+      this.minuteOfDay >= BALANCE.TIME.DAY_END
+    ) {
+      return null;
+    }
+
+    const references = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_SCORE_REFERENCE;
+    const candidates: Array<{
+      encounterId: EncounterId;
+      score: number;
+      tiePriority: number;
+    }> = [
+      {
+        encounterId: "potty",
+        score: this.stats.bowelPressure / references.bowelPressure,
+        tiePriority: 0,
+      },
+      {
+        encounterId: "overexcited",
+        score: this.stats.excitement / references.excitement,
+        tiePriority: 1,
+      },
+      {
+        encounterId: "anxiety",
+        score: this.stats.stress / references.stress,
+        tiePriority: 2,
+      },
+      {
+        encounterId: "settle",
+        score: this.stats.boredom / references.boredom,
+        tiePriority: 3,
+      },
+    ];
+    const dominant = candidates
+      .filter((candidate) =>
+        candidate.encounterId !== excludeId &&
+        (candidate.encounterId !== "potty" || this.activePoop === null)
+      )
+      .sort((first, second) =>
+        second.score - first.score ||
+        first.tiePriority - second.tiePriority
+      )[0];
+    return dominant?.encounterId ?? null;
+  }
+
+  private activeEncounterWasAutomaticallyStarted(): boolean {
+    const active = this.encounterDirector.active;
+    if (active === null) return false;
+    for (let index = this.log.length - 1; index >= 0; index -= 1) {
+      const entry = this.log[index];
+      if (entry?.type !== "encounterStarted") continue;
+      return entry.detail.automatic === true &&
+        entry.detail.instanceId === active.instanceId;
+    }
+    return false;
   }
 
   private applyEncounterCompletion(
@@ -2936,7 +3022,13 @@ class WaitdogSimulation implements WaitdogUiSim {
   ): boolean {
     const deltaX = x - this.ownerSpatial.x;
     const deltaY = y - this.ownerSpatial.y;
-    const distance = Math.hypot(deltaX, deltaY);
+    const travel =
+      BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
+        this.ownerSpatial.room
+      ];
+    const pixelDeltaX = deltaX * travel.x;
+    const pixelDeltaY = deltaY * travel.y;
+    const distance = Math.hypot(pixelDeltaX, pixelDeltaY);
     const step = this.ownerStepDistance(elapsedMs);
     if (
       distance <= step
@@ -3297,7 +3389,7 @@ class WaitdogSimulation implements WaitdogUiSim {
         { room: this.ownerSpatial.room, ...transition.exit },
         [{
           id: `door:${room}`,
-          label: `${this.roomLabel(room)}로 이동`,
+          label: `${this.roomLabel(room)}${this.directionalParticle(room)} 이동`,
           enabled: true,
           reason: null,
         }],
@@ -3331,9 +3423,17 @@ class WaitdogSimulation implements WaitdogUiSim {
   }
 
   private roomLabel(room: RoomId): string {
-    if (room === "living") return "거실";
-    if (room === "kitchen") return "주방";
+    if (room === "living") return "생활방";
+    if (room === "kitchen") return "부엌";
     return "화장실";
+  }
+
+  private directionalParticle(room: RoomId): "로" | "으로" {
+    const label = this.roomLabel(room);
+    const code = label.charCodeAt(label.length - 1);
+    if (code < 0xac00 || code > 0xd7a3) return "로";
+    const jong = (code - 0xac00) % 28;
+    return jong === 0 || jong === 8 ? "로" : "으로";
   }
 
   private ownerNearStation(
@@ -3363,14 +3463,36 @@ class WaitdogSimulation implements WaitdogUiSim {
       return { ok: false, reason: blockedReason };
     }
     this.leaveWorkSeatForMovement();
-    if (
-      !this.trySetOwnerPosition(
-        room,
-        transition.entry.x,
-        transition.entry.y,
-      )
-    ) {
-      return { ok: false, reason: "문 건너편에 강아지가 있어 기다려 주세요." };
+    if (!this.trySetOwnerPosition(room, transition.entry.x, transition.entry.y)) {
+      const previousOwnerSpatial = clone(this.ownerSpatial);
+      const previousOwner = clone(this.owner);
+      const previousDogSpatial = clone(this.spatial);
+      this.ownerSpatial.room = room;
+      this.ownerSpatial.x = transition.entry.x;
+      this.ownerSpatial.y = transition.entry.y;
+      this.owner = { ...this.owner, room };
+      const safeDogPoint = this.safeDogPointNearOwner();
+      this.spatial = {
+        ...this.spatial,
+        room: safeDogPoint.room,
+        x: safeDogPoint.x,
+        y: safeDogPoint.y,
+        targetRoom: safeDogPoint.room,
+        targetX: safeDogPoint.x,
+        targetY: safeDogPoint.y,
+        route: [],
+        activity: "idle",
+        moving: false,
+      };
+      if (ownerDogFootprintsOverlap(this.ownerSpatial, this.spatial)) {
+        this.ownerSpatial = previousOwnerSpatial;
+        this.owner = previousOwner;
+        this.spatial = previousDogSpatial;
+        return {
+          ok: false,
+          reason: "문 건너편에 강아지가 있어 기다려 주세요.",
+        };
+      }
     }
     this.finishDirectOwnerStep();
     return { ok: true, reason: null };
@@ -3453,11 +3575,8 @@ class WaitdogSimulation implements WaitdogUiSim {
   private ownerStepDistance(elapsedMs?: number): number {
     const duration = elapsedMs ??
       BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS;
-    return Math.min(
-      BALANCE.SPATIAL.MAX_COORDINATE,
-      BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PER_SECOND *
-        duration / 1000,
-    );
+    return BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND *
+      duration / 1000;
   }
 
   private ownerPositionOverlapsDog(
@@ -3518,24 +3637,14 @@ class WaitdogSimulation implements WaitdogUiSim {
         return true;
       }
     }
-    if (
-      safeX !== this.ownerSpatial.x &&
-      !this.ownerPathIntersectsDog(safeX, this.ownerSpatial.y) &&
-      this.trySetOwnerPosition(
-        this.ownerSpatial.room,
-        safeX,
-        this.ownerSpatial.y,
-      )
-    ) {
-      return true;
-    }
-    return safeY !== this.ownerSpatial.y &&
-      !this.ownerPathIntersectsDog(this.ownerSpatial.x, safeY) &&
-      this.trySetOwnerPosition(
-        this.ownerSpatial.room,
-        this.ownerSpatial.x,
-        safeY,
-      );
+    // B2d 에서 여기에 "강아지를 비켜나게 한 뒤 재시도" 단계를 뒀으나 제거했다.
+    // 그건 충돌 영역이 발밑이 아니라 스프라이트 크기로 잡혀(통행금지 폭 248px >
+    // 부엌 폭 233px) 보호자가 갇히던 것을 우회하려는 것이었다. D1 에서 충돌을
+    // 발밑 그림자 기준(80 x 56, 타원)으로 바로잡아 그냥 돌아갈 수 있게 됐으므로
+    // 우회로가 필요 없다. 또 걸어가서 강아지를 밀어내는 것은 설계 원칙에 어긋난다
+    // (계약 C5: 직접 이동은 강아지를 움직이지 않는다).
+    // 문 통과(moveOwnerThroughDoor)의 비키기는 진입점이 고정돼 대안이 없으므로 유지한다.
+    return false;
   }
 
   private ownerDogSlideTarget(

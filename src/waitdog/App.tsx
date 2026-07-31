@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BottomNav, type LifestyleSurface } from "./components/BottomNav";
 import { CampaignEnd } from "./components/CampaignEnd";
 import { DayReview } from "./components/DayReview";
@@ -13,6 +13,7 @@ import {
 import { LifestyleDialog } from "./components/LifestyleDialog";
 import { MorningPlan } from "./components/MorningPlan";
 import { TopBar, type GameSpeed } from "./components/TopBar";
+import { TutorialOverlay } from "./components/TutorialOverlay";
 import {
   WorldActionBar,
   type WorldActionTarget,
@@ -44,10 +45,13 @@ import {
   type WorldInteractionTarget,
   type WorldTargetId,
 } from "./services/waitdogSim";
+import { BALANCE } from "./constants/balance";
+import { createRng } from "./core/rng";
 import type {
   BarrierItemId,
   CatalogCategory,
   CatalogItemId,
+  EncounterId,
   LifestyleActionResult,
   PadItemId,
   RoomId,
@@ -75,10 +79,59 @@ const STORAGE_LOAD_MESSAGE =
 const STORAGE_SAVE_MESSAGE =
   "저장 공간에 기록하지 못했습니다. 현재 화면의 진행은 계속됩니다.";
 const WAITDOG_LOCAL_SAVED_AT_KEY = "portal_cloud_save_local_updated_at_waitdog";
+const WAITDOG_TUTORIAL_KEY = "waitdog_tutorial_v1";
+const WAITDOG_BASICS_KEY = "waitdog_basics_v1";
 const waitdogCloudSave = createCloudSave("waitdog", 2);
 const waitdogLocalExistedAtStartup =
   typeof window !== "undefined" &&
   window.localStorage.getItem(WAITDOG_PROFILE_KEY) !== null;
+
+const viewUiSignature = (view: WaitdogUiView): string => {
+  const encounter = view.activeEncounter;
+  return [
+    view.day,
+    view.minuteOfDay,
+    view.blocked ? 1 : 0,
+    view.pausedForEncounter ? 1 : 0,
+    view.owner.focusLocked ? 1 : 0,
+    view.visibility,
+    view.ownerSpatial.room,
+    view.ownerSpatial.moving ? 1 : 0,
+    view.economy.money,
+    view.economy.carePoints,
+    view.economy.salaryBonusPercent,
+    view.environmentPlacements.foodBowl.level,
+    view.environmentPlacements.waterBowl.level,
+    view.work.state,
+    Math.round(view.work.progress),
+    view.work.seated ? 1 : 0,
+    view.work.alert === null ? 0 : 1,
+    encounter?.id ?? "",
+    encounter?.stage ?? "",
+    encounter?.kind ?? "",
+    encounter?.causeChoices.map((choice) => choice.id).join(",") ?? "",
+    encounter?.responseChoices.map((choice) => choice.id).join(",") ?? "",
+    encounter?.reinforcementChoices.map((choice) => choice.id).join(",") ?? "",
+    view.interaction.nearbyTarget ?? "",
+    view.interaction.contextActions
+      .map((action) => `${action.id}:${action.enabled ? 1 : 0}`)
+      .join(","),
+    view.interaction.encounterReady ? 1 : 0,
+    view.interaction.directControlEnabled ? 1 : 0,
+    view.roomVisibility.living,
+    view.roomVisibility.kitchen,
+    view.roomVisibility.toilet,
+    view.activePoop === null ? 0 : 1,
+  ].join("|");
+};
+
+const autoEncounterCooldown = (seed: number, absoluteMinute: number): number => {
+  const cooldown = BALANCE.LIFESTYLE.ENCOUNTER.AUTO_COOLDOWN_MINUTES;
+  return createRng((seed ^ absoluteMinute) >>> 0).integer(
+    cooldown.MIN,
+    cooldown.MAX,
+  );
+};
 
 interface BootstrapState {
   sim: WaitdogUiSim;
@@ -107,7 +160,63 @@ interface DirectInputActions {
   closeSurface: () => void;
 }
 
-const DIRECT_CONTROL_STEP_MS = 64;
+interface BasicsChecklist {
+  moved: boolean;
+  interacted: boolean;
+  mission: boolean;
+  bowl: boolean;
+  work: boolean;
+}
+
+const EMPTY_BASICS: BasicsChecklist = {
+  moved: false,
+  interacted: false,
+  mission: false,
+  bowl: false,
+  work: false,
+};
+
+const isBasicsChecklist = (value: unknown): value is BasicsChecklist => {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  return keys.length === 5 &&
+    keys.every((key) => key in EMPTY_BASICS) &&
+    Object.keys(EMPTY_BASICS).every((key) =>
+      typeof record[key] === "boolean"
+    );
+};
+
+const loadBasics = (): {
+  enabled: boolean;
+  checklist: BasicsChecklist;
+} => {
+  if (typeof window === "undefined") {
+    return { enabled: false, checklist: EMPTY_BASICS };
+  }
+  try {
+    const stored = window.localStorage.getItem(WAITDOG_BASICS_KEY);
+    if (stored === null) {
+      window.localStorage.setItem(
+        WAITDOG_BASICS_KEY,
+        JSON.stringify(EMPTY_BASICS),
+      );
+      return { enabled: true, checklist: EMPTY_BASICS };
+    }
+    const parsed: unknown = JSON.parse(stored);
+    return isBasicsChecklist(parsed)
+      ? { enabled: true, checklist: parsed }
+      : { enabled: false, checklist: EMPTY_BASICS };
+  } catch {
+    return { enabled: false, checklist: EMPTY_BASICS };
+  }
+};
+
+const formatScheduleMinute = (minute: number): string =>
+  `${String(Math.floor(minute / 60)).padStart(2, "0")}:${
+    String(minute % 60).padStart(2, "0")
+  }`;
+
 const MIN_INPUT_DELTA_MS = 16;
 const MAX_INPUT_DELTA_MS = 250;
 const PERSISTENCE_TRAILING_MS = 240;
@@ -263,7 +372,9 @@ const surfacePauseLabel = (surface: LifestyleSurface): string => {
 const blockedPauseReason = (
   currentView: WaitdogUiView,
   surface: LifestyleSurface | null,
+  tutorialOpen: boolean,
 ): string | null => {
+  if (tutorialOpen) return "튜토리얼 열림";
   if (currentView.activeEncounter !== null) return "미션 응답 대기";
   if (currentView.work.alert !== null) return "업무 알림 응답 대기";
   if (surface !== null) return surfacePauseLabel(surface);
@@ -309,8 +420,8 @@ const placementFor = (
 };
 
 const roomLabel = (room: RoomId): string => {
-  if (room === "living") return "거실";
-  if (room === "kitchen") return "주방";
+  if (room === "living") return "생활방";
+  if (room === "kitchen") return "부엌";
   return "화장실";
 };
 
@@ -376,6 +487,12 @@ const nearbyWorldTarget = (
 };
 
 export default function App() {
+  // 개발 모드 렌더 계측. 프로젝트에 vite/client 타입이 없어 import.meta 를 좁혀서 읽는다.
+  if ((import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV) {
+    (window as unknown as { __waitdogRenderCount?: number }).__waitdogRenderCount =
+      ((window as unknown as { __waitdogRenderCount?: number })
+        .__waitdogRenderCount ?? 0) + 1;
+  }
   const bootstrapRef = useRef<BootstrapState | null>(null);
   if (bootstrapRef.current === null) bootstrapRef.current = bootstrap();
   const initial = bootstrapRef.current;
@@ -393,6 +510,17 @@ export default function App() {
     view.visibility === "seen" ? view.room : null,
   );
   const [openSurface, setOpenSurface] = useState<LifestyleSurface | null>(null);
+  const [tutorialEnabled, setTutorialEnabled] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+  const basicsInitialRef = useRef<ReturnType<typeof loadBasics> | null>(null);
+  if (basicsInitialRef.current === null) basicsInitialRef.current = loadBasics();
+  const [basicsEnabled, setBasicsEnabled] = useState(
+    basicsInitialRef.current.enabled,
+  );
+  const [basics, setBasics] = useState<BasicsChecklist>(
+    basicsInitialRef.current.checklist,
+  );
+  const [basicsRevealed, setBasicsRevealed] = useState(false);
   const [encounterFeedback, setEncounterFeedback] = useState<string | null>(
     null,
   );
@@ -411,11 +539,14 @@ export default function App() {
 
   const phaseRef = useRef(phase);
   const viewRef = useRef(view);
+  const viewUiSignatureRef = useRef(viewUiSignature(view));
   const speedRef = useRef(speed);
   const settingsRef = useRef(settings);
   const resourcesRef = useRef(resources);
   const hypothesesRef = useRef(hypotheses);
   const surfaceRef = useRef(openSurface);
+  const tutorialOpenRef = useRef(tutorialOpen);
+  const tutorialInitializedRef = useRef(false);
   const externalClockRef = useRef(false);
   const automationRemainderRef = useRef(0);
   const storageNoticeRef = useRef(initial.storageMessage !== null);
@@ -433,21 +564,81 @@ export default function App() {
   const directInputActionsRef = useRef<DirectInputActions | null>(null);
   const persistenceTimerRef = useRef<number | null>(null);
   const persistencePendingRef = useRef(false);
+  const nextAutoEncounterDueRef = useRef(
+    view.t + autoEncounterCooldown(initial.settings.seed, view.t),
+  );
+  const lastAutoEncounterIdRef = useRef<EncounterId | null>(null);
   const persistProfileRef = useRef<
     (silent: boolean, suppressCloudPush: boolean) => void
   >(() => undefined);
+  const markBasicRef = useRef<(key: keyof BasicsChecklist) => void>(
+    () => undefined,
+  );
+  const groundMoveHandlerRef = useRef<(target: GroundMoveTarget) => void>(
+    () => undefined,
+  );
+  const nearbyInteractionHandlerRef = useRef<() => void>(() => undefined);
+  const worldActionHandlerRef = useRef<(actionId: string) => void>(
+    () => undefined,
+  );
+  const workHoldHandlerRef = useRef<(holding: boolean) => void>(
+    () => undefined,
+  );
+  const speedChangeHandlerRef = useRef<(next: GameSpeed) => void>(
+    () => undefined,
+  );
+  const tutorialToggleHandlerRef = useRef<() => void>(() => undefined);
+  const getView = useCallback(() => viewRef.current, []);
+  const onGroundMove = useCallback(
+    (target: GroundMoveTarget) => groundMoveHandlerRef.current(target),
+    [],
+  );
+  const onNearbyInteraction = useCallback(
+    () => nearbyInteractionHandlerRef.current(),
+    [],
+  );
+  const onWorldAction = useCallback(
+    (actionId: string) => worldActionHandlerRef.current(actionId),
+    [],
+  );
+  const onWorkHoldChange = useCallback(
+    (holding: boolean) => workHoldHandlerRef.current(holding),
+    [],
+  );
+  const onSpeedChange = useCallback(
+    (next: GameSpeed) => speedChangeHandlerRef.current(next),
+    [],
+  );
+  const onTutorialToggle = useCallback(
+    () => tutorialToggleHandlerRef.current(),
+    [],
+  );
   phaseRef.current = phase;
-  viewRef.current = view;
   speedRef.current = speed;
   settingsRef.current = settings;
   resourcesRef.current = resources;
   hypothesesRef.current = hypotheses;
   surfaceRef.current = openSurface;
+  tutorialOpenRef.current = tutorialOpen;
+  markBasicRef.current = (key) => {
+    if (!basicsEnabled) return;
+    setBasics((current) => {
+      if (current[key]) return current;
+      const next = { ...current, [key]: true };
+      try {
+        window.localStorage.setItem(WAITDOG_BASICS_KEY, JSON.stringify(next));
+        return next;
+      } catch {
+        setBasicsEnabled(false);
+        return current;
+      }
+    });
+  };
 
   const sim = simRef.current;
   const ended = view.minuteOfDay >= DAY_END_MINUTE;
   const activeEncounter = view.activeEncounter;
-  const pausedReason = blockedPauseReason(view, openSurface);
+  const pausedReason = blockedPauseReason(view, openSurface, tutorialOpen);
   const proposedSchedule = generateDaySchedule(
     view.day,
     settings.seed,
@@ -462,6 +653,61 @@ export default function App() {
     workHoldRef.current = false;
     lastDirectTickAtRef.current = null;
   };
+
+  const closeTutorial = () => {
+    tutorialOpenRef.current = false;
+    setTutorialOpen(false);
+  };
+
+  const toggleTutorial = () => {
+    const nextEnabled = !tutorialEnabled;
+    try {
+      window.localStorage.setItem(
+        WAITDOG_TUTORIAL_KEY,
+        nextEnabled ? "on" : "off",
+      );
+      setTutorialEnabled(nextEnabled);
+      if (nextEnabled) {
+        setBasicsRevealed(true);
+        clearDirectInput();
+        tutorialOpenRef.current = true;
+        setTutorialOpen(true);
+      } else {
+        setBasicsRevealed(false);
+        closeTutorial();
+      }
+    } catch {
+      setTutorialEnabled(false);
+      setBasicsRevealed(false);
+      closeTutorial();
+    }
+  };
+
+  useEffect(() => {
+    if (tutorialInitializedRef.current) return;
+    tutorialInitializedRef.current = true;
+    try {
+      const stored = window.localStorage.getItem(WAITDOG_TUTORIAL_KEY);
+      if (stored === null) {
+        window.localStorage.setItem(WAITDOG_TUTORIAL_KEY, "on");
+        setTutorialEnabled(true);
+        tutorialOpenRef.current = true;
+        setTutorialOpen(true);
+        return;
+      }
+      setTutorialEnabled(stored === "on");
+      tutorialOpenRef.current = false;
+      setTutorialOpen(false);
+    } catch {
+      setTutorialEnabled(false);
+      tutorialOpenRef.current = false;
+      setTutorialOpen(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (tutorialOpen) clearDirectInput();
+  }, [tutorialOpen]);
 
   const flushPendingPersistence = (silent: boolean) => {
     if (!persistencePendingRef.current) return;
@@ -479,9 +725,24 @@ export default function App() {
     setPhase(next);
   };
 
+  const commitFrameView = (next: WaitdogUiView) => {
+    viewRef.current = next;
+  };
+
   const commitView = (next: WaitdogUiView) => {
     viewRef.current = next;
+    const nextSignature = viewUiSignature(next);
+    if (viewUiSignatureRef.current === nextSignature) return;
+    viewUiSignatureRef.current = nextSignature;
     setView(next);
+  };
+
+  const commitFrameViewAtUiBoundary = (next: WaitdogUiView) => {
+    if (viewUiSignatureRef.current === viewUiSignature(next)) {
+      commitFrameView(next);
+      return;
+    }
+    commitView(next);
   };
 
   const commitSettings = (next: CampaignSettings) => {
@@ -493,6 +754,12 @@ export default function App() {
     speedRef.current = next;
     setSpeed(next);
     commitSettings({ ...settingsRef.current, speed: next });
+  };
+
+  const resetAutoEncounterSchedule = (nextView: WaitdogUiView): void => {
+    nextAutoEncounterDueRef.current = nextView.t +
+      autoEncounterCooldown(settingsRef.current.seed, nextView.t);
+    lastAutoEncounterIdRef.current = null;
   };
 
   const applyCloudPayload = (payload: string): boolean => {
@@ -520,12 +787,16 @@ export default function App() {
     simRef.current = next.sim;
     phaseRef.current = next.phase;
     viewRef.current = nextView;
+    viewUiSignatureRef.current = viewUiSignature(nextView);
     speedRef.current = next.settings.speed;
     settingsRef.current = next.settings;
     resourcesRef.current = next.resources;
     surfaceRef.current = null;
     externalClockRef.current = false;
     automationRemainderRef.current = 0;
+    nextAutoEncounterDueRef.current = nextView.t +
+      autoEncounterCooldown(next.settings.seed, nextView.t);
+    lastAutoEncounterIdRef.current = null;
     clearDirectInput();
     setPhase(next.phase);
     setView(nextView);
@@ -659,7 +930,11 @@ export default function App() {
     phaseRef.current !== "live" ||
     speedRef.current === 0 ||
     viewRef.current.minuteOfDay >= DAY_END_MINUTE ||
-    blockedPauseReason(viewRef.current, surfaceRef.current) !== null;
+    blockedPauseReason(
+      viewRef.current,
+      surfaceRef.current,
+      tutorialOpenRef.current,
+    ) !== null;
 
   const advanceSimulation = (requestedMinutes: number): AdvanceResult => {
     if (simulationIsPaused()) {
@@ -714,7 +989,34 @@ export default function App() {
     if (phase !== "live" || speed === 0 || ended) return;
     const intervalId = window.setInterval(() => {
       if (externalClockRef.current || simulationIsPaused()) return;
-      advanceSimulation(GAME_MINUTES_PER_SECOND * speedRef.current);
+      const advanced = advanceSimulation(
+        GAME_MINUTES_PER_SECOND * speedRef.current,
+      );
+      if (advanced.minutes === 0) return;
+
+      const current = simRef.current.getDogView();
+      if (
+        current.activeEncounter !== null ||
+        current.work.alert !== null ||
+        current.work.active ||
+        surfaceRef.current !== null ||
+        tutorialOpenRef.current ||
+        current.minuteOfDay >= DAY_END_MINUTE ||
+        current.t < nextAutoEncounterDueRef.current
+      ) return;
+
+      const encounterId = simRef.current.suggestAutoEncounter(
+        lastAutoEncounterIdRef.current,
+      );
+      if (encounterId === null) return;
+
+      const result = simRef.current.startEncounter(encounterId);
+      if (!result.ok) return;
+
+      lastAutoEncounterIdRef.current = encounterId;
+      nextAutoEncounterDueRef.current = current.t +
+        autoEncounterCooldown(settingsRef.current.seed, current.t);
+      commitView(simRef.current.getDogView());
     }, 1000);
     return () => window.clearInterval(intervalId);
   }, [ended, phase, speed]);
@@ -725,6 +1027,7 @@ export default function App() {
       if (
         phaseRef.current !== "live" ||
         surfaceRef.current !== null ||
+        tutorialOpenRef.current ||
         current.minuteOfDay >= DAY_END_MINUTE ||
         !current.interaction.directControlEnabled
       ) {
@@ -738,7 +1041,7 @@ export default function App() {
         Math.max(
           MIN_INPUT_DELTA_MS,
           lastDirectTickAtRef.current === null
-            ? DIRECT_CONTROL_STEP_MS
+            ? BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS
             : now - lastDirectTickAtRef.current,
         ),
       );
@@ -788,7 +1091,10 @@ export default function App() {
             `업무 100% 완료 · ${next.work.salaryPreview.toLocaleString("ko-KR")}원이 정산되었습니다.`,
           );
         }
-        commitView(next);
+        if (result.ok && next.work.progress > beforeProgress) {
+          markBasicRef.current("work");
+        }
+        commitFrameViewAtUiBoundary(next);
         return;
       }
 
@@ -797,9 +1103,10 @@ export default function App() {
         if (clickMoveTargetRef.current !== null) {
           clickMoveTargetRef.current = null;
         }
-        commitView(simRef.current.getDogView());
+        commitFrameViewAtUiBoundary(simRef.current.getDogView());
         return;
       }
+      markBasicRef.current("moved");
 
       const next = simRef.current.getDogView();
       const clickTarget = clickMoveTargetRef.current;
@@ -821,10 +1128,23 @@ export default function App() {
       ) {
         clickMoveTargetRef.current = null;
       }
-      commitView(next);
+      commitFrameViewAtUiBoundary(next);
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (tutorialOpenRef.current) {
+        if (
+          event.code === "Escape" &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.metaKey &&
+          !event.shiftKey
+        ) {
+          event.preventDefault();
+          closeTutorial();
+        }
+        return;
+      }
       const actions = directInputActionsRef.current;
       if (!actions || event.isComposing) return;
 
@@ -858,6 +1178,17 @@ export default function App() {
         setSecondaryFeedback(null);
         clickMoveTargetRef.current = null;
         heldMoveKeysRef.current.add(event.code);
+        if (!event.repeat) {
+          const vector = MOVE_KEY_VECTORS[event.code];
+          const result = simRef.current.moveOwnerBy({
+            dx: vector.dx,
+            dy: vector.dy,
+            elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+          });
+          if (result.ok) markBasicRef.current("moved");
+          lastDirectTickAtRef.current = performance.now();
+          commitFrameViewAtUiBoundary(simRef.current.getDogView());
+        }
         return;
       }
 
@@ -893,16 +1224,20 @@ export default function App() {
     };
     const handleWindowBlur = () => clearDirectInput();
 
-    const intervalId = window.setInterval(
-      directControlTick,
-      DIRECT_CONTROL_STEP_MS,
-    );
+    let animationFrameId = 0;
+    const directControlFrame = () => {
+      directControlTick();
+      animationFrameId = window.requestAnimationFrame(directControlFrame);
+    };
+    if (phase === "live") {
+      animationFrameId = window.requestAnimationFrame(directControlFrame);
+    }
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     window.addEventListener("blur", handleWindowBlur);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => {
-      window.clearInterval(intervalId);
+      window.cancelAnimationFrame(animationFrameId);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("blur", handleWindowBlur);
@@ -912,12 +1247,13 @@ export default function App() {
       );
       clearDirectInput();
     };
-  }, []);
+  }, [phase]);
 
   useEffect(() => {
     if (phaseRef.current !== "live") return;
     const result = simRef.current.ensureFirstEncounter();
     const next = simRef.current.getDogView();
+    resetAutoEncounterSchedule(next);
     commitView(next);
     if (
       result.ok &&
@@ -1039,7 +1375,11 @@ export default function App() {
           moving: current.spatial.moving,
         }
         : null;
-      const automaticPause = blockedPauseReason(current, surfaceRef.current);
+      const automaticPause = blockedPauseReason(
+        current,
+        surfaceRef.current,
+        tutorialOpenRef.current,
+      );
       const pause = phaseRef.current !== "live"
         ? `phase:${phaseRef.current}`
         : current.minuteOfDay >= DAY_END_MINUTE
@@ -1281,6 +1621,7 @@ export default function App() {
       workHoldRef.current = false;
       return;
     }
+    if (tutorialOpenRef.current) return;
     const current = viewRef.current;
     const moving = heldMoveKeysRef.current.size > 0 ||
       virtualMoveRef.current.dx !== 0 ||
@@ -1299,6 +1640,7 @@ export default function App() {
   };
 
   const handleGroundMove = (target: GroundMoveTarget) => {
+    if (tutorialOpenRef.current) return;
     workHoldRef.current = false;
     clickMoveTargetRef.current = target;
     clearWorldFeedback();
@@ -1309,6 +1651,7 @@ export default function App() {
       virtualMoveRef.current = ZERO_DIRECT_VECTOR;
       return;
     }
+    if (tutorialOpenRef.current) return;
     workHoldRef.current = false;
     clickMoveTargetRef.current = null;
     virtualMoveRef.current = vector;
@@ -1337,7 +1680,8 @@ export default function App() {
     setWorldFeedback("업무를 이어갑니다. R을 누르고 진행하세요.");
   };
 
-  const executeWorldAction = (actionId: string) => {
+  const executeWorldAction = (actionId: string, fromInteraction = false) => {
+    if (tutorialOpenRef.current) return;
     if (actionId === WORK_ALERT_INTERRUPT_ACTION) {
       resolveWorkAlert("interrupt");
       return;
@@ -1349,11 +1693,30 @@ export default function App() {
 
     workHoldRef.current = false;
     const encounterResultId = viewRef.current.activeEncounter?.id ?? null;
+    const careRewardPrefix =
+      `care:day:${viewRef.current.day}:encounter:`;
+    const priorCareRewardCount = simRef.current.getFullState().economy.ledger
+      .filter((entry) =>
+        entry.kind === "careReward" &&
+        entry.id.startsWith(careRewardPrefix)
+      ).length;
     const result = simRef.current.performWorldAction(actionId);
     const next = syncAfterCommand();
     if (!result.ok) {
       setWorldFeedback(result.reason ?? "행동을 실행하지 못했습니다.");
       return;
+    }
+    if (fromInteraction) markBasicRef.current("interacted");
+    if (actionId.startsWith("food:") || actionId.startsWith("water:")) {
+      markBasicRef.current("bowl");
+    }
+    const nextCareRewardCount = simRef.current.getFullState().economy.ledger
+      .filter((entry) =>
+        entry.kind === "careReward" &&
+        entry.id.startsWith(careRewardPrefix)
+      ).length;
+    if (nextCareRewardCount > priorCareRewardCount) {
+      markBasicRef.current("mission");
     }
 
     if (actionId === "encounter:dismiss") {
@@ -1392,6 +1755,7 @@ export default function App() {
   };
 
   const handleNearbyInteraction = () => {
+    if (tutorialOpenRef.current) return;
     const current = viewRef.current;
     if (current.work.alert !== null) {
       setWorldFeedback("1~2 중 업무 알림 대응을 선택하세요.");
@@ -1402,7 +1766,7 @@ export default function App() {
       actions.length === 1 &&
       isAutoInteractAction(actions[0].id)
     ) {
-      executeWorldAction(actions[0].id);
+      executeWorldAction(actions[0].id, true);
       return;
     }
     if (actions.length > 0) {
@@ -1453,6 +1817,13 @@ export default function App() {
     ) return;
     commitSurface(surface);
   };
+
+  groundMoveHandlerRef.current = handleGroundMove;
+  nearbyInteractionHandlerRef.current = handleNearbyInteraction;
+  worldActionHandlerRef.current = executeWorldAction;
+  workHoldHandlerRef.current = setWorkHoldActive;
+  speedChangeHandlerRef.current = commitSpeed;
+  tutorialToggleHandlerRef.current = toggleTutorial;
 
   const updateStoreCategory = (category: CatalogCategory) => {
     commitSettings({
@@ -1550,6 +1921,7 @@ export default function App() {
     simRef.current.newDay();
     const next = simRef.current.getDogView();
     automationRemainderRef.current = 0;
+    resetAutoEncounterSchedule(next);
     speedRef.current = 1;
     setSpeed(1);
     commitSettings({
@@ -1574,6 +1946,7 @@ export default function App() {
     simRef.current.newDay();
     const next = simRef.current.getDogView();
     automationRemainderRef.current = 0;
+    resetAutoEncounterSchedule(next);
     speedRef.current = 1;
     setSpeed(1);
     commitSettings({
@@ -1604,6 +1977,9 @@ export default function App() {
     resourcesRef.current = nextResources;
     speedRef.current = 1;
     automationRemainderRef.current = 0;
+    nextAutoEncounterDueRef.current = nextSim.getDogView().t +
+      autoEncounterCooldown(nextSettings.seed, nextSim.getDogView().t);
+    lastAutoEncounterIdRef.current = null;
     setSettings(nextSettings);
     setResources(nextResources);
     setHypotheses([]);
@@ -1746,6 +2122,7 @@ export default function App() {
 
   const directControlsDisabled = ended ||
     openSurface !== null ||
+    tutorialOpen ||
     !view.interaction.directControlEnabled;
   const nearbyTarget = nearbyWorldTarget(view);
   const cueTarget = view.interaction.targets.find((target) =>
@@ -1820,6 +2197,29 @@ export default function App() {
     view.work.alert !== null ||
     view.work.progress >= 100;
   const visibleWorkProgress = view.work.seated ? view.work.progress : null;
+  const careRewardPrefix = `care:day:${view.day}:encounter:`;
+  const todayMissionCount = simRef.current.getFullState().economy.ledger.filter(
+    (entry) =>
+      entry.kind === "careReward" &&
+      entry.id.startsWith(careRewardPrefix),
+  ).length;
+  const scheduleItem = settings.daySchedule.find((item) =>
+    view.minuteOfDay >= item.startMinute &&
+    view.minuteOfDay < item.endMinute
+  ) ?? settings.daySchedule.find((item) =>
+    item.startMinute > view.minuteOfDay
+  ) ?? null;
+  const scheduleIsNext = scheduleItem !== null &&
+    view.minuteOfDay < scheduleItem.startMinute;
+  const basicsComplete = Object.values(basics).every(Boolean);
+  const showBasics = basicsEnabled && (!basicsComplete || basicsRevealed);
+  const basicsItems: ReadonlyArray<[keyof BasicsChecklist, string]> = [
+    ["moved", "이동해보기"],
+    ["interacted", "E로 상호작용"],
+    ["mission", "돌봄 미션 1회 완료"],
+    ["bowl", "밥 또는 물 채우기"],
+    ["work", "업무 1회 진행"],
+  ];
 
   return (
     <main
@@ -1834,10 +2234,14 @@ export default function App() {
         ownerMoving={view.ownerSpatial.moving}
         money={view.economy.money}
         carePoints={view.economy.carePoints}
+        foodLevel={view.environmentPlacements.foodBowl.level}
+        waterLevel={view.environmentPlacements.waterBowl.level}
         salaryBonusPercent={view.economy.salaryBonusPercent}
         pausedReason={pausedReason}
         ended={ended}
-        onSpeedChange={commitSpeed}
+        tutorialEnabled={tutorialEnabled}
+        onSpeedChange={onSpeedChange}
+        onTutorialToggle={onTutorialToggle}
       />
 
       <div className="lifestyle-layout">
@@ -1848,23 +2252,60 @@ export default function App() {
             disabled={directControlsDisabled}
             compact={activeEncounter !== null}
             encounter={activeEncounter}
-            onGroundMove={handleGroundMove}
-            onInteract={handleNearbyInteraction}
+            getView={getView}
+            onGroundMove={onGroundMove}
+            onInteract={onNearbyInteraction}
           />
+          <aside className="daily-goals" aria-label="오늘의 목표">
+            <div className="daily-goals__summary">
+              <span>
+                <small>{scheduleIsNext ? "다음 일정" : "오늘의 일정"}</small>
+                <strong>
+                  {scheduleItem === null
+                    ? "다음 —"
+                    : `${scheduleIsNext ? "다음 — " : ""}${scheduleItem.title}`}
+                </strong>
+              </span>
+              <span>
+                <small>시간</small>
+                <strong>
+                  {scheduleItem === null
+                    ? "—"
+                    : `${formatScheduleMinute(scheduleItem.startMinute)}–${
+                      formatScheduleMinute(scheduleItem.endMinute)
+                    }`}
+                </strong>
+              </span>
+              <span>
+                <small>완료 미션</small>
+                <strong>{todayMissionCount}회</strong>
+              </span>
+            </div>
+            {showBasics && (
+              <ul className="basics-checklist" aria-label="기본 조작 체크리스트">
+                {basicsItems.map(([key, label]) => (
+                  <li className={basics[key] ? "is-complete" : ""} key={key}>
+                    <span aria-hidden="true">{basics[key] ? "✓" : "○"}</span>
+                    {label}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </aside>
           <WorldActionBar
             target={actionBarTarget}
             prompt={worldPrompt}
             cause={activeEncounter?.inferredCause ?? null}
             actions={actionBarItems}
-            disabled={ended || openSurface !== null}
+            disabled={ended || openSurface !== null || tutorialOpen}
             interactLabel={interactionLabel}
             interactDisabled={interactDisabled}
             workProgress={visibleWorkProgress}
             workHoldLabel="업무"
             workHoldDisabled={workHoldDisabled}
-            onAction={executeWorldAction}
-            onInteract={handleNearbyInteraction}
-            onWorkHoldChange={setWorkHoldActive}
+            onAction={onWorldAction}
+            onInteract={onNearbyInteraction}
+            onWorkHoldChange={onWorkHoldChange}
           />
         </div>
       </div>
@@ -1902,6 +2343,7 @@ export default function App() {
           onUpgrade={buyUpgrade}
         />
       )}
+      {tutorialOpen && <TutorialOverlay onClose={closeTutorial} />}
     </main>
   );
 }

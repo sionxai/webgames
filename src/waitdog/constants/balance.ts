@@ -243,13 +243,23 @@ export const BALANCE = {
       FIRST_START_SECONDS: 5,
       HINT_IDLE_SECONDS: 8,
       HINT_INTERVAL_ENCOUNTERS: 3,
+      AUTO_COOLDOWN_MINUTES: {
+        MIN: 60,
+        MAX: 120,
+      },
+      AUTO_SCORE_REFERENCE: {
+        bowelPressure: 10,
+        excitement: 28,
+        stress: 18,
+        boredom: 32,
+      },
       BASE_SCORE: 100,
       BASE_CARE_POINTS: 1,
     },
     OWNER: {
       SPEED_PER_MINUTE: 0.3,
-      DIRECT_STEP_DISTANCE: 0.02,
-      DIRECT_SPEED_PER_SECOND: 1.2,
+      DIRECT_SPEED_PX_PER_SECOND: 200,
+      DIRECT_STEP_PX: 200 / 60,
       DIRECT_REFERENCE_MS: 1000 / 60,
       MAX_INPUT_DELTA_MS: 250,
       DOOR_RADIUS: 0.08,
@@ -259,9 +269,9 @@ export const BALANCE = {
       DOG_COLLISION_RADIUS: 0.065,
       SAFETY_GAP: 0.025,
       VISUAL_FOOTPRINT: {
-        HORIZONTAL_CLEARANCE_PX: 124,
-        VERTICAL_CLEARANCE_PX: 152,
-        SUPERELLIPSE_EXPONENT: 8,
+        HORIZONTAL_CLEARANCE_PX: 40,
+        VERTICAL_CLEARANCE_PX: 28,
+        SUPERELLIPSE_EXPONENT: 2,
         SAFE_SCALE: 1.02,
         ENCOUNTER_SCALE: 1.1,
         ROOM_TRAVEL_PX: {
