@@ -316,3 +316,20 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
   마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 중단했다.
 - 네이티브 esbuild + Deno 대체 실행 결과:
   `MOTION CONTRACT OK 444 assertions`, `SIM CONTRACT OK 390 assertions`.
+
+## 2026-07-31 — 기다려멍 R5 걷기 모션·문 통과 보간
+
+- 보호자 위치 트윈을 `BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND` 기반
+  거리 비례 16~1000ms로 바꾸고, 200ms 초과 트윈은 선형 보간을 적용했다.
+- 직전 그려진 보호자 좌표에서 0.05px 초과 이동을 감지하고 마지막 이동 후
+  150ms까지 걷기 모션을 유지하도록 표현 계층 판정을 분리했다.
+- `ownerSpatial.moving`의 ground-marker 용도, reduced-motion 프레임 0,
+  좌우 반전 판정, 강아지 520ms 트윈과 깊이 정렬 계약은 유지했다.
+- `npm run test:waitdog`, `npm run test:contract`, `npx tsc --noEmit`,
+  `npm run build`는 각각 재시도 없이 실행했으며 모두 exit 139,
+  `ERROR: SecItemCopyMatching failed -50`로 환경 차단됐다.
+- TODO: 정상 Node/npm 환경에서 네 수용 커맨드를 실행한다. 서버 및 별도 render
+  hook 변경이 허용 범위 밖이므로 Playwright 실플레이는 실행하지 않았다.
+- Checker 재작업: 공용 `positionDuring`의 기본 이징을 기존 quadratic으로
+  복원하고, 200ms 초과 선형 옵션은 보호자 트윈 호출에만 적용해 강아지 520ms
+  트윈의 기존 이징 의미를 유지했다.

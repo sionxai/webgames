@@ -13,6 +13,7 @@ import {
   WAITDOG_ART_ASSETS,
   type DogMotionId,
 } from "../constants/artAssets";
+import { BALANCE } from "../constants/balance";
 import type {
   OwnerClickMoveTarget,
   WaitdogUiView,
@@ -73,7 +74,18 @@ type ArtLoadState =
 const WIDTH = 900;
 const HEIGHT = 900;
 const DOG_POSITION_TWEEN_MS = 520;
-const OWNER_POSITION_TWEEN_MS = 16;
+const OWNER_POSITION_TWEEN_MIN_MS = 16;
+// 트윈은 매 프레임 재시작되므로 1차 지연 필터처럼 동작한다. 그래서 상한이 곧
+// "시뮬 위치를 얼마나 뒤처져 따라가느냐"를 정한다 (화면 지연 ≈ 상한 × 0.088 px).
+// 문 통과는 좌표계 아티팩트로 화면에서 162px 를 건너뛰는데, 상한을 1000ms 로 두면
+// 걷기 속도(200px/s)로 지나가는 대신 이동 내내 66px 뒤처지고 키를 놓은 뒤 0.83초를
+// 미끄러진다 — 입력 지연으로 읽힌다. 250ms 는 문 통과를 걷기의 3.3배 속도로
+// 한 걸음처럼 보여주면서 화면 지연 22px, 놓은 뒤 미끄러짐 0.27초로 억제한다.
+// 근본 해결은 패딩 162px 를 없애는 월드 좌표계(R2b)다.
+const OWNER_POSITION_TWEEN_MAX_MS = 250;
+const OWNER_LINEAR_TWEEN_THRESHOLD_MS = 200;
+const OWNER_MOVEMENT_THRESHOLD_PX = 0.05;
+const OWNER_MOVEMENT_GRACE_MS = 150;
 
 const ROOMS: Record<RoomId, RoomRect> = {
   living: {
@@ -182,9 +194,12 @@ const dogTargetPoint = (view: WaitdogUiView): Point | null => {
 const positionDuring = (
   transition: PositionTransition,
   now: number,
+  linear = false,
 ): Point => {
   const raw = Math.min(1, (now - transition.startedAt) / transition.duration);
-  const progress = raw < 0.5
+  const progress = linear
+    ? raw
+    : raw < 0.5
     ? 2 * raw * raw
     : 1 - Math.pow(-2 * raw + 2, 2) / 2;
   return {
@@ -988,6 +1003,8 @@ function HouseCanvasComponent({
   const ownerPositionRef = useRef<Point>(
     spatialPoint(view.ownerSpatial.room, view.ownerSpatial.x, view.ownerSpatial.y),
   );
+  const previousDrawnOwnerPositionRef = useRef<Point>(ownerPositionRef.current);
+  const lastOwnerMovementAtRef = useRef(Number.NEGATIVE_INFINITY);
   const ownerFacingLeftRef = useRef(false);
   const dogTransitionRef = useRef<PositionTransition | null>(null);
   const ownerTransitionRef = useRef<PositionTransition | null>(null);
@@ -1118,7 +1135,12 @@ function HouseCanvasComponent({
         ownerTarget.y !== nextOwner.y
       ) {
         const currentOwner = ownerTransitionRef.current
-          ? positionDuring(ownerTransitionRef.current, now)
+          ? positionDuring(
+            ownerTransitionRef.current,
+            now,
+            ownerTransitionRef.current.duration >
+              OWNER_LINEAR_TWEEN_THRESHOLD_MS,
+          )
           : ownerPositionRef.current;
         if (Math.abs(nextOwner.x - currentOwner.x) > 0.01) {
           ownerFacingLeftRef.current = nextOwner.x < currentOwner.x;
@@ -1127,11 +1149,23 @@ function HouseCanvasComponent({
           ownerPositionRef.current = nextOwner;
           ownerTransitionRef.current = null;
         } else {
+          const distance = Math.hypot(
+            nextOwner.x - currentOwner.x,
+            nextOwner.y - currentOwner.y,
+          );
           ownerTransitionRef.current = {
             from: currentOwner,
             to: nextOwner,
             startedAt: now,
-            duration: OWNER_POSITION_TWEEN_MS,
+            duration: Math.min(
+              OWNER_POSITION_TWEEN_MAX_MS,
+              Math.max(
+                OWNER_POSITION_TWEEN_MIN_MS,
+                distance /
+                  BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND *
+                  1000,
+              ),
+            ),
           };
         }
       }
@@ -1210,7 +1244,12 @@ function HouseCanvasComponent({
       }
 
       if (ownerTransitionRef.current) {
-        ownerPositionRef.current = positionDuring(ownerTransitionRef.current, now);
+        ownerPositionRef.current = positionDuring(
+          ownerTransitionRef.current,
+          now,
+          ownerTransitionRef.current.duration >
+            OWNER_LINEAR_TWEEN_THRESHOLD_MS,
+        );
         if (now - ownerTransitionRef.current.startedAt >=
           ownerTransitionRef.current.duration) {
           ownerPositionRef.current = ownerTransitionRef.current.to;
@@ -1230,6 +1269,18 @@ function HouseCanvasComponent({
         ? dogPositionRef.current
         : null;
       const ownerPoint = ownerPositionRef.current;
+      const previousOwnerPoint = previousDrawnOwnerPositionRef.current;
+      if (
+        Math.hypot(
+          ownerPoint.x - previousOwnerPoint.x,
+          ownerPoint.y - previousOwnerPoint.y,
+        ) > OWNER_MOVEMENT_THRESHOLD_PX
+      ) {
+        lastOwnerMovementAtRef.current = now;
+      }
+      previousDrawnOwnerPositionRef.current = ownerPoint;
+      const ownerMoving =
+        now - lastOwnerMovementAtRef.current <= OWNER_MOVEMENT_GRACE_MS;
       const entities: Array<{ footY: number; draw: () => void }> = [
         {
           footY: ownerPoint.y,
@@ -1238,7 +1289,7 @@ function HouseCanvasComponent({
             ownerPoint,
             images,
             now,
-            frameView.ownerSpatial.moving,
+            ownerMoving,
             ownerFacingLeftRef.current,
             reducedMotionRef.current,
           ),
