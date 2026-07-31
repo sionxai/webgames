@@ -2,7 +2,6 @@
   "rules": {
     ".read": false,
     ".write": false,
-
     "users": {
       ".read": "auth != null",
       "$uid": {
@@ -17,7 +16,6 @@
         }
       }
     },
-
     "usernameIndex": {
       "$username": {
         ".read": true,
@@ -25,7 +23,6 @@
         ".validate": "newData.isString()"
       }
     },
-
     "mailbox": {
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
@@ -35,7 +32,6 @@
         }
       }
     },
-
     "user_mail": {
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
@@ -44,7 +40,6 @@
         }
       }
     },
-
     "test_mail": {
       "$uid": {
         ".read": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')",
@@ -53,7 +48,6 @@
         }
       }
     },
-
     "config": {
       ".read": "auth != null",
       "global": {
@@ -66,37 +60,33 @@
         }
       }
     },
-
     "pvpRegistrations": {
       ".read": "auth != null",
       "$uid": {
         ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin')"
       }
     },
-
     "pvpSeason": {
       ".read": "auth != null",
       ".write": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
     },
-
     "pvpMatches": {
       ".read": "auth != null",
       "$matchId": {
         ".write": "auth != null && (root.child('users').child(auth.uid).child('role').val() === 'admin' || (!data.exists() && newData.hasChildren(['createdAt','playerA','playerB']) && newData.child('createdAt').isNumber() && (newData.child('playerA').val() === auth.uid || newData.child('playerB').val() === auth.uid)))"
       }
     },
-
     "mirrors": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'"
     },
-
     "snapshots": {
       ".read": "auth != null && root.child('users').child(auth.uid).child('role').val() === 'admin'",
       "$uid": {
-        ".indexOn": ["snapshotAt"]
+        ".indexOn": [
+          "snapshotAt"
+        ]
       }
     },
-
     "chat": {
       "messages": {
         ".read": "auth != null",
@@ -106,7 +96,6 @@
         }
       }
     },
-
     "artifacts": {
       "$appId": {
         "users": {
@@ -117,7 +106,6 @@
         }
       }
     },
-
     "portal": {
       "users": {
         "$uid": {
@@ -139,6 +127,23 @@
             ".write": "auth != null && auth.uid === $uid && ($gameId === 'forge' || $gameId === 'waitdog')",
             ".validate": "newData.hasChildren(['payload', 'updatedAt', 'schema']) && newData.child('payload').isString() && newData.child('payload').val().length < 200000 && newData.child('updatedAt').isNumber() && newData.child('schema').isNumber()"
           }
+        }
+      },
+      "stats": {
+        ".read": "true",
+        "total": {
+          ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1)"
+        },
+        "days": {
+          "$day": {
+            ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1) && $day.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+          }
+        }
+      },
+      "visitors": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "auth != null && auth.uid === $uid && newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
         }
       }
     }

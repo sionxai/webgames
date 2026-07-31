@@ -987,3 +987,54 @@ a.game-card:hover {
     transform: none;
   }
 }
+
+/* ---------- 방문자 통계 ---------- */
+
+.portal-header__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+}
+
+.visitor-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 6px 12px;
+  border: 1px solid var(--forge-border);
+  border-radius: 999px;
+  background: var(--forge-surface);
+  color: var(--forge-muted);
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.visitor-stats__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.visitor-stats__item svg {
+  color: var(--forge-amber);
+}
+
+.visitor-stats__item strong {
+  color: var(--forge-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.visitor-stats__divider {
+  width: 1px;
+  height: 12px;
+  background: var(--forge-border-strong);
+}
+
+@media (max-width: 420px) {
+  .visitor-stats__label {
+    display: none;
+  }
+}

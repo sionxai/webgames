@@ -4,6 +4,7 @@ import { LegalDocsModal } from '../components/portal/LegalDocsModal';
 import { HanpanLogo } from './components/HanpanLogo';
 import { Bot, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
 import { AccountWidget } from './components/AccountWidget';
+import { VisitorStats } from './components/VisitorStats';
 
 function GameCard({ game }: { game: GameEntry }) {
   if (game.status === 'coming-soon') {
@@ -59,7 +60,10 @@ export function HomePage() {
           </h1>
           <AccountWidget />
         </div>
-        <p className="portal-tagline">설치·가입 없이 브라우저에서 바로 즐기는 웹게임 모음</p>
+        <div className="portal-header__meta">
+          <p className="portal-tagline">설치·가입 없이 브라우저에서 바로 즐기는 웹게임 모음</p>
+          <VisitorStats />
+        </div>
       </header>
 
       <main className="portal-main">
