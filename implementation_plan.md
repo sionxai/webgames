@@ -1,5 +1,13 @@
 # WEBGAMES Portal Plan
 
+## 기다려멍 R5 — 걷기 모션·문 통과 보간
+
+- [x] 보호자 트윈을 200px/s 거리 비례(16~1000ms)로 변경
+- [x] 200ms 초과 보호자 트윈에 선형 보간 적용
+- [x] 그려진 위치 변화 0.05px 및 150ms 완충으로 걷기 모션 판정
+- [ ] 지정 계약·TypeScript·빌드 수용 커맨드 검증
+      — 네 커맨드 모두 `SecItemCopyMatching failed -50`/exit 139 환경 차단
+
 ## 기다려멍 — 튜토리얼 오버레이
 
 - [x] 독립 localStorage 키 기반 최초 자동 표시와 토글 상태
