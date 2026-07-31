@@ -1141,18 +1141,22 @@ class WaitdogSimulation implements WaitdogUiSim {
     }
     const scaledX = input.dx / componentScale;
     const scaledY = input.dy / componentScale;
-    const magnitude = Math.hypot(scaledX, scaledY);
     const blockedReason = this.directControlBlockedReason();
     if (blockedReason !== null) {
       return { ok: false, reason: blockedReason };
     }
     this.leaveWorkSeatForMovement();
 
+    const travel =
+      BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
+        this.ownerSpatial.room
+      ];
+    const magnitude = Math.hypot(scaledX, scaledY);
+    const stepPx = this.ownerStepDistance(input.elapsedMs);
     const directionX = scaledX / magnitude;
     const directionY = scaledY / magnitude;
-    const step = this.ownerStepDistance(input.elapsedMs);
-    const nextX = this.ownerSpatial.x + directionX * step;
-    const nextY = this.ownerSpatial.y + directionY * step;
+    const nextX = this.ownerSpatial.x + directionX * stepPx / travel.x;
+    const nextY = this.ownerSpatial.y + directionY * stepPx / travel.y;
     const transition = this.directDoorTransition(nextX, nextY, directionX);
     const prior = {
       room: this.ownerSpatial.room,
@@ -3018,7 +3022,13 @@ class WaitdogSimulation implements WaitdogUiSim {
   ): boolean {
     const deltaX = x - this.ownerSpatial.x;
     const deltaY = y - this.ownerSpatial.y;
-    const distance = Math.hypot(deltaX, deltaY);
+    const travel =
+      BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
+        this.ownerSpatial.room
+      ];
+    const pixelDeltaX = deltaX * travel.x;
+    const pixelDeltaY = deltaY * travel.y;
+    const distance = Math.hypot(pixelDeltaX, pixelDeltaY);
     const step = this.ownerStepDistance(elapsedMs);
     if (
       distance <= step
@@ -3565,11 +3575,8 @@ class WaitdogSimulation implements WaitdogUiSim {
   private ownerStepDistance(elapsedMs?: number): number {
     const duration = elapsedMs ??
       BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS;
-    return Math.min(
-      BALANCE.SPATIAL.MAX_COORDINATE,
-      BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PER_SECOND *
-        duration / 1000,
-    );
+    return BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND *
+      duration / 1000;
   }
 
   private ownerPositionOverlapsDog(
@@ -3633,7 +3640,7 @@ class WaitdogSimulation implements WaitdogUiSim {
     // B2d 에서 여기에 "강아지를 비켜나게 한 뒤 재시도" 단계를 뒀으나 제거했다.
     // 그건 충돌 영역이 발밑이 아니라 스프라이트 크기로 잡혀(통행금지 폭 248px >
     // 부엌 폭 233px) 보호자가 갇히던 것을 우회하려는 것이었다. D1 에서 충돌을
-    // 발밑 그림자 기준(74 x 26, 타원)으로 바로잡아 그냥 돌아갈 수 있게 됐으므로
+    // 발밑 그림자 기준(80 x 56, 타원)으로 바로잡아 그냥 돌아갈 수 있게 됐으므로
     // 우회로가 필요 없다. 또 걸어가서 강아지를 밀어내는 것은 설계 원칙에 어긋난다
     // (계약 C5: 직접 이동은 강아지를 움직이지 않는다).
     // 문 통과(moveOwnerThroughDoor)의 비키기는 진입점이 고정돼 대안이 없으므로 유지한다.

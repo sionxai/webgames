@@ -278,3 +278,41 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
 - Checker 재작업에서 프레임 helper를 ref 갱신 전용으로 축소하고, 별도 경계 helper만 UI 서명을 비교해 이산 commit으로 넘기도록 소유권을 분명히 했다. Canvas 포인터 hit-test와 배변 target도 `getView()`의 최신 view를 사용한다.
 - HouseCanvas, WorldActionBar, TopBar를 memo 처리하고 App에서 전달하는 관련 콜백을 `useCallback`으로 안정화했다. 개발 모드 렌더 카운터도 추가했다.
 - 검증 환경 차단: `npx tsc --noEmit`이 최초와 정확히 1회 재시도 모두 exit 139, 마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 종료했다. 지침에 따라 나머지 npm 검증은 실행하지 않았다.
+
+## 2026-07-31 — 기다려멍 R4 이동 조작감
+
+- Original prompt: specR4에 따라 보호자 이동을 방/축/대각선에 무관한 200px/s로 바꾸고, 발 충돌을 40×28px p=2 타원으로 축소하며 핵심 수치 계약 6개를 추가한다.
+- 기준 HEAD `5b3f90be72cb872e28261ac959f4f57d710b8ca0`, 시작 작업트리 clean.
+- 승인 범위와 금지 파일을 확인했으며, 기존 `allowSlide`/`ownerDogSlideTarget`과 door transition은 그대로 유지한다.
+- 구현: 직접/클릭 이동을 방별 픽셀 공간에서 정규화하고 200px/s로 환산했다.
+  클릭 도착 판정도 픽셀 거리로 바꿨으며 발 충돌을 40×28px p=2 타원으로 축소했다.
+- 계약: 스프라이트 비겹침 단언을 HouseCanvas와 같은 footY 오름차순 깊이 정렬
+  단언으로 교체하고, 픽셀 step 관계와 핵심 수치 단언 6개를 추가했다.
+- 관찰: native esbuild로 번들한 계약을 Deno에서 실행해
+  `SIM CONTRACT OK 390 assertions`, `MOTION CONTRACT OK 350 assertions`를 확인했다.
+  느려진 속도에 맞춰 기존 문/충돌 시나리오의 반복 한도와 시작점을 조정했다.
+- 환경 차단: `npm run test:waitdog`, `npm run test:contract`, `npx tsc --noEmit`,
+  `npm run build`는 모두 exit 139, 마지막 줄 `ERROR: SecItemCopyMatching failed -50`.
+  표적 모션 커맨드는 같은 서명으로 정확히 1회 재시도한 뒤 중단했다.
+- 대체 정적 확인: native esbuild 모션/sim/브라우저 번들 성공, `git diff --check` 성공.
+- Checker 재작업: 핵심 #1~#4는 방향 반전 없이 매 호출 전 동일 중앙 snapshot을
+  복원하는 60개 독립 1-frame trial의 실제 이동량만 누적한다. HouseCanvas 소스를
+  read-only로 로드해 production `entities.sort((first, second) =>
+  first.footY - second.footY)` 존재를 직접 단언하고 comparator 표본 순서도 별도
+  단언한다. 대체 재실행은 `MOTION CONTRACT OK 352 assertions`,
+  `SIM CONTRACT OK 390 assertions`.
+- TODO: 정상 Node/npm 환경에서 네 수용 커맨드를 재실행한다.
+
+## 2026-07-31 — 기다려멍 R4 대각선 방향·누적 계약 재작업
+
+- `moveOwnerBy`의 키보드/가상 스틱 입력을 화면 공간에서 정규화해, 방 종횡비와
+  무관하게 대각선 화면 각도가 45도가 되도록 수정했다. 클릭 이동 경로
+  `moveOwnerFixedStepToward`, 문 전환, 슬라이드 처리는 변경하지 않았다.
+- 생활방 `(1,1)`, `(1,-1)`, `(-1,1)`과 부엌 `(1,1)`의 1프레임 픽셀 변위에서
+  `|dx|`와 `|dy|`의 차가 0.01px 이하인지 단언했다.
+- 누적 이동 검증은 한 번 복원한 뒤 30프레임을 연속 이동하며 모든 프레임 성공과
+  총 100px 이동을 검사하도록 바꿨다.
+- 공식 `npm run test:waitdog`는 재시도 없이 exit 139,
+  마지막 줄 `ERROR: SecItemCopyMatching failed -50`로 중단했다.
+- 네이티브 esbuild + Deno 대체 실행 결과:
+  `MOTION CONTRACT OK 444 assertions`, `SIM CONTRACT OK 390 assertions`.

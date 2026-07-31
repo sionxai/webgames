@@ -500,3 +500,23 @@ Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, �
 - [ ] 수용 커맨드 검증 — `SecItemCopyMatching failed -50`가 최초/1회 재시도 모두 발생해 환경 차단
 
 고정 범위: 렌더 소유권만 이전하며 좌표, 카메라, 이동, 충돌, 게임 규칙과 화면은 변경하지 않는다.
+
+# 기다려멍 R4 — 이동 조작감 수정
+
+- [x] 기준 HEAD/clean 상태와 승인된 specR4 계약 확인
+- [x] `balance.ts`를 200px/s 직접 이동과 40×28, p=2 발 타원으로 갱신
+- [x] 키보드·가상스틱 및 클릭 이동을 방별 픽셀 공간 등속으로 변경
+- [x] 모션 계약의 기존 정규화 거리/스프라이트 비겹침 단언을 새 설계로 교체
+- [x] 축/방/속도/대각선/강아지 접근/RangeError 핵심 수치 단언 6개 추가
+- [x] 대각선 입력의 화면 각도 보정(63.4도 → 45도) 및 누적 이동 계약 정정
+- [x] Waitdog 390+motion, Forge 141, TypeScript, production build 수용 커맨드 검증
+      — 실행자(Codex) 환경에서는 Node keychain 오류(exit 139)로 차단됐고,
+      운용자(Claude)가 정상 환경에서 직접 실행해 확인:
+      `SIM CONTRACT OK 390` / `MOTION CONTRACT OK 444` /
+      `Contract verification complete: 141 assertions` / tsc 0 오류 / 빌드 성공.
+      추가로 상수 퍼터브 3회로 새 단언의 실효성을 반증 검증했다.
+
+고정 범위: `balance.ts`, `waitdogSim.ts`, 필요 시 `economy.ts`,
+`waitdog-motion-contract.ts`와 기록 파일만 변경한다. door transition, 저장 v3,
+RNG 소비, 기존 slide 구현은 변경하지 않으며 `waitdog-sim-contract.ts`,
+`App.tsx`, `HouseCanvas.tsx`는 수정하지 않는다.

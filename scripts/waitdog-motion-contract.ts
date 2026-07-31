@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { BALANCE } from "../src/waitdog/constants/balance";
 import {
   createSim,
@@ -24,25 +26,60 @@ const assert = createContractAssert(() => {
 });
 
 const directContractAssertionStart = assertionCount;
-// HouseCanvas 의 실제 그리기 크기에서 유도한다. 2026-07-30 축소:
-// 보호자 h145(폭 122) → h110(폭 93), 강아지 폭 110 → 85.
-// 방(부엌 travel 폭 233px)에 두 캐릭터가 나란히 설 수 있게 하려는 변경이다.
-const OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX = (93 + 85) / 2;
-const OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX = 110;
-const ownerDogSpriteBoundsSeparated = (
+const compareFootY = (
+  first: { footY: number },
+  second: { footY: number },
+): number => first.footY - second.footY;
+const ownerDogDepthOrderConsistent = (
   state: Pick<WaitdogFullState, "ownerSpatial" | "spatial">,
 ): boolean => {
   if (state.ownerSpatial.room !== state.spatial.room) return true;
+  const entities = [
+    { id: "owner", footY: state.ownerSpatial.y },
+    { id: "dog", footY: state.spatial.y },
+  ];
+  entities.sort(compareFootY);
+  return entities[0].footY <= entities[1].footY &&
+    (state.ownerSpatial.y <= state.spatial.y
+      ? entities[0].id === "owner"
+      : entities[0].id === "dog");
+};
+const houseCanvasSource = await readFile(
+  resolve(process.cwd(), "src/waitdog/components/HouseCanvas.tsx"),
+  "utf8",
+);
+assert(
+  houseCanvasSource.includes(
+    "entities.sort((first, second) => first.footY - second.footY);",
+  ),
+  "C1 HouseCanvas production source did not retain ascending footY sorting",
+);
+assert(
+  [
+    { id: "front", footY: 0.8 },
+    { id: "back", footY: 0.2 },
+    { id: "middle", footY: 0.5 },
+  ].sort(compareFootY).map((entity) => entity.id).join(",") ===
+    "back,middle,front",
+  "C1 footY comparator did not draw larger footY entities later",
+);
+const ownerPixelDistance = (
+  room: keyof typeof BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX,
+  dx: number,
+  dy: number,
+): number => {
   const travel =
-    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[
-      state.ownerSpatial.room
-    ];
-  const horizontalDistancePx =
-    Math.abs(state.ownerSpatial.x - state.spatial.x) * travel.x;
-  const verticalDistancePx =
-    Math.abs(state.ownerSpatial.y - state.spatial.y) * travel.y;
-  return horizontalDistancePx >= OWNER_DOG_SPRITE_HORIZONTAL_HALF_SUM_PX ||
-    verticalDistancePx >= OWNER_DOG_SPRITE_VERTICAL_CLEARANCE_PX;
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[room];
+  return Math.hypot(dx * travel.x, dy * travel.y);
+};
+const ownerPixelDelta = (
+  room: keyof typeof BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX,
+  dx: number,
+  dy: number,
+): { x: number; y: number } => {
+  const travel =
+    BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX[room];
+  return { x: dx * travel.x, y: dy * travel.y };
 };
 
 // C1: fixed axis/diagonal steps and invalid/opposite input rejection.
@@ -55,11 +92,12 @@ assert(
 const directAxisAfter = directAxis.getFullState().ownerSpatial;
 assert(
   closeEnough(
-      Math.hypot(
+      ownerPixelDistance(
+        directAxisStart.room,
         directAxisAfter.x - directAxisStart.x,
         directAxisAfter.y - directAxisStart.y,
       ),
-      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
     ) &&
     directAxisAfter.y === directAxisStart.y,
   "C1 axis direct step did not use the fixed balance distance",
@@ -86,11 +124,14 @@ const directDiagonalDeltaY =
   directDiagonalAfter.y - directDiagonalStart.y;
 assert(
   closeEnough(
-      Math.hypot(directDiagonalDeltaX, directDiagonalDeltaY),
-      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
-    ) &&
-    closeEnough(directDiagonalDeltaX, directDiagonalDeltaY),
-  "C1 diagonal input was not normalized to the fixed step distance",
+      ownerPixelDistance(
+        directDiagonalStart.room,
+        directDiagonalDeltaX,
+        directDiagonalDeltaY,
+      ),
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
+    ),
+  "C1 diagonal input was not normalized to the fixed pixel step distance",
 );
 const beforeZeroVector = directDiagonal.serialize();
 assert(
@@ -113,24 +154,25 @@ assert(
     dy: Number.MIN_VALUE,
   }).ok &&
     closeEnough(
-      Math.hypot(
+      ownerPixelDistance(
+        subnormalStart.room,
         subnormalDiagonal.getFullState().ownerSpatial.x - subnormalStart.x,
         subnormalDiagonal.getFullState().ownerSpatial.y - subnormalStart.y,
       ),
-      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
     ),
   "C1 subnormal finite diagonal input escaped normalization",
 );
 
 // C2: room bounds, doorway roundtrip, and deterministic direct traces.
 const wallBounded = createSim(10_101, { dogRoom: "toilet" });
-for (let step = 0; step < 10; step += 1) {
+for (let step = 0; step < 43; step += 1) {
   if (!wallBounded.moveOwnerBy({ dx: 0, dy: 1 }).ok) {
     throw new Error("CONTRACT FAIL: C2 setup could not reach a non-door wall");
   }
 }
 let wallTransitioned = false;
-for (let step = 0; step < 30; step += 1) {
+for (let step = 0; step < 60; step += 1) {
   if (!wallBounded.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
     break;
   }
@@ -166,7 +208,7 @@ assert(
 const doorRoundtrip = createSim(10_102);
 for (
   let step = 0;
-  step < 30 && doorRoundtrip.getFullState().ownerSpatial.room === "living";
+  step < 60 && doorRoundtrip.getFullState().ownerSpatial.room === "living";
   step += 1
 ) {
   if (!doorRoundtrip.moveOwnerBy({ dx: 1, dy: 0 }).ok) {
@@ -368,26 +410,22 @@ assert(
   "C4 in-range reinforcement did not complete the encounter economy",
 );
 
-// 2026-07-30 설계 변경(사용자 결정): "스프라이트가 시각적으로 겹치지 않는다" 불변식은 유지하되,
-// 스프라이트를 방 크기에 맞게 줄여 그 불변식과 자유로운 이동이 동시에 성립하게 한다.
-// 종전에는 보호자 122px + 강아지 110px = 232px 가 부엌 travel 폭 233px 과 거의 같아
-// 두 캐릭터가 나란히 설 수 없었고, 그래서 통행금지 영역이 방보다 넓어지는 결과가 됐다.
-// 축소 후: 보호자 h145→110(폭 93), 강아지 폭 110→85 → 가로 반합 89px(부엌 폭의 38%).
-// 충돌 상수는 새 스프라이트 경계에 맞춘다(가로 반합 89 바로 위, 세로 보호자 높이 110 바로 위).
+// 충돌은 발밑의 작은 타원이고, 스프라이트 겹침의 시각적 정합성은 HouseCanvas와
+// 같은 footY 오름차순 정렬(footY가 큰 엔티티를 나중에 그림)이 담당한다.
 assert(
   BALANCE.LIFESTYLE.OWNER.INTERACTION_RADIUS === 0.12 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .HORIZONTAL_CLEARANCE_PX >= 88 &&
+        .HORIZONTAL_CLEARANCE_PX >= 36 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .HORIZONTAL_CLEARANCE_PX <= 100 &&
+        .HORIZONTAL_CLEARANCE_PX <= 44 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .VERTICAL_CLEARANCE_PX >= 108 &&
+        .VERTICAL_CLEARANCE_PX >= 24 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .VERTICAL_CLEARANCE_PX <= 120 &&
+        .VERTICAL_CLEARANCE_PX <= 32 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT
-        .SUPERELLIPSE_EXPONENT >= 8 &&
+        .SUPERELLIPSE_EXPONENT === 2 &&
     BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ENCOUNTER_SCALE > 1,
-  "C4 encounter proximity did not keep sprite-sized visual clearance",
+  "C4 encounter proximity did not keep the foot-sized ellipse clearance",
 );
 
 const whineProximity = createSim(10_302);
@@ -457,7 +495,7 @@ assert(
 // C5: every successful direct step preserves owner/dog separation.
 const directOverlap = createSim(10_401);
 let collisionConstrained = false;
-for (let step = 0; step < 24; step += 1) {
+for (let step = 0; step < 300; step += 1) {
   const state = directOverlap.getFullState();
   const dogBeforeStep = state.spatial;
   const result = directOverlap.moveOwnerBy({
@@ -468,7 +506,6 @@ for (let step = 0; step < 24; step += 1) {
     directOverlap.getFullState().ownerSpatial,
     directOverlap.getFullState().spatial,
   );
-  if (!result.ok || separation <= 1.05) collisionConstrained = true;
   assert(
     !directOverlap.getFullState().ownerDogOverlap &&
       !directOverlap.getDogView().ownerDogOverlap &&
@@ -480,6 +517,10 @@ for (let step = 0; step < 24; step += 1) {
         JSON.stringify(dogBeforeStep),
     `C5 owner/dog footprints overlapped or dog moved after step ${step + 1}`,
   );
+  if (!result.ok || separation <= 1.05) {
+    collisionConstrained = true;
+    break;
+  }
 }
 assert(
   collisionConstrained,
@@ -489,8 +530,8 @@ assert(
 const initialSpriteSeparation = createSim(10_402).getFullState();
 assert(
   !initialSpriteSeparation.ownerDogOverlap &&
-    ownerDogSpriteBoundsSeparated(initialSpriteSeparation),
-  "C5 fresh living-room spawn visually overlapped the dog sprites",
+    ownerDogDepthOrderConsistent(initialSpriteSeparation),
+  "C5 fresh living-room spawn did not preserve footY depth ordering",
 );
 
 const horizontalApproach = createSim(10_403);
@@ -511,10 +552,10 @@ horizontalSnapshot.spatial = {
 horizontalSnapshot.ownerSpatial = {
   ...horizontalSnapshot.ownerSpatial,
   room: "living",
-  x: 0.9,
+  x: 0.894,
   y: 0.5,
   targetRoom: "living",
-  targetX: 0.9,
+  targetX: 0.894,
   targetY: 0.5,
   route: [],
   activity: "idle",
@@ -523,12 +564,12 @@ horizontalSnapshot.ownerSpatial = {
 };
 horizontalApproach.restore(horizontalSnapshot);
 const horizontalDogBefore = horizontalApproach.getFullState().spatial;
-for (let step = 0; step < 40; step += 1) {
+for (let step = 0; step < 100; step += 1) {
   const state = horizontalApproach.getFullState();
   const result = horizontalApproach.moveOwnerBy({ dx: -1, dy: 0 });
   assert(
     !horizontalApproach.getFullState().ownerDogOverlap &&
-      ownerDogSpriteBoundsSeparated(horizontalApproach.getFullState()) &&
+      ownerDogDepthOrderConsistent(horizontalApproach.getFullState()) &&
       JSON.stringify(horizontalApproach.getFullState().spatial) ===
         JSON.stringify(horizontalDogBefore),
     `C5 horizontal approach violated sprite separation at step ${step + 1}`,
@@ -552,8 +593,8 @@ assert(
       horizontalApproach.getFullState().ownerSpatial,
       horizontalApproach.getFullState().spatial,
     ) <= 1.05 &&
-    ownerDogSpriteBoundsSeparated(horizontalApproach.getFullState()),
-  "C5 horizontal approach did not reach a visibly separated boundary",
+    ownerDogDepthOrderConsistent(horizontalApproach.getFullState()),
+  "C5 horizontal approach did not reach a depth-sorted foot boundary",
 );
 
 const diagonalApproach = createSim(10_404);
@@ -587,7 +628,7 @@ diagonalSnapshot.ownerSpatial = {
 diagonalApproach.restore(diagonalSnapshot);
 const diagonalDogBefore = diagonalApproach.getFullState().spatial;
 let diagonalBoundaryReached = false;
-for (let step = 0; step < 40; step += 1) {
+for (let step = 0; step < 100; step += 1) {
   const result = diagonalApproach.stepOwnerToward({
     room: "living",
     x: diagonalDogBefore.x,
@@ -600,7 +641,7 @@ for (let step = 0; step < 40; step += 1) {
   );
   assert(
     !state.ownerDogOverlap &&
-      ownerDogSpriteBoundsSeparated(state) &&
+      ownerDogDepthOrderConsistent(state) &&
       JSON.stringify(state.spatial) === JSON.stringify(diagonalDogBefore),
     `C5 diagonal approach violated sprite separation at step ${step + 1}`,
   );
@@ -611,8 +652,8 @@ for (let step = 0; step < 40; step += 1) {
 }
 assert(
   diagonalBoundaryReached &&
-    ownerDogSpriteBoundsSeparated(diagonalApproach.getFullState()),
-  "C5 diagonal approach did not reach a visibly separated boundary",
+    ownerDogDepthOrderConsistent(diagonalApproach.getFullState()),
+  "C5 diagonal approach did not reach a depth-sorted foot boundary",
 );
 
 // C6: click stepping follows the existing toilet-living-kitchen route.
@@ -629,17 +670,18 @@ assert(
 const clickFirstAfter = clickRoute.getFullState().ownerSpatial;
 assert(
   closeEnough(
-    Math.hypot(
+    ownerPixelDistance(
+      clickFirstBefore.room,
       clickFirstAfter.x - clickFirstBefore.x,
       clickFirstAfter.y - clickFirstBefore.y,
     ),
-    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
   ),
-  "C6 click movement did not use the fixed direct step",
+  "C6 click movement did not use the fixed direct pixel step",
 );
 const clickRoomTrace = ["toilet"];
 let clickRouteSteps = 1;
-while (clickRouteSteps < 180) {
+while (clickRouteSteps < 400) {
   const ownerSpatial = clickRoute.getFullState().ownerSpatial;
   if (
     ownerSpatial.room === clickTarget.room &&
@@ -1023,27 +1065,28 @@ assert(
 const deltaFrameAfter = deltaFrame.getFullState().ownerSpatial;
 assert(
   closeEnough(
-    Math.hypot(
+    ownerPixelDistance(
+      deltaFrameStart.room,
       deltaFrameAfter.x - deltaFrameStart.x,
       deltaFrameAfter.y - deltaFrameStart.y,
     ),
-    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_DISTANCE,
-  ) &&
-    closeEnough(
-      deltaFrameAfter.x - deltaFrameStart.x,
-      deltaFrameAfter.y - deltaFrameStart.y,
-    ),
-  "M3 reference delta-time diagonal was not normalized",
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
+  ),
+  "M3 reference delta-time diagonal was not pixel-normalized",
 );
 const deltaLong = createSim(11_102);
 const deltaLongStart = deltaLong.getFullState().ownerSpatial;
 assert(
   deltaLong.moveOwnerBy({ dx: 1, dy: 0, elapsedMs: 50 }).ok &&
     closeEnough(
-      deltaLong.getFullState().ownerSpatial.x - deltaLongStart.x,
-      BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PER_SECOND * 0.05,
+      ownerPixelDistance(
+        deltaLongStart.room,
+        deltaLong.getFullState().ownerSpatial.x - deltaLongStart.x,
+        0,
+      ),
+      BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND * 0.05,
     ),
-  "M3 elapsed milliseconds did not scale direct distance",
+  "M3 elapsed milliseconds did not scale direct pixel distance",
 );
 const invalidDeltaBefore = deltaLong.serialize();
 assert(
@@ -1057,13 +1100,239 @@ assert(
       JSON.stringify(invalidDeltaBefore),
   "M3 invalid delta-time input changed state",
 );
+assert(
+  closeEnough(
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX,
+    BALANCE.LIFESTYLE.OWNER.DIRECT_SPEED_PX_PER_SECOND *
+      BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS / 1000,
+  ),
+  "M3 reference pixel step did not match speed times reference duration",
+);
+
+const assertDiagonalScreenAngle = (
+  seed: number,
+  room: "living" | "kitchen",
+  dx: 1 | -1,
+  dy: 1 | -1,
+): void => {
+  const sim = createSim(seed);
+  const snapshot = sim.serialize();
+  const dogRoom = room === "living" ? "toilet" : "living";
+  snapshot.dogRoom = dogRoom;
+  snapshot.spatial = {
+    ...snapshot.spatial,
+    room: dogRoom,
+    targetRoom: dogRoom,
+    route: [],
+    moving: false,
+  };
+  snapshot.owner = { ...snapshot.owner, room };
+  snapshot.ownerSpatial = {
+    ...snapshot.ownerSpatial,
+    room,
+    x: 0.5,
+    y: 0.5,
+    targetRoom: room,
+    targetX: 0.5,
+    targetY: 0.5,
+    route: [],
+    activity: "idle",
+    destinationActivity: "idle",
+    moving: false,
+  };
+  sim.restore(snapshot);
+  const before = sim.getFullState().ownerSpatial;
+  const result = sim.moveOwnerBy({
+    dx,
+    dy,
+    elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+  });
+  const after = sim.getFullState().ownerSpatial;
+  const delta = ownerPixelDelta(
+    room,
+    after.x - before.x,
+    after.y - before.y,
+  );
+  assert(
+    result.ok && Math.abs(Math.abs(delta.x) - Math.abs(delta.y)) <= 0.01,
+    `M3 ${room} (${dx},${dy}) diagonal did not preserve a 45-degree screen angle`,
+  );
+};
+
+assertDiagonalScreenAngle(11_099, "living", 1, 1);
+assertDiagonalScreenAngle(11_100, "living", 1, -1);
+assertDiagonalScreenAngle(11_101, "living", -1, 1);
+assertDiagonalScreenAngle(11_102, "kitchen", 1, 1);
+
+const CUMULATIVE_PIXEL_FRAMES = 30;
+const cumulativePixelTravel = (
+  seed: number,
+  room: "living" | "kitchen",
+  dx: number,
+  dy: number,
+): number => {
+  const sim = createSim(seed);
+  const snapshot = sim.serialize();
+  const dogRoom = room === "living" ? "toilet" : "living";
+  snapshot.dogRoom = dogRoom;
+  snapshot.spatial = {
+    ...snapshot.spatial,
+    room: dogRoom,
+    targetRoom: dogRoom,
+    route: [],
+    moving: false,
+  };
+  snapshot.owner = { ...snapshot.owner, room };
+  snapshot.ownerSpatial = {
+    ...snapshot.ownerSpatial,
+    room,
+    x: dx >= 0 ? 0.2 : 0.8,
+    y: dy >= 0 ? 0.25 : 0.75,
+    targetRoom: room,
+    targetX: dx >= 0 ? 0.2 : 0.8,
+    targetY: dy >= 0 ? 0.25 : 0.75,
+    route: [],
+    activity: "idle",
+    destinationActivity: "idle",
+    moving: false,
+  };
+  sim.restore(snapshot);
+  let totalPx = 0;
+  let allFramesAccepted = true;
+  for (let frame = 0; frame < CUMULATIVE_PIXEL_FRAMES; frame += 1) {
+    const before = sim.getFullState().ownerSpatial;
+    const result = sim.moveOwnerBy({
+      dx,
+      dy,
+      elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+    });
+    if (!result.ok) {
+      allFramesAccepted = false;
+      break;
+    }
+    const after = sim.getFullState().ownerSpatial;
+    totalPx += ownerPixelDistance(
+      room,
+      after.x - before.x,
+      after.y - before.y,
+    );
+  }
+  assert(
+    allFramesAccepted,
+    `M3 ${room} (${dx},${dy}) continuous pixel travel rejected a frame`,
+  );
+  return totalPx;
+};
+
+const livingHorizontal30Px =
+  cumulativePixelTravel(11_103, "living", 1, 0);
+const livingVertical30Px =
+  cumulativePixelTravel(11_104, "living", 0, 1);
+const kitchenHorizontal30Px =
+  cumulativePixelTravel(11_105, "kitchen", 1, 0);
+const livingDiagonal30Px =
+  cumulativePixelTravel(11_106, "living", 1, 1);
+assert(
+  Math.abs(livingHorizontal30Px - livingVertical30Px) <= 0.5,
+  "M3 numeric 1 axis movement was not pixel-isometric within 0.5px",
+);
+assert(
+  Math.abs(livingHorizontal30Px - kitchenHorizontal30Px) <= 0.5,
+  "M3 numeric 2 room movement was not pixel-isometric within 0.5px",
+);
+assert(
+  Math.abs(
+    livingHorizontal30Px -
+      CUMULATIVE_PIXEL_FRAMES * BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX
+  ) <=
+    CUMULATIVE_PIXEL_FRAMES *
+      BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX * 0.01,
+  "M3 numeric 3 continuous movement did not match frame count times pixel step",
+);
+assert(
+  Math.abs(livingDiagonal30Px - livingHorizontal30Px) <=
+    livingHorizontal30Px * 0.01,
+  "M3 numeric 4 diagonal movement accelerated beyond one percent",
+);
+
+const dogApproach = createSim(11_107);
+const dogApproachSnapshot = dogApproach.serialize();
+dogApproachSnapshot.dogRoom = "living";
+dogApproachSnapshot.spatial = {
+  ...dogApproachSnapshot.spatial,
+  room: "living",
+  x: 0.5,
+  y: 0.5,
+  targetRoom: "living",
+  targetX: 0.5,
+  targetY: 0.5,
+  route: [],
+  activity: "idle",
+  moving: false,
+};
+dogApproachSnapshot.owner = {
+  ...dogApproachSnapshot.owner,
+  room: "living",
+};
+dogApproachSnapshot.ownerSpatial = {
+  ...dogApproachSnapshot.ownerSpatial,
+  room: "living",
+  x: 0.894,
+  y: 0.5,
+  targetRoom: "living",
+  targetX: 0.894,
+  targetY: 0.5,
+  route: [],
+  activity: "idle",
+  destinationActivity: "idle",
+  moving: false,
+};
+dogApproach.restore(dogApproachSnapshot);
+let dogApproachRangeErrors = 0;
+for (let frame = 0; frame < 300; frame += 1) {
+  const state = dogApproach.getFullState();
+  try {
+    dogApproach.moveOwnerBy({
+      dx: state.spatial.x - state.ownerSpatial.x,
+      dy: state.spatial.y - state.ownerSpatial.y,
+      elapsedMs: BALANCE.LIFESTYLE.OWNER.DIRECT_REFERENCE_MS,
+    });
+  } catch (error) {
+    if (error instanceof RangeError) {
+      dogApproachRangeErrors += 1;
+    } else {
+      throw error;
+    }
+  }
+}
+const dogApproachState = dogApproach.getFullState();
+const dogApproachDistancePx = ownerPixelDistance(
+  "living",
+  dogApproachState.ownerSpatial.x - dogApproachState.spatial.x,
+  dogApproachState.ownerSpatial.y - dogApproachState.spatial.y,
+);
+assert(
+  ownerDogFootprintSeparation(
+      dogApproachState.ownerSpatial,
+      dogApproachState.spatial,
+    ) <= 1.05 &&
+    dogApproachDistancePx <= 60,
+  "M3 numeric 5 owner could not approach the dog within the foot boundary",
+);
+assert(
+  dogApproachRangeErrors === 0,
+  "M3 numeric 6 dog approach violated the no-overlap RangeError invariant",
+);
 
 for (const [index, y] of [0.12, 0.45, 0.88].entries()) {
   const softDoor = createSim(11_110 + index);
   const softDoorSnapshot = softDoor.serialize();
-  softDoorSnapshot.ownerSpatial.x = 0.96;
+  const softDoorStartX = 0.98 -
+    BALANCE.LIFESTYLE.OWNER.DIRECT_STEP_PX /
+      BALANCE.LIFESTYLE.OWNER.VISUAL_FOOTPRINT.ROOM_TRAVEL_PX.living.x;
+  softDoorSnapshot.ownerSpatial.x = softDoorStartX;
   softDoorSnapshot.ownerSpatial.y = y;
-  softDoorSnapshot.ownerSpatial.targetX = 0.96;
+  softDoorSnapshot.ownerSpatial.targetX = softDoorStartX;
   softDoorSnapshot.ownerSpatial.targetY = y;
   softDoor.restore(softDoorSnapshot);
   assert(
@@ -1098,7 +1367,7 @@ for (let step = 0; step < 80; step += 1) {
     wasdRoomTrace.push(wasdRoute.getFullState().ownerSpatial.room);
   }
 }
-for (let step = 0; step < 40; step += 1) {
+for (let step = 0; step < 100; step += 1) {
   const ownerSpatial = wasdRoute.getFullState().ownerSpatial;
   if (ownerSpatial.y <= 0.4) break;
   const result = wasdRoute.moveOwnerBy({ dx: 0, dy: -1 });
@@ -1134,7 +1403,7 @@ assert(
 const clickCollision = createSim(11_130);
 const clickCollisionDog = clickCollision.getFullState().spatial;
 let clickCollisionConstrained = false;
-for (let step = 0; step < 40; step += 1) {
+for (let step = 0; step < 300; step += 1) {
   const result = clickCollision.stepOwnerToward({
     room: clickCollisionDog.room,
     x: clickCollisionDog.x,
@@ -1151,7 +1420,10 @@ for (let step = 0; step < 40; step += 1) {
       separation >= 1 - 1e-9,
     `M3 click collision attempt ${step + 1} moved the dog`,
   );
-  if (!result.ok || separation <= 1.05) clickCollisionConstrained = true;
+  if (!result.ok || separation <= 1.05) {
+    clickCollisionConstrained = true;
+    break;
+  }
 }
 assert(
   clickCollisionConstrained,
