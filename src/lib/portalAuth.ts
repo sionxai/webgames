@@ -12,7 +12,7 @@ import {
   type User,
 } from 'firebase/auth';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: 'AIzaSyCc4Gjh0N3wzCxqAEEQkrsX8AlI7UNBGR0',
   authDomain: 'webgames-66ccf.firebaseapp.com',
   databaseURL: 'https://webgames-66ccf-default-rtdb.asia-southeast1.firebasedatabase.app',
