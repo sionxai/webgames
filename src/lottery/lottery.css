@@ -1,0 +1,119 @@
+:root { color-scheme: dark; font-family: "Noto Sans KR", system-ui, sans-serif; background: #090b10; color: #eef2f7; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; background: radial-gradient(circle at top, #202636, #090b10 55%); }
+button, input { font: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; opacity: .42; }
+.lottery-app { width: min(1180px, 100%); margin: auto; padding: 16px 20px 12px; }
+/* 헤더+상태를 한 줄로 압축. 이전 구성(64px 타이틀 + 4칸 카드 110px)이 놀이영역을 화면 밖으로 밀었다. */
+.topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
+.topbar h1 { margin: 0; font-size: 24px; line-height: 1.3; letter-spacing: -.04em; white-space: nowrap; }
+.topbar a { margin-left: auto; color: #dce5f5; text-decoration: none; border: 1px solid #445067; border-radius: 999px; padding: 6px 12px; font-size: 13px; }
+.stat-line { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; font-size: 13px; color: #98a4b8; }
+.stat-line strong { color: #fff; font-size: 15px; font-variant-numeric: tabular-nums; }
+.stat-line em { font-style: normal; opacity: .65; font-size: 12px; }
+.stat-line .point-badge { margin-left: 6px; color: #1a1408; background: #e8c65a; border-radius: 999px; padding: 1px 7px; font-weight: 800; opacity: 1; }
+.eyebrow { margin: 0 0 5px; color: #e2bd67; font-weight: 700; }
+.panel { background: rgba(18, 23, 34, .92); border: 1px solid #30394b; border-radius: 14px; }
+.notice { min-height: 24px; color: #f1d38c; }
+.game-layout { display: grid; grid-template-columns: minmax(0, 2fr) minmax(270px, 1fr); gap: 14px; align-items: start; }
+.panel { padding: 14px; }
+/* 고정 최소 높이는 티켓(16:9)보다 커서 빈 공간만 만들고 스크롤을 유발했다 */
+.play-panel { min-height: auto; }
+.ticket-card { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 12px; background-size: cover; background-position: center; color: #171a1f; user-select: none; touch-action: none; box-shadow: 0 16px 40px #0008; container-type: inline-size; }
+.ticket-print {
+  position: absolute; inset: 0; z-index: 1; padding: var(--pt) var(--pr) var(--pb) var(--pl);
+  /* 헤더 밴드를 등급별 --head-h 로 고정해, 본문이 배경의 상단 장식 아래에서 시작하게 한다 */
+  display: grid; grid-template-columns: 29% minmax(0, 1fr);
+  grid-template-rows: var(--head-h, auto) minmax(0, 1fr) auto;
+  grid-template-areas: "head head" "info play" "foot foot"; column-gap: 2.4cqw; row-gap: 1.4cqw;
+  color: var(--ink); pointer-events: none;
+  --fs-fine: 1.05cqw; --fs-tab: 1.2cqw; --fs-body: 1.36cqw; --fs-head: 1.74cqw;
+}
+.pr-head { grid-area: head; display: flex; align-items: flex-start; justify-content: space-between; gap: 2cqw; }
+/* 900 weight 한글은 1.14로도 글리프가 line box를 2px 벗어난다(Range 검사로만 잡힘). 1.3 이상 유지. */
+.ticket-brand { font-weight: 900; letter-spacing: -.5px; line-height: 1.3; font-size: 3.4cqw; }
+.ticket-brand small { display: block; font-size: .95cqw; font-weight: 700; line-height: 1.25; letter-spacing: .5px; opacity: .68; }
+.head-r { display: flex; align-items: center; gap: 1.4cqw; }
+.round { color: var(--sub); font-size: var(--fs-body); font-weight: 700; line-height: 1.2; }
+.price { font-size: 2.82cqw; font-weight: 900; line-height: 1.14; padding: .4cqw 1.5cqw; border-radius: 999px; border: .16cqw solid currentColor; background: var(--panel); }
+.pr-info { grid-area: info; display: flex; flex-direction: column; gap: 1.2cqw; min-height: 0; }
+.howto { flex: 0 0 auto; border: .14cqw solid var(--line); border-radius: .8cqw; padding: .9cqw 1.1cqw; background: var(--panel); }
+.howto b { display: block; font-size: var(--fs-head); font-weight: 900; line-height: 1.14; margin-bottom: .35cqw; }
+.howto span { display: block; color: var(--sub); font-size: var(--fs-body); font-weight: 600; line-height: 1.35; }
+.prizebox { flex: 1; min-height: 0; color: var(--sub); border: .14cqw solid var(--line); border-radius: .8cqw; padding: .9cqw 1.1cqw; background: var(--panel); overflow: hidden; }
+.prize-title { color: var(--ink); font-size: var(--fs-head); font-weight: 900; line-height: 1.14; text-align: center; padding-bottom: .45cqw; margin-bottom: .55cqw; border-bottom: .14cqw solid var(--line); }
+.prize-row { display: flex; justify-content: space-between; gap: .6cqw; font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
+.prize-row span { font-weight: 600; }.prize-row b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pr-play { grid-area: play; position: relative; min-height: 0; border-radius: .9cqw; background: var(--plate); border: .16cqw solid var(--line); }
+.play-tab { position: absolute; z-index: 2; top: -.95cqw; padding: .1cqw .85cqw; border-radius: .45cqw; background: var(--plate); color: var(--ink); font-size: var(--fs-tab); font-weight: 800; line-height: 1.2; white-space: nowrap; }
+.tab-l { left: 2.4cqw; }.tab-r { right: 2.4cqw; }
+.play-columns { position: absolute; inset: 1.7cqw 1.5cqw 1.2cqw; display: flex; gap: 1.25cqw; min-width: 0; }
+.play-column { display: grid; grid-template-rows: 2.3cqw minmax(0, 1fr); min-width: 0; }
+.lucky-column { flex: 0 0 18%; }.mine-column { flex: 1; }
+.column-label { color: var(--sub); text-align: center; font-size: var(--fs-body); font-weight: 900; line-height: 1.2; }
+.cell-grid { display: grid; gap: .65cqw; min-height: 0; }
+.lucky-cells { grid-template-rows: repeat(2, minmax(0, 1fr)); }
+.scratch-cell { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; min-height: 0; border: .16cqw solid var(--line); border-radius: .65cqw; background: #fffdf6; overflow: hidden; line-height: 1.18; }
+.luckynum { color: #b4341f; font-size: calc(var(--cs) * .44); line-height: 1.3; }.mynum { color: #2a2118; font-size: calc(var(--cs) * .33); line-height: 1.3; }
+.cell-amount { color: #8a3a12; font-size: calc(var(--cs) * .17); font-weight: 800; line-height: 1.2; white-space: nowrap; }.cell-amount.triple { font-size: calc(var(--cs) * .25); }
+.pr-foot { grid-area: foot; display: flex; justify-content: space-between; align-items: flex-end; gap: 2cqw; color: var(--sub); font-size: var(--fs-fine); line-height: 1.25; }
+.pr-foot span { padding: .28cqw .7cqw; border-radius: .4cqw; background: var(--panel); white-space: nowrap; }
+.pr-foot span:last-child { font-variant-numeric: tabular-nums; letter-spacing: .4px; text-align: right; }
+.foil-canvas { position: absolute; z-index: 2; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.scratch-hud, .result { display: flex; justify-content: space-between; align-items: center; padding: 12px 4px 0; }
+.tool-readout { display: flex; align-items: center; gap: 7px; }
+.tool-readout i { display: inline-block; flex: none; max-width: 44px; max-height: 44px; min-width: 12px; min-height: 12px; border: 2px solid #f1ce73; border-radius: 50%; background: #f1ce7326; }
+.speed-meter { position: relative; height: 14px; margin: 9px 4px 0; overflow: hidden; border-radius: 999px; background: linear-gradient(90deg, #d39a3038, #d85c4d38); }
+.speed-good-zone { position: absolute; inset-block: 0; background: #4ade806b; }
+.speed-meter > i { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; box-shadow: 0 0 5px #fff; }
+.result strong { font-size: 22px; color: #f1ce73; }
+.result button, .run-over button, .loan button, #dev-complete { background: #e0b852; color: #17130b; border: 0; border-radius: 9px; padding: 10px 14px; font-weight: 900; }
+.done-ticket { color: #99d9ad; }
+.empty-card, .run-over { min-height: 300px; display: grid; place-content: center; text-align: center; }
+.side-column { display: grid; gap: 14px; }
+.panel h2 { margin: 0 0 12px; font-size: 18px; }
+/* 포인트가 없을 때는 한 줄로 접어 판매대를 화면 위쪽에 유지한다 */
+.tool-shop.collapsed { padding: 10px 14px; }
+.tool-shop.collapsed h2 { margin: 0; font-size: 14px; color: #98a4b8; font-weight: 700; }
+.tool-shop.collapsed h2 strong { color: #fff; }
+.tool-shop.collapsed .muted { color: #6b7689; font-size: 12px; font-weight: 600; }
+.shop b .short { font-style: normal; color: #d98b6a; font-size: 12px; font-weight: 700; }
+.shop { display: grid; gap: 8px; }
+.shop h2 { margin-bottom: 4px; }
+.shop button { display: flex; justify-content: space-between; color: #f3f6fb; background: #1a2231; border: 1px solid #39455b; border-radius: 9px; padding: 10px; }
+.shop em { color: #d5a8fa; font-size: 11px; }
+.tool-shop-head { display: flex; justify-content: space-between; align-items: center; }.tool-shop-head h2 { margin: 0; }
+.tool-shop-head b { color: #f1ce73; }.equipped-tool { margin: 9px 0; color: #aeb9ca; }.equipped-tool strong { color: #fff; }
+.upgrade-list { display: grid; gap: 8px; }.upgrade-card { padding: 9px; border: 1px solid #39455b; border-radius: 9px; background: #111824; }
+.upgrade-card > div { display: flex; justify-content: space-between; gap: 8px; }.upgrade-card > div span { color: #8996aa; font-size: 12px; }
+.upgrade-card p { margin: 6px 0 2px; color: #e4e9f1; }.upgrade-card small { display: block; min-height: 18px; color: #9eadc2; }
+.upgrade-card button { width: 100%; margin-top: 7px; padding: 7px; border: 0; border-radius: 7px; background: #e0b852; color: #17130b; font-weight: 900; }
+.upgrade-card.locked { border-style: dashed; }.upgrade-card.locked small { color: #e0b852; }
+.loan label, .tuning label { display: grid; gap: 4px; margin: 9px 0; color: #b8c2d3; }
+.loan input, .tuning input { width: 100%; background: #0c111b; color: white; border: 1px solid #3b465a; border-radius: 7px; padding: 8px; }
+.loan small { display: block; margin-top: 9px; color: #9ea9bb; }
+.tuning { margin-top: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; }
+.tuning h2 { grid-column: 1 / -1; }
+.source { text-align: center; color: #748095; font-size: 12px; padding: 22px 0 8px; }
+@media (max-width: 760px) {
+  .lottery-app { padding: 10px 8px 12px; }
+
+  /* hanpan-nav.js가 좌상단 8px에 fixed 아이콘을 띄운다 — 타이틀이 그 아래 깔리지 않게 비켜준다 */
+  .topbar { padding-left: 46px; gap: 10px; row-gap: 4px; }
+  .topbar h1 { font-size: 19px; }
+  .topbar a { padding: 5px 10px; font-size: 12px; }
+  .stat-line { gap: 10px; font-size: 12px; }
+  .stat-line strong { font-size: 13px; }
+
+  /* 3항목 space-between이 375px에서 줄바꿈됐다 — 한 줄에 눌러 담고 상세는 감춘다 */
+  .scratch-hud { font-size: 12px; gap: 8px; padding: 9px 2px 0; }
+  .scratch-hud .hud-detail { display: none; }
+  .tool-readout i { max-width: 22px; max-height: 22px; }
+
+  /* 카드 폭이 곧 칸 크기다 — 패딩을 줄여 되찾는다 */
+  .panel { padding: 10px; }
+  .game-layout { grid-template-columns: 1fr; gap: 10px; }
+  .play-panel { min-height: auto; }
+  .tuning { grid-template-columns: repeat(2, 1fr); }
+}

@@ -21,6 +21,16 @@ export interface GameEntry {
  */
 export const GAMES: GameEntry[] = [
   {
+    id: 'lottery',
+    title: '긁는순간',
+    genre: '즉석복권 긁기 시뮬',
+    tagline: '확률은 차갑고, 손은 성장한다',
+    description: '실제 공시 확률표를 바탕으로 복권을 긁고 숙련도를 쌓아 더 높은 등급에 도전하는 런 기반 시뮬레이션.',
+    path: '/games/lottery/',
+    thumbnail: '/assets/images/lottery-ticket-500.webp',
+    status: 'live'
+  },
+  {
     id: 'forge',
     title: '전설의 검 강화하기',
     genre: '방치형 강화 RPG',

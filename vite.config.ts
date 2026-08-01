@@ -13,6 +13,7 @@ export default defineConfig({
       input: {
         home: 'index.html',
         waitdog: 'games/waitdog/index.html',
+        lottery: 'games/lottery/index.html',
         forge: 'games/forge/index.html'
       }
     }

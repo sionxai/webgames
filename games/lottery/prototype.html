@@ -1,0 +1,1610 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>긁는순간 — 손맛 프로토타입</title>
+<style>
+  :root {
+    --bg: #12151b;
+    --panel: #1b1f28;
+    --panel-2: #232833;
+    --line: #303748;
+    --text: #e7ecf4;
+    --muted: #8d97a9;
+    --accent: #ffcf5c;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --over: #fb923c;
+    --bad: #f87171;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', 'Pretendard',
+      'Malgun Gothic', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  body { padding: 20px 16px 56px; }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+
+  header { margin-bottom: 18px; }
+  h1 { font-size: 19px; margin: 0 0 6px; letter-spacing: -0.3px; }
+  .sub { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .sub b { color: var(--accent); font-weight: 600; }
+
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: minmax(0, 1fr); } }
+
+  /* ---------- 복권 카드 ---------- */
+  .stage { display: flex; flex-direction: column; gap: 12px; }
+  .card {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 640 / 360;
+    border-radius: 14px;
+    overflow: hidden;
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.5);
+    container-type: inline-size;
+    touch-action: none;
+    cursor: none;
+    user-select: none;
+    -webkit-user-select: none;
+    background-size: cover;
+    background-position: center;
+    background-color: #f6ead0;
+  }
+  .face { position: absolute; inset: 0; z-index: 1; }
+  .grid { position: absolute; inset: 0; }
+
+  /* ---------- 티켓 인쇄 레이어 ----------
+     요소마다 퍼센트를 따로 찍으면 서로 정렬되지 않는다("붙여넣은 것" 같아진다).
+     등급별 safe 박스(장식 테두리 안쪽) 하나를 잡고 그 안에서 그리드를 공유한다.
+     타이포는 vw(뷰포트)가 아니라 cqw(카드 폭) 기준 — 옆 패널 유무에 흔들리지 않는다. */
+  .print {
+    position: absolute; inset: 0; z-index: 1;
+    padding: var(--pt) var(--pr) var(--pb) var(--pl);
+    display: grid;
+    grid-template-columns: 29% minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas: "head head" "info play" "foot foot";
+    column-gap: 2.4cqw; row-gap: 1.4cqw;
+    pointer-events: none;
+  }
+
+  /* 타이포 스케일 (ratio ≈1.28) — 단계를 5개로 줄이고 간격을 벌린다.
+     이전에는 7단계가 1.02~1.72cqw에 몰려 전부 '작은 글씨' 한 덩어리로 보였다.
+       --fs-fine 1.05 · --fs-tab 1.20 · --fs-body 1.36 · --fs-head 1.74 · 가격 2.82 · 브랜드 3.60 */
+  .print { --fs-fine: 1.05cqw; --fs-tab: 1.2cqw; --fs-body: 1.36cqw; --fs-head: 1.74cqw; }
+
+  .pr-head { grid-area: head; display: flex; align-items: flex-start; justify-content: space-between; gap: 2cqw; }
+  /* line-height를 1 미만으로 주면 글자 상자가 실제 글리프보다 작아져
+     텍스트가 박스 밖으로 그려진다(900 weight 한글에서 특히 심하다).
+     요소 rect로는 안 잡히므로 반드시 1 이상을 유지한다. */
+  .brand { font-weight: 900; letter-spacing: -0.5px; line-height: 1.14; font-size: 3.4cqw; }
+  .brand small { display: block; font-size: 0.95cqw; font-weight: 700; line-height: 1.25; letter-spacing: 0.5px; opacity: 0.68; }
+  .head-r { display: flex; align-items: center; gap: 1.4cqw; }
+  .round { font-size: var(--fs-body); font-weight: 700; letter-spacing: 0.2px; }
+  .price {
+    font-size: 2.82cqw; font-weight: 900; letter-spacing: -0.3px;
+    padding: 0.4cqw 1.5cqw; border-radius: 999px; border: 0.16cqw solid currentColor;
+  }
+
+  .pr-info { grid-area: info; display: flex; flex-direction: column; gap: 1.2cqw; min-height: 0; }
+  /* flex 열에서 기본 shrink가 걸리면 내용이 패널 밖으로 새어 나온다 — 줄지 않게 고정한다 */
+  .howto { flex: 0 0 auto; border-radius: 0.8cqw; padding: 0.9cqw 1.1cqw; }
+  .howto b { display: block; font-size: var(--fs-head); font-weight: 900; letter-spacing: -0.3px; line-height: 1.1; margin-bottom: 0.35cqw; }
+  .howto span { display: block; font-size: var(--fs-body); font-weight: 600; line-height: 1.35; }
+  .prizebox { flex: 1; border-radius: 0.8cqw; padding: 0.9cqw 1.1cqw; min-height: 0; }
+  .prizebox .t {
+    font-size: var(--fs-head); font-weight: 900; letter-spacing: -0.2px; text-align: center;
+    padding-bottom: 0.45cqw; margin-bottom: 0.55cqw; border-bottom: 0.14cqw solid;
+  }
+  .prizebox .r { display: flex; justify-content: space-between; gap: 0.6cqw; font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
+  .prizebox .r span { font-weight: 600; }
+  .prizebox .r b { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+  /* 놀이영역 — 실제 복권처럼 인쇄 테두리로 감싸고 탭 라벨을 얹는다 */
+  /* 놀이영역은 배경 장식(부채꼴 길로슈·금박)이 비쳐 올라오면 라벨·칸이 다 묻힌다.
+     실제 복권도 놀이영역은 바탕이 따로 깔린다 — 불투명 판을 깐다. */
+  .pr-play { grid-area: play; position: relative; min-height: 0; border-radius: 0.9cqw; }
+  .pr-play::after {
+    content: ''; position: absolute; inset: 0; border-radius: 0.9cqw;
+    border: 0.16cqw solid currentColor; opacity: 0.5;
+  }
+  .tab {
+    position: absolute; top: -0.95cqw; padding: 0.1cqw 0.85cqw; border-radius: 0.45cqw;
+    font-size: var(--fs-tab); font-weight: 800; letter-spacing: 0.2px; white-space: nowrap;
+  }
+  .tab-l { left: 2.4cqw; }
+  .tab-r { right: 2.4cqw; font-variant-numeric: tabular-nums; }
+  /* 쓰지 않는 등급에서는 display:none — opacity:0으로만 숨기면 레이아웃에 남아
+     이전 등급의 좌표를 물고 프레임 밖으로 삐져나간다. */
+  .collab {
+    position: absolute; font-size: var(--fs-head); font-weight: 900; letter-spacing: -0.2px;
+    line-height: 1.2; white-space: nowrap; display: none; transform: translateX(-50%);
+  }
+
+  .pr-foot {
+    grid-area: foot; display: flex; justify-content: space-between; align-items: flex-end; gap: 2cqw;
+    font-size: var(--fs-fine); line-height: 1.25;
+  }
+  /* 배경 모서리 장식(금색 필리그리)이 안쪽까지 뻗어 푸터를 덮는다 — 얇은 패널을 깔아준다 */
+  .pr-foot span { padding: 0.28cqw 0.7cqw; border-radius: 0.4cqw; }
+  .pr-foot span:last-child { font-variant-numeric: tabular-nums; letter-spacing: 0.4px; text-align: right; }
+  .cell {
+    position: absolute;
+    background: #fffdf6;
+    border: 1.2px solid rgba(160, 130, 80, 0.55);
+    border-radius: 5px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 1px; overflow: hidden;
+  }
+  /* 칸 글자는 **칸 크기에 비례**해야 한다.
+     칸 한 변이 등급마다 87px↔36px로 2.4배 차이나므로 고정값을 쓰면
+     저가권에선 헐렁하고 고액권에선 꽉 낀다. --cs = 칸 한 변(cqw), JS가 채운다. */
+  /* 행간은 1 이상 — 그 아래로 내리면 글리프가 line box를 벗어나 위아래가 깎인다 */
+  .cell .amt { font-size: calc(var(--cs, 8cqw) * 0.17); font-weight: 800; color: #8a3a12; line-height: 1.2; }
+  .cell .amt.big { font-size: calc(var(--cs, 8cqw) * 0.25); }
+  /* 나의 숫자: 숫자가 크고 그 아래 당첨금 — 행운숫자와 눈으로 대조하는 구조 */
+  .cell .mynum { font-size: calc(var(--cs, 8cqw) * 0.33); font-weight: 900; color: #2a2118; line-height: 1.18; }
+  .cell .luckynum { font-size: calc(var(--cs, 8cqw) * 0.44); font-weight: 900; color: #b4341f; line-height: 1.18; }
+  .cell.hit { background: #fff3cd; border-color: var(--accent); }
+  .cell.win { background: #fdf0e2; border-color: #b4341f; border-width: 2px; }
+
+  canvas.layer { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #foil { z-index: 2; }
+  #fx { z-index: 3; pointer-events: none; }
+
+  /* ---------- 속도 미터 ---------- */
+  .meter-box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; }
+  .meter-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 9px; }
+  .meter-head .lab { font-size: 12px; color: var(--muted); }
+  .verdict { font-size: 14px; font-weight: 800; letter-spacing: -0.2px; }
+  .speed-num { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--muted); }
+  .meter { position: relative; height: 24px; border-radius: 6px; overflow: hidden; background: #0e1116; }
+  .zone { position: absolute; top: 0; bottom: 0; }
+  .zone.slow { background: rgba(251, 191, 36, 0.24); }
+  .zone.good { background: rgba(74, 222, 128, 0.30); }
+  .zone.over { background: rgba(251, 146, 60, 0.26); }
+  .zone.bad  { background: rgba(248, 113, 113, 0.24); }
+  .needle { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; box-shadow: 0 0 8px rgba(255,255,255,0.85); transition: left 60ms linear; }
+  .meter-scale { display: flex; justify-content: space-between; font-size: 10px; color: #5f6a7d; margin-top: 5px; font-variant-numeric: tabular-nums; }
+
+  /* ---------- 우측 패널 ---------- */
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 15px; }
+  .panel + .panel { margin-top: 12px; }
+  .panel h2 { font-size: 12px; margin: 0 0 11px; color: var(--muted); font-weight: 700; letter-spacing: 0.3px; }
+
+  .tools { display: grid; grid-template-columns: repeat(2, 1fr); gap: 7px; }
+  .tool {
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 9px; padding: 8px 6px; cursor: pointer; text-align: center;
+    font-size: 11.5px; font-weight: 700; line-height: 1.35; transition: all 120ms;
+  }
+  .tool:hover { border-color: #4a5568; }
+  .tool.on { background: var(--accent); border-color: var(--accent); color: #1a1408; }
+  .tool span { display: block; font-size: 9.5px; font-weight: 600; opacity: 0.66; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  .slider { margin-top: 12px; }
+  .slider label { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--muted); margin-bottom: 5px; }
+  .slider label b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .slider input[type=range] { width: 100%; accent-color: var(--accent); }
+
+  .stats { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; font-size: 12px; }
+  .stats dt { color: var(--muted); }
+  .stats dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  .bars { margin-top: 11px; }
+  .bar-row { display: flex; align-items: center; gap: 7px; font-size: 11px; margin-bottom: 4px; }
+  .bar-row .name { width: 58px; color: var(--muted); flex-shrink: 0; }
+  .bar-row .track { flex: 1; height: 7px; background: #0e1116; border-radius: 4px; overflow: hidden; }
+  .bar-row .fill { height: 100%; width: 0; transition: width 200ms; }
+  .bar-row .pct { width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+
+  .btn-row { display: flex; gap: 8px; margin-top: 12px; }
+  button.act {
+    flex: 1; background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 9px; padding: 10px; font-size: 12.5px; font-weight: 700; cursor: pointer;
+  }
+  button.act:hover { border-color: #4a5568; }
+  button.act.primary { background: var(--accent); border-color: var(--accent); color: #1a1408; }
+
+  .checks { display: flex; flex-direction: column; gap: 8px; margin-top: 11px; font-size: 12px; color: var(--muted); }
+  .checks label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
+  .checks input { accent-color: var(--accent); }
+
+  /* ---------- 결과 오버레이 ---------- */
+  .result {
+    position: absolute; inset: 0; z-index: 4;
+    background: rgba(10, 12, 17, 0.9);
+    backdrop-filter: blur(3px);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    gap: 4px; padding: 20px; text-align: center;
+  }
+  .result.show { display: flex; }
+  .result .big { font-size: clamp(20px, 4.6vw, 34px); font-weight: 900; letter-spacing: -0.8px; }
+  .result .big.win { color: var(--accent); }
+  .result .big.lose { color: #6b7689; }
+  .result .dummy { font-size: 10.5px; color: #6b7689; margin-top: 2px; }
+  .result .row { display: flex; gap: 16px; flex-wrap: wrap; justify-content: center; margin-top: 12px; font-size: 12px; }
+  .result .row div { color: var(--muted); }
+  .result .row b { color: var(--text); font-variant-numeric: tabular-nums; display: block; font-size: 15px; margin-top: 2px; }
+  .result button {
+    margin-top: 16px; background: var(--accent); border: 0; color: #1a1408;
+    border-radius: 10px; padding: 11px 26px; font-size: 13.5px; font-weight: 800; cursor: pointer;
+  }
+
+  .note { margin-top: 16px; font-size: 11.5px; color: #6b7689; line-height: 1.75; }
+  .note code { background: var(--panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>긁는순간 — 손맛 프로토타입</h1>
+    <p class="sub">
+      속도 판정 · 표면 3단계 · 도구 6종의 <b>손맛만</b> 확인하는 벤치입니다.
+      확률표와 경제는 아직 없습니다 — 당첨 결과는 더미입니다.<br />
+      너무 빠르면 미끄러지고, 너무 느리면 접착층이 뭉칩니다. <b>적정 속도(초록)</b>를 찾아보세요.
+    </p>
+  </header>
+
+  <div class="layout">
+    <!-- ================= 좌: 카드 + 속도 미터 ================= -->
+    <div class="stage">
+      <div class="card" id="card">
+        <div class="face" id="face">
+          <!-- 인쇄 레이어: 등급별 safe 박스 안에서 하나의 그리드를 공유한다 -->
+          <div class="print" id="print">
+            <header class="pr-head">
+              <div class="brand" id="brand">긁는순간<small>SCRATCH THE MOMENT</small></div>
+              <div class="head-r">
+                <span class="round" id="roundNo">제 001 회</span>
+                <span class="price" id="priceBadge">1,000원</span>
+              </div>
+            </header>
+
+            <aside class="pr-info">
+              <div class="howto" id="howto"></div>
+              <div class="prizebox" id="prizeBox"></div>
+            </aside>
+
+            <section class="pr-play" id="playFrame">
+              <span class="tab tab-l" id="tabPlay">게임방법</span>
+              <span class="tab tab-r" id="tabGame">GAME 01</span>
+              <span class="collab" id="labLucky">행운숫자</span>
+              <span class="collab" id="labMine">나의 숫자</span>
+            </section>
+
+            <footer class="pr-foot">
+              <span id="footLeft"></span>
+              <span id="footRight"></span>
+            </footer>
+          </div>
+          <div class="grid" id="grid"></div>
+        </div>
+        <canvas class="layer" id="foil"></canvas>
+        <canvas class="layer" id="fx"></canvas>
+
+        <div class="result" id="result">
+          <div class="big" id="resultBig">꽝</div>
+          <div class="dummy">※ 더미 결과 — 실제 확률표 미적용</div>
+          <div class="row">
+            <div>소요<b id="rTime">0.0초</b></div>
+            <div>효율<b id="rEff">0%</b></div>
+            <div>중복 동선<b id="rDup">0%</b></div>
+            <div>적정 속도 유지<b id="rGood">0%</b></div>
+          </div>
+          <button id="again">다음 복권</button>
+        </div>
+      </div>
+
+      <div class="meter-box">
+        <div class="meter-head">
+          <span class="lab">현재 판정</span>
+          <span class="verdict" id="verdict">대기</span>
+          <span class="speed-num" id="speedNum">0 px/s</span>
+        </div>
+        <div class="meter" id="meter">
+          <div class="zone slow" id="zSlow"></div>
+          <div class="zone good" id="zGood"></div>
+          <div class="zone over" id="zOver"></div>
+          <div class="zone bad" id="zBad"></div>
+          <div class="needle" id="needle" style="left:0"></div>
+        </div>
+        <div class="meter-scale">
+          <span>0</span><span id="scaleMid">600</span><span id="scaleMax">1200 px/s</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 우: 도구 · 튜닝 · 통계 ================= -->
+    <div>
+      <div class="panel">
+        <h2>복권 등급</h2>
+        <div class="tools" id="grades" style="grid-template-columns:1fr"></div>
+        <div style="margin-top:10px;font-size:11px;color:var(--muted);line-height:1.6">
+          <b id="ruleLine" style="color:var(--accent)">—</b><br />
+          마스크 면적 <b id="maskInfo" style="color:var(--text)">—</b><br />
+          은박은 <b style="color:var(--text)">칸 위에만</b> 덮입니다. 빈 곳을 문지르면 효율만 떨어집니다.
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>등급별 실측 <span style="opacity:.55">(완주할 때마다 누적)</span></h2>
+        <table id="logTable" style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr style="color:var(--muted);text-align:right">
+            <th style="text-align:left;font-weight:600;padding-bottom:5px">등급</th>
+            <th style="font-weight:600">칸</th><th style="font-weight:600">마스크</th>
+            <th style="font-weight:600">평균초</th><th style="font-weight:600">n</th>
+          </tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+        <div class="btn-row"><button class="act" id="clearLog">기록 지우기</button></div>
+      </div>
+
+      <div class="panel">
+        <h2>동전 · 도구</h2>
+        <div class="tools" id="tools"></div>
+        <div class="checks">
+          <label><input type="checkbox" id="optSound" /> 소리 (WebAudio 합성)</label>
+          <label><input type="checkbox" id="optAuto" checked /> 90% 긁으면 자동 공개</label>
+          <label><input type="checkbox" id="optCov" /> 커버리지 디버그 오버레이</label>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>파라미터 튜닝 <span style="opacity:.55">(현재 도구)</span></h2>
+        <div class="slider">
+          <label>접촉면 반지름 <b><span id="vR">12</span> px</b></label>
+          <input type="range" id="sR" min="8" max="60" step="1" />
+        </div>
+        <div class="slider">
+          <label>절삭력 (1패스 제거율) <b><span id="vCut">0.42</span></b></label>
+          <input type="range" id="sCut" min="0.15" max="1" step="0.01" />
+        </div>
+        <div class="slider">
+          <label>적정 속도 하한 <b><span id="vMin">120</span> px/s</b></label>
+          <input type="range" id="sMin" min="20" max="300" step="5" />
+        </div>
+        <div class="slider">
+          <label>적정 속도 상한 <b><span id="vMax">380</span> px/s</b></label>
+          <input type="range" id="sMax" min="200" max="1400" step="10" />
+        </div>
+        <div class="btn-row">
+          <button class="act" id="resetTool">이 도구 기본값</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>실시간 통계</h2>
+        <dl class="stats">
+          <dt>공개율</dt><dd id="stProg">0%</dd>
+          <dt>경과</dt><dd id="stTime">0.0초</dd>
+          <dt>총 이동</dt><dd id="stTravel">0 px</dd>
+          <dt>유효 절삭</dt><dd id="stEff">0 px</dd>
+          <dt>효율</dt><dd id="stEffPct">—</dd>
+          <dt>중복 동선</dt><dd id="stDup">0%</dd>
+        </dl>
+        <div class="bars">
+          <div class="bar-row"><span class="name">적정</span><span class="track"><span class="fill" id="bGood" style="background:var(--ok)"></span></span><span class="pct" id="pGood">0%</span></div>
+          <div class="bar-row"><span class="name">뭉침</span><span class="track"><span class="fill" id="bSlow" style="background:var(--warn)"></span></span><span class="pct" id="pSlow">0%</span></div>
+          <div class="bar-row"><span class="name">과속</span><span class="track"><span class="fill" id="bOver" style="background:var(--over)"></span></span><span class="pct" id="pOver">0%</span></div>
+          <div class="bar-row"><span class="name">심한과속</span><span class="track"><span class="fill" id="bBad" style="background:var(--bad)"></span></span><span class="pct" id="pBad">0%</span></div>
+        </div>
+        <div class="btn-row">
+          <button class="act primary" id="newCard">새 복권</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="note">
+    <b>판정 규칙</b> — 적정 구간이면 절삭력 100%. 상한 초과 시 70%(가루 ×1.5), 상한 ×1.8 초과 시 35% + 미끄러짐.
+    하한 미만으로 <code>400ms</code> 이상 머무르면 접착층이 뭉쳐 같은 자리를 한 번 더 지나야 합니다.<br />
+    <b>도구가 셀수록 적정 구간이 넓어집니다</b> — 10원짜리는 까다롭고 정밀 롤러는 대충 해도 잘 긁힙니다. 업그레이드 체감을 수치가 아니라 손맛으로 주는 설계입니다.
+  </p>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ===================== 도구 정의 =====================
+  // vMin/vMax = 적정 속도 구간. 상위 도구일수록 구간이 넓어져 다루기 쉬워진다.
+  var TOOLS = [
+    { id: 'won10',  name: '10원',    r: 12, cut: 0.42, vMin: 120, vMax: 380  },
+    { id: 'won100', name: '100원',   r: 16, cut: 0.52, vMin: 105, vMax: 460  },
+    { id: 'won500', name: '500원',   r: 21, cut: 0.62, vMin: 95,  vMax: 560  },
+    { id: 'medal',  name: '기념주화', r: 27, cut: 0.72, vMin: 85,  vMax: 680  },
+    { id: 'brass',  name: '황동 스크레이퍼', r: 34, cut: 0.85, vMin: 75, vMax: 820 },
+    { id: 'roller', name: '정밀 롤러', r: 44, cut: 1.00, vMin: 60,  vMax: 1000 }
+  ];
+  var DEFAULTS = TOOLS.map(function (t) { return { r: t.r, cut: t.cut, vMin: t.vMin, vMax: t.vMax }; });
+
+  var OVER_MULT = 1.8;     // 상한 × 이 값을 넘으면 '심한 과속'
+  var CUT_OVER = 0.70;     // 과속 구간 절삭 배율
+  var CUT_BAD = 0.35;      // 심한 과속 절삭 배율
+  var CUT_GUM = 0.20;      // 뭉침 상태 절삭 배율
+  var DWELL_MS = 400;      // 이 시간 이상 하한 미만이면 뭉침
+  var AUTO_AT = 0.90;      // 자동 공개 임계
+  var CELL = 6;            // 커버리지 격자 셀 크기(px, 논리 좌표)
+  var MAX_PARTICLES = 80;
+
+  // ===================== DOM =====================
+  var card = document.getElementById('card');
+  var foil = document.getElementById('foil');
+  var fx = document.getElementById('fx');
+  var fctx = foil.getContext('2d');
+  var xctx = fx.getContext('2d');
+  var gridEl = document.getElementById('grid');
+  var resultEl = document.getElementById('result');
+
+  var el = function (id) { return document.getElementById(id); };
+
+  // ===================== 상태 =====================
+  // 카드는 16:9 — 시온바나나 배경(1600×901)에 맞춘다.
+  var W = 640, H = 360, dpr = 0;
+  var canvasReady = false;
+  var cols = 0, rows = 0, cov = null, passes = null, mask = null;
+  var maskCells = 0, maskAreaPx = 0;
+  var gradeIdx = 0;
+  var foilImg = null, foilReady = false;
+  var runLog = [];       // 등급별 실측 기록
+  var toolIdx = 0;
+  var down = false, lastX = 0, lastY = 0, lastT = 0;
+  var hoverX = -999, hoverY = -999;
+  var speed = 0, slowMs = 0, gumming = false;
+  var startedAt = 0, elapsed = 0, finished = false;
+  var travel = 0, effTravel = 0;
+  var band = { good: 0, slow: 0, over: 0, bad: 0 };
+  var particles = [];
+  var slips = [];
+  var boxes = [];        // 9칸 영역 + 공개 상태
+  var ticket = null;
+  var revealed = 0;
+  var lastStatAt = 0;
+
+  function tool() { return TOOLS[toolIdx]; }
+
+  // ===================== 복권 등급 5종 =====================
+  // 확률표는 아직 붙이지 않는다. 이 벤치의 목적은 등급별 마스크 면적과 장당 시간 실측이다.
+  //
+  // layout: 'grid'(cols×rows) | 'numbered'(당첨번호 상단 + 내번호 하단) | 'gridBonus'(그리드 + 보너스칸)
+  // play  : 카드 대비 정규화된 놀이영역 [x0, y0, x1, y1] — 배경의 빈 패널 위치에 맞춘다.
+  //
+  // 16:9 카드는 세로가 짧다. 고액권을 정사각 격자로 키우면 칸이 오히려 작아져
+  // 마스크 면적이 줄고 "비싼 복권이 더 빨리 끝나는" 역전이 난다.
+  // 그래서 고액권은 **가로로 넓은 격자 + 우측 보너스칸**으로 간다.
+  // side = 칸 한 변(논리 px). 마스크 면적이 등급에 따라 단조증가하도록 잡았다.
+  // rule: 'match3' = 같은 금액 3개 (어마운트형) | 'lucky' = 행운숫자와 나의 숫자 매칭
+  // needAll: 행운숫자가 여럿일 때 '모두' 일치해야 하는가 (스피또2000의 2매치게임)
+  // prizes: 등위별 당첨금 (실제 3종은 동행복권 공시 그대로, 가상 2종은 스펙 §2.2)
+  //         w = 칸에 인쇄될 상대 빈도. 실제 복권처럼 저액이 압도적으로 자주 찍힌다.
+  // theme : 배경 밝기에 따라 글자·패널 색이 달라야 읽힌다.
+  var GRADES = [
+    { id: 500, name: '500원', real: true, bg: 'lottery-ticket-500.webp',
+      kind: '3매치게임', desc: '같은 금액이 3개 나오면 당첨 (합산 불가)',
+      // 등위가 4개뿐이라 9칸이면 비둘기집 원리로 3매치를 피할 수 없다(꽝 티켓이 못 나온다).
+      rule: 'match3', cols: 3, rows: 2, safe: [5.0, 6.5, 5.0, 6.5],
+      theme: { ink: '#2b5b61', sub: '#5c7f83', panel: 'rgba(255,255,255,0.52)', plate: 'rgba(250,253,252,0.86)', line: 'rgba(43,91,97,0.28)' },
+      prizes: [['1등', '2억', 1], ['2등', '100만', 3], ['3등', '5천', 60], ['4등', '500', 220]] },
+
+    { id: 1000, name: '1,000원', real: true, bg: 'lottery-ticket-1000.webp',
+      kind: '행운숫자게임', desc: '행운숫자와 나의 숫자가 일치하면 당첨',
+      rule: 'lucky', cols: 3, rows: 2, lucky: 1, safe: [5.5, 7.0, 5.5, 7.0],
+      theme: { ink: '#8a3a12', sub: '#a5794a', panel: 'rgba(255,251,240,0.60)', plate: 'rgba(255,252,244,0.88)', line: 'rgba(138,58,18,0.24)' },
+      prizes: [['1등', '5억', 1], ['2등', '2천만', 3], ['3등', '1만', 40], ['4등', '5천', 90], ['5등', '1천', 250]] },
+
+    { id: 2000, name: '2,000원', real: true, bg: 'lottery-ticket-2000.webp',
+      kind: '2매치게임', desc: '행운숫자 2개가 모두 일치하면 당첨',
+      rule: 'lucky', cols: 4, rows: 2, lucky: 2, needAll: true, safe: [7.5, 9.0, 7.5, 9.0],
+      theme: { ink: '#f0d98a', sub: '#b9a463', panel: 'rgba(9,20,46,0.50)', plate: 'rgba(8,17,40,0.88)', line: 'rgba(240,217,138,0.30)' },
+      prizes: [['1등', '10억', 1], ['2등', '1억', 2], ['3등', '1천만', 5], ['4등', '2만', 40], ['5등', '4천', 120], ['6등', '2천', 260]] },
+
+    { id: 5000, name: '5,000원', real: false, bg: 'lottery-ticket-5000.webp',
+      kind: '행운숫자게임', desc: '행운숫자 2개 중 하나만 일치해도 당첨',
+      rule: 'lucky', cols: 4, rows: 2, lucky: 2, safe: [8.5, 10.0, 8.5, 10.0],
+      theme: { ink: '#f7e7bb', sub: '#c3ac7e', panel: 'rgba(44,22,66,0.46)', plate: 'rgba(38,19,58,0.86)', line: 'rgba(247,231,187,0.30)' },
+      prizes: [['1등', '30억', 1], ['2등', '3억', 2], ['3등', '3천만', 5], ['4등', '5만', 40], ['5등', '1만', 130], ['6등', '5천', 280]] },
+
+    { id: 10000, name: '10,000원', real: false, bg: 'lottery-ticket-10000.webp',
+      // 행운 레일이 3칸이면 세로가 제약이 되어 칸이 34px까지 뭉개진다(금액이 6px → 안 읽힘).
+      // 차별화는 레일 길이가 아니라 '나의 숫자' 개수(= 기회 수)로 준다.
+      kind: '행운숫자게임', desc: '행운숫자 2개 중 하나만 일치해도 당첨 · 기회 10번',
+      rule: 'lucky', cols: 5, rows: 2, lucky: 2, safe: [10.0, 11.0, 10.0, 11.0],
+      theme: { ink: '#f2d98c', sub: '#b59d5c', panel: 'rgba(0,0,0,0.48)', plate: 'rgba(5,5,7,0.90)', line: 'rgba(242,217,140,0.28)' },
+      prizes: [['1등', '100억', 1], ['2등', '10억', 2], ['3등', '1억', 5], ['4등', '10만', 30], ['5등', '2만', 110], ['6등', '1만', 240]] }
+  ];
+
+  function grade() { return GRADES[gradeIdx]; }
+  function cellCount(g) { return (g.rule === 'match3' ? 0 : g.lucky) + g.cols * g.rows; }
+
+  var layoutInfo = null;
+
+  /** 놀이 프레임의 실제 박스를 논리 좌표(640×360)로 환산한다. CSS 그리드가 진실이다. */
+  function playFrameRect() {
+    var cr = card.getBoundingClientRect();
+    var pr = el('playFrame').getBoundingClientRect();
+    if (!cr.width || !cr.height || !pr.width || !pr.height) {
+      return { x: W * 0.34, y: H * 0.30, w: W * 0.58, h: H * 0.50 };   // 레이아웃 전 임시값
+    }
+    return {
+      x: (pr.left - cr.left) * (W / cr.width),
+      y: (pr.top - cr.top) * (H / cr.height),
+      w: pr.width * (W / cr.width),
+      h: pr.height * (H / cr.height)
+    };
+  }
+
+  /**
+   * 칸에 인쇄될 금액을 등급 자기 당첨금표에서 뽑는다.
+   * 주의 — **인쇄 분포는 당첨 확률이 아니다.** 실제 복권도 꽝 티켓에 여러 금액을
+   * 섞어 찍는다(그래야 "아깝다"가 생긴다). 당첨 여부는 3매치/행운숫자 일치로만 정해진다.
+   * 그래서 당첨매수 가중치를 그대로 쓰지 않고 지수 0.45로 눌러 평탄화한다.
+   */
+  var PRINT_FLATTEN = 0.45;
+  function pickPrizeIdx(g) {
+    if (!g._pw) {
+      g._pw = [];
+      for (var q = 0; q < g.prizes.length; q++) g._pw.push(Math.pow(g.prizes[q][2], PRINT_FLATTEN));
+    }
+    var total = 0, i;
+    for (i = 0; i < g._pw.length; i++) total += g._pw[i];
+    var r = Math.random() * total;
+    for (i = 0; i < g._pw.length; i++) { r -= g._pw[i]; if (r <= 0) return i; }
+    return g.prizes.length - 1;
+  }
+  function prizeLabel(g, i) { return g.prizes[i][1]; }
+  /** 더미 당첨으로 심을 금액 — 하위 등위에 몰아준다. */
+  function lowPrizeIdx(g) {
+    var n = g.prizes.length;
+    return n - 1 - ((Math.random() * Math.min(2, n)) | 0);
+  }
+
+  /**
+   * 등급 레이아웃 → 칸 사각형 목록(논리 좌표 640×360).
+   * 이 사각형들이 곧 은박 마스크 영역이며, XP 기준이 되는 '필수 마스크 면적'이다.
+   */
+  /**
+   * 칸 사각형을 **측정된 놀이 프레임 안에서** 만든다.
+   * 프레임은 CSS 그리드가 정하므로, 칸이 프레임 밖으로 나가거나 정보 패널과 어긋날 수 없다.
+   * (이전에는 등급마다 독립 퍼센트를 찍어 1,000원권이 위아래로 19px씩 삐져나갔다.)
+   *
+   * 행운숫자게임은 **좌측 세로 레일 + 우측 매트릭스**. 두 묶음이 같은 칸 크기와
+   * 같은 세로 중심선을 공유하므로 정렬이 구조적으로 보장된다.
+   */
+  function buildCells(g, fr) {
+    // 상단에 라벨 전용 밴드를 비워 둔다. 칸이 프레임 꼭대기까지 차오르면
+    // 컬럼 라벨이 탭(GAME 01 / 게임방법)과 겹친다.
+    var PAD = 11, LABEL_BAND = 19, GAP = 7, RAIL = 17, out = [];
+    var IX = fr.x + PAD, IY = fr.y + PAD + LABEL_BAND;
+    var IW = Math.max(40, fr.w - PAD * 2);
+    var IH = Math.max(30, fr.h - PAD * 2 - LABEL_BAND);
+
+    function box(x, y, w, h, kind) { out.push({ x: x, y: y, w: w, h: h, kind: kind || 'cell', done: false }); }
+
+    if (g.rule === 'match3') {
+      var c = g.cols, r = g.rows;
+      var s = Math.floor(Math.min((IW - GAP * (c - 1)) / c, (IH - GAP * (r - 1)) / r));
+      var gw = s * c + GAP * (c - 1), gh = s * r + GAP * (r - 1);
+      var ox = IX + (IW - gw) / 2, oy = IY + (IH - gh) / 2;
+      for (var i = 0; i < r; i++) {
+        for (var j = 0; j < c; j++) box(ox + j * (s + GAP), oy + i * (s + GAP), s, s);
+      }
+      layoutInfo = { railX: 0, mineX: ox + gw / 2, top: oy, single: true };
+      return out;
+    }
+
+    var L = g.lucky, C = g.cols, R = g.rows;
+    // 레일과 매트릭스가 같은 한 변을 쓰도록, 가로·세로 제약 중 작은 쪽을 택한다
+    var byW = (IW - RAIL - GAP * (C - 1)) / (1 + C);
+    var byH = Math.min((IH - GAP * (L - 1)) / L, (IH - GAP * (R - 1)) / R);
+    var s2 = Math.max(18, Math.floor(Math.min(byW, byH)));
+
+    var railH = s2 * L + GAP * (L - 1);
+    var mw = s2 * C + GAP * (C - 1), mh = s2 * R + GAP * (R - 1);
+    var ox2 = IX + (IW - (s2 + RAIL + mw)) / 2;
+    var cy = IY + IH / 2;                     // 두 묶음이 공유하는 세로 중심선
+
+    for (var k = 0; k < L; k++) box(ox2, cy - railH / 2 + k * (s2 + GAP), s2, s2, 'win');
+    var mx = ox2 + s2 + RAIL, my = cy - mh / 2;
+    for (var a = 0; a < R; a++) {
+      for (var b = 0; b < C; b++) box(mx + b * (s2 + GAP), my + a * (s2 + GAP), s2, s2);
+    }
+
+    // 라벨은 칸 높이와 무관하게 밴드 안 고정 높이에 둔다
+    layoutInfo = {
+      railX: ox2 + s2 / 2, mineX: mx + mw / 2,
+      labelY: fr.y + PAD, single: false
+    };
+    return out;
+  }
+
+  function makeTicket() {
+    var g = grade();
+    boxes = buildCells(g, playFrameRect());
+    var n = boxes.length, i;
+    var win = Math.random() < 0.25;                 // 더미 확률 — 실제 확률표는 ②단계
+
+    function shuffled(len) {
+      var a = [];
+      for (var q = 0; q < len; q++) a.push(q);
+      for (q = a.length - 1; q > 0; q--) {
+        var j = (Math.random() * (q + 1)) | 0, t = a[q]; a[q] = a[j]; a[j] = t;
+      }
+      return a;
+    }
+
+    // ---- 3매치게임(어마운트형): 같은 금액이 3개 나오면 당첨 ----
+    if (g.rule === 'match3') {
+      var cells = [];
+      for (i = 0; i < n; i++) cells.push(pickPrizeIdx(g));
+      var prize = -1;
+      if (win) {
+        prize = lowPrizeIdx(g);
+        var ord = shuffled(n);
+        for (i = 0; i < 3; i++) cells[ord[i]] = prize;
+      }
+
+      // 의도하지 않은 3매치를 지운다. 꽝이어야 하는데 화면에 3개가 보이면 게임을 못 믿게 된다.
+      for (var guard = 0; guard < 120; guard++) {
+        var cnt = {}, bad = -1;
+        for (i = 0; i < n; i++) cnt[cells[i]] = (cnt[cells[i]] || 0) + 1;
+        for (var q in cnt) { if (cnt[q] >= 3 && +q !== prize) { bad = +q; break; } }
+        if (bad < 0) break;
+        for (i = n - 1; i >= 0; i--) {
+          if (cells[i] === bad) { cells[i] = pickPrizeIdx(g); break; }
+        }
+      }
+
+      // **판정은 최종 인쇄 결과에서 읽는다.** 미리 정한 플래그를 믿지 않는다 —
+      // 인쇄가 진실이고 판정이 그걸 따라야 보이는 것과 결과가 어긋날 수 없다.
+      var tally = {}, nm = 0, realPrize = -1;
+      for (i = 0; i < n; i++) tally[cells[i]] = (tally[cells[i]] || 0) + 1;
+      for (var k in tally) {
+        if (tally[k] === 2) nm++;
+        // 여러 3매치가 있으면 상위 등위(인덱스가 작은 쪽)를 채택한다 — 합산 불가.
+        if (tally[k] >= 3 && (realPrize < 0 || +k < realPrize)) realPrize = +k;
+      }
+      return { rule: 'match3', cells: cells, win: realPrize >= 0, prize: realPrize, nearMiss: nm };
+    }
+
+    // ---- 행운숫자게임: 행운숫자와 나의 숫자가 일치하면 그 칸의 금액 당첨 ----
+    var pool = [];
+    for (i = 1; i <= 45; i++) pool.push(i);
+    var pOrd = shuffled(pool.length);
+    var draw = [];
+    for (i = 0; i < pOrd.length; i++) draw.push(pool[pOrd[i]]);
+
+    var lucky = draw.slice(0, g.lucky);
+    var mineN = n - g.lucky;
+    var mine = draw.slice(g.lucky, g.lucky + mineN);    // 기본은 행운숫자와 겹치지 않는다
+    var amounts = [];
+    for (i = 0; i < mineN; i++) amounts.push(pickPrizeIdx(g));
+
+    var prizeIdx = -1;
+    if (win) {
+      var slots = shuffled(mineN);
+      if (g.needAll) {
+        // 2매치게임: 행운숫자가 **모두** 나의 숫자에 있어야 당첨
+        for (i = 0; i < g.lucky; i++) mine[slots[i]] = lucky[i];
+        prizeIdx = slots[0];
+      } else {
+        mine[slots[0]] = lucky[(Math.random() * g.lucky) | 0];
+        prizeIdx = slots[0];
+      }
+      amounts[prizeIdx] = lowPrizeIdx(g);
+    }
+
+    // 사후 집계 — needAll 게임에서는 '1개만 일치'가 곧 아까움이다 (연출은 넣지 않는다)
+    var hit = 0;
+    for (i = 0; i < mineN; i++) if (lucky.indexOf(mine[i]) >= 0) hit++;
+
+    return {
+      rule: 'lucky', lucky: lucky, mine: mine, amounts: amounts,
+      win: win, prizeIdx: prizeIdx,
+      nearMiss: (g.needAll && hit > 0 && hit < g.lucky) ? 1 : 0
+    };
+  }
+
+  var runSerial = 1;
+
+  /** 티켓 인쇄 레이어를 등급 데이터로 채운다. 배치는 CSS 그리드가 전담한다. */
+  function paintTicketPrint(g) {
+    var th = g.theme, s = g.safe;
+    var print = el('print');
+    // ⚠️ CSS 퍼센트 padding은 **세로도 컨테이너 '가로'를 기준**으로 계산된다.
+    // 16:9에서 세로 여백을 그냥 %로 주면 1.78배로 부풀어 헤더가 배너 밖으로 밀린다.
+    // 높이 기준 s%를 만들려면 폭 기준으로 s × (H/W) 로 환산해야 한다.
+    var vRatio = H / W;
+    print.style.setProperty('--pl', s[0] + '%');
+    print.style.setProperty('--pt', (s[1] * vRatio) + '%');
+    print.style.setProperty('--pr', s[2] + '%');
+    print.style.setProperty('--pb', (s[3] * vRatio) + '%');
+    print.style.color = th.ink;
+
+    el('brand').style.color = th.ink;
+    el('roundNo').style.color = th.sub;
+    el('roundNo').textContent = '제 ' + String(100 + gradeIdx * 7) + ' 회';
+
+    var price = el('priceBadge');
+    price.textContent = g.name;
+    price.style.background = th.panel;
+
+    // 배경 장식(길로슈·금박) 위에 그냥 얹으면 안 읽힌다 — 얇은 패널을 깔아준다.
+    var h = el('howto');
+    h.style.background = th.panel;
+    h.style.border = '1px solid ' + th.line;
+    h.innerHTML = '<b>' + g.kind + '</b><span style="color:' + th.sub + '">' + g.desc + '</span>';
+
+    var rows = '';
+    for (var i = 0; i < g.prizes.length; i++) {
+      rows += '<div class="r"><span>' + g.prizes[i][0] + '</span><b>' + g.prizes[i][1] + '원</b></div>';
+    }
+    var box = el('prizeBox');
+    box.style.color = th.sub;
+    box.style.background = th.panel;
+    box.style.border = '1px solid ' + th.line;
+    box.innerHTML = '<div class="t" style="color:' + th.ink + ';border-color:' + th.line + '">당첨금 안내</div>' + rows;
+
+    el('playFrame').style.background = th.plate || th.panel;
+
+    var tabP = el('tabPlay'), tabG = el('tabGame');
+    tabP.textContent = g.rule === 'match3' ? '같은 금액 3개' : '숫자 대조';
+    tabG.textContent = 'GAME 01';
+    [tabP, tabG].forEach(function (t) {
+      t.style.background = th.plate || th.panel; t.style.color = th.ink;
+    });
+
+    var lab = ['labLucky', 'labMine'];
+    for (var q = 0; q < lab.length; q++) el(lab[q]).style.color = th.sub;
+    el('labLucky').textContent = '행운숫자';
+    el('labMine').textContent = g.rule === 'match3' ? '' : '나의 숫자';
+
+    var fl = el('footLeft'), fr2 = el('footRight');
+    fl.style.color = th.sub; fr2.style.color = th.sub;
+    fl.style.background = th.panel; fr2.style.background = th.panel;
+    fl.textContent = g.real
+      ? '지급기한: 판매종료일로부터 1년 · 실제 확률표 기준 시뮬레이션'
+      : '지급기한: 판매종료일로부터 1년 · 가상 등급(실제로는 없는 가격대)';
+    fr2.textContent = 'NO. ' + String(g.id) + '-' +
+      String(100000 + (runSerial * 3607) % 899999);
+  }
+
+  /**
+   * 당첨금표를 정보열 높이에 맞춘다.
+   * 등급마다 등위 수(4~6)와 safe 인셋이 달라 고정 크기로는 반드시 어딘가 넘친다
+   * (10,000원권은 인셋이 가장 커서 정보열이 제일 낮은데 등위는 6개다).
+   */
+  function fitPrizeBox() {
+    var box = el('prizeBox'), f = 1.36;
+    box.style.setProperty('--fs-prize', f + 'cqw');
+    for (var i = 0; i < 10 && box.scrollHeight > box.clientHeight + 1 && f > 1.0; i++) {
+      f = Math.round((f - 0.06) * 100) / 100;
+      box.style.setProperty('--fs-prize', f + 'cqw');
+    }
+  }
+
+  /** 놀이 프레임 안의 실제 칸 위치에 맞춰 컬럼 라벨을 얹는다. */
+  function placeColumnLabels() {
+    var lu = el('labLucky'), mi = el('labMine');
+    var hide = function () { lu.style.display = 'none'; mi.style.display = 'none'; };
+    if (!layoutInfo) { hide(); return; }
+    var pf = el('playFrame').getBoundingClientRect();
+    var cr = card.getBoundingClientRect();
+    if (!pf.width || !cr.width) { hide(); return; }
+    var toPct = function (logicalX) {
+      var px = logicalX * (cr.width / W);                 // 카드 기준 px
+      return ((px - (pf.left - cr.left)) / pf.width) * 100;
+    };
+    var topPct = function (logicalY) {
+      var py = logicalY * (cr.height / H);
+      return ((py - (pf.top - cr.top)) / pf.height) * 100;
+    };
+    if (layoutInfo.single) { hide(); return; }
+    var y = topPct(layoutInfo.labelY) + '%';
+    lu.style.display = 'block'; mi.style.display = 'block';
+    lu.style.left = toPct(layoutInfo.railX) + '%'; lu.style.top = y;
+    mi.style.left = toPct(layoutInfo.mineX) + '%'; mi.style.top = y;
+  }
+
+  function renderTicket() {
+    var g = grade();
+    card.style.backgroundImage = 'url("../../public/assets/images/' + g.bg + '")';
+    runSerial++;
+    // 인쇄 레이어를 **먼저** 그린다 — 칸은 그 결과로 확정된 놀이 프레임 안에서 만들어진다.
+    paintTicketPrint(g);
+    fitPrizeBox();
+    ticket = makeTicket();                 // boxes를 함께 만든다
+    gridEl.innerHTML = '';
+    // 칸 글자 크기의 기준 — 칸 한 변을 cqw(카드 폭의 %)로 넘긴다
+    if (boxes.length) gridEl.style.setProperty('--cs', (boxes[0].w / W * 100) + 'cqw');
+    var sx = 100 / W, sy = 100 / H, mi = 0;
+
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      var d = document.createElement('div');
+      d.className = 'cell' + (b.kind === 'win' ? ' win' : '');
+      d.style.cssText = 'left:' + (b.x * sx) + '%;top:' + (b.y * sy) + '%;' +
+                        'width:' + (b.w * sx) + '%;height:' + (b.h * sy) + '%';
+
+      if (ticket.rule === 'match3') {
+        d.innerHTML = '<span class="amt big">' + prizeLabel(g, ticket.cells[i]) + '</span>';
+        if (ticket.win && ticket.cells[i] === ticket.prize) d.classList.add('hit');
+      } else if (b.kind === 'win') {
+        d.innerHTML = '<span class="luckynum">' + ticket.lucky[i] + '</span>';
+      } else {
+        var num = ticket.mine[mi];
+        d.innerHTML = '<span class="mynum">' + num + '</span>' +
+                      '<span class="amt">' + prizeLabel(g, ticket.amounts[mi]) + '</span>';
+        if (ticket.lucky.indexOf(num) >= 0) d.classList.add('hit');
+        mi++;
+      }
+      gridEl.appendChild(d);
+    }
+    placeColumnLabels();
+    el('ruleLine').textContent = g.kind + ' · ' + g.desc;
+  }
+
+  /** 칸 사각형은 레이아웃에서 직접 나오므로 DOM 측정이 필요 없다. */
+  function measureBoxes() {
+    if (!boxes.length) boxes = buildCells(grade(), playFrameRect());
+  }
+
+  // ===================== 은박 레이어 =====================
+  var FOIL_PAD = 3, FOIL_R = 5;
+
+  function roundRectPath(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  /**
+   * 은박은 카드 전체가 아니라 **칸 위에만** 덮인다.
+   * 실제 복권이 그렇고, XP 기준이 되는 '필수 마스크 면적'도 이 영역이다.
+   */
+  function paintFoil() {
+    if (!canvasReady) return;              // ResizeObserver가 크기를 잡으면 다시 들어온다
+    fctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    fctx.globalCompositeOperation = 'source-over';
+    fctx.clearRect(0, 0, W, H);
+    if (!boxes.length) boxes = buildCells(grade(), playFrameRect());
+
+    fctx.save();
+    fctx.beginPath();
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      roundRectPath(fctx, b.x - FOIL_PAD, b.y - FOIL_PAD,
+                    b.w + FOIL_PAD * 2, b.h + FOIL_PAD * 2, FOIL_R);
+    }
+    fctx.clip();
+    paintFoilSurface();
+    fctx.restore();
+
+    buildMask();
+  }
+
+  function paintFoilSurface() {
+    if (foilReady) {
+      fctx.drawImage(foilImg, 0, 0, W, H);
+      // 티켓 면과 대비가 나야 부분 제거가 '접착층'으로 읽힌다. 생성 텍스처는 밝으므로 눌러준다.
+      fctx.fillStyle = 'rgba(58,66,78,0.34)';
+      fctx.fillRect(0, 0, W, H);
+    } else {
+      var g = fctx.createLinearGradient(0, 0, W, H);
+      g.addColorStop(0.00, '#8b93a1');
+      g.addColorStop(0.22, '#c2cad5');
+      g.addColorStop(0.44, '#727b8a');
+      g.addColorStop(0.63, '#b3bcc8');
+      g.addColorStop(0.82, '#7e8796');
+      g.addColorStop(1.00, '#9ea6b3');
+      fctx.fillStyle = g;
+      fctx.fillRect(0, 0, W, H);
+    }
+
+    // 대각 광택 줄무늬
+    fctx.save();
+    fctx.globalAlpha = 0.10;
+    fctx.strokeStyle = '#ffffff';
+    fctx.lineWidth = 12;
+    for (var x = -H; x < W + H; x += 46) {
+      fctx.beginPath(); fctx.moveTo(x, 0); fctx.lineTo(x + H, H); fctx.stroke();
+    }
+    fctx.restore();
+
+    // 미세 노이즈 — 부분 제거 시 얼룩(접착층)으로 남는다
+    fctx.save();
+    for (var i = 0; i < 2200; i++) {
+      fctx.globalAlpha = 0.05 + Math.random() * 0.13;
+      fctx.fillStyle = Math.random() < 0.5 ? '#ffffff' : '#7c8592';
+      fctx.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 2, 1 + Math.random() * 2);
+    }
+    fctx.restore();
+  }
+
+  /** 은박이 덮인 격자 셀만 표시한다. 공개율·XP는 이 영역만 기준으로 센다. */
+  function buildMask() {
+    mask = new Uint8Array(cols * rows);
+    maskCells = 0;
+    for (var i = 0; i < boxes.length; i++) {
+      var b = boxes[i];
+      var c0 = Math.max(0, Math.floor((b.x - FOIL_PAD) / CELL));
+      var c1 = Math.min(cols - 1, Math.floor((b.x + b.w + FOIL_PAD) / CELL));
+      var r0 = Math.max(0, Math.floor((b.y - FOIL_PAD) / CELL));
+      var r1 = Math.min(rows - 1, Math.floor((b.y + b.h + FOIL_PAD) / CELL));
+      for (var ry = r0; ry <= r1; ry++) {
+        for (var cx = c0; cx <= c1; cx++) {
+          var idx = ry * cols + cx;
+          if (!mask[idx]) { mask[idx] = 1; maskCells++; }
+        }
+      }
+    }
+    maskAreaPx = maskCells * CELL * CELL;
+  }
+
+  function resize() {
+    var rect = card.getBoundingClientRect();
+    // 0 크기(숨겨진 컨테이너·레이아웃 이전)면 준비되지 않은 것으로 두고,
+    // ResizeObserver가 실제 크기를 잡으면 다시 들어온다.
+    if (!rect.width || !rect.height) { canvasReady = false; return; }
+    var nextDpr = Math.min(window.devicePixelRatio || 1, 2);
+    // 논리 캔버스는 항상 640×360이고 CSS가 늘려주므로, dpr이 그대로면 다시 만들 이유가 없다.
+    if (canvasReady && nextDpr === dpr) return;
+    dpr = nextDpr;
+    W = 640; H = 360;
+    [foil, fx].forEach(function (c) {
+      c.width = Math.round(W * dpr);
+      c.height = Math.round(H * dpr);
+    });
+    xctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cols = Math.ceil(W / CELL); rows = Math.ceil(H / CELL);
+    if (!cov || cov.length !== cols * rows) {
+      cov = new Float32Array(cols * rows);
+      passes = new Uint8Array(cols * rows);
+    }
+    canvasReady = true;
+    paintFoil();
+    resetCoverage();
+    measureBoxes();
+  }
+
+  function resetCoverage() {
+    // 캔버스가 아직 준비되지 않았을 때도 UI(등급 전환 등)는 들어온다.
+    if (!cov || !passes) { revealed = 0; return; }
+    cov.fill(1);
+    passes.fill(0);
+    revealed = 0;
+  }
+
+  // ===================== 긁기 =====================
+  function falloff(t) { var v = 1 - t * t; return v > 0 ? v : 0; }
+
+  /** 브러시 1스탬프. 반환값은 제거된 면적(px²). */
+  function stamp(x, y, k) {
+    var r = tool().r;
+    if (k <= 0.001) return 0;
+    // 비정상 좌표가 캔버스 API로 들어가면 예외가 나면서 스트로크가 통째로 죽는다.
+    if (!isFinite(x) || !isFinite(y) || !isFinite(r) || r <= 0) return 0;
+
+    // 시각 레이어
+    fctx.globalCompositeOperation = 'destination-out';
+    var g = fctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0.00, 'rgba(0,0,0,' + k + ')');
+    g.addColorStop(0.35, 'rgba(0,0,0,' + (k * 0.88) + ')');
+    g.addColorStop(0.70, 'rgba(0,0,0,' + (k * 0.51) + ')');
+    g.addColorStop(1.00, 'rgba(0,0,0,0)');
+    fctx.fillStyle = g;
+    fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fill();
+
+    // 측정 격자
+    var c0 = Math.max(0, Math.floor((x - r) / CELL));
+    var c1 = Math.min(cols - 1, Math.floor((x + r) / CELL));
+    var r0 = Math.max(0, Math.floor((y - r) / CELL));
+    var r1 = Math.min(rows - 1, Math.floor((y + r) / CELL));
+    var removed = 0, cellArea = CELL * CELL;
+
+    for (var ry = r0; ry <= r1; ry++) {
+      for (var cx = c0; cx <= c1; cx++) {
+        var ccx = cx * CELL + CELL / 2, ccy = ry * CELL + CELL / 2;
+        var d = Math.hypot(ccx - x, ccy - y);
+        if (d > r) continue;
+        var f = falloff(d / r);
+        var a = k * f;
+        if (a < 0.004) continue;
+        var idx = ry * cols + cx;
+        // 은박 없는 영역을 문지르는 건 낭비다 — 제거량으로도 효율로도 치지 않는다.
+        if (mask && !mask[idx]) continue;
+        var before = cov[idx];
+        cov[idx] = before * (1 - a);
+        removed += (before - cov[idx]) * cellArea;
+        if (a > 0.02 && passes[idx] < 255) passes[idx]++;
+      }
+    }
+    return removed;
+  }
+
+  /** 뭉침 — 접착층을 되덮어 한 번 더 지나가게 만든다. */
+  function deposit(x, y) {
+    var r = tool().r * 0.8, dep = 0.055;
+    fctx.globalCompositeOperation = 'source-over';
+    var g = fctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, 'rgba(206,214,224,' + dep + ')');
+    g.addColorStop(1, 'rgba(206,214,224,0)');
+    fctx.fillStyle = g;
+    fctx.beginPath(); fctx.arc(x, y, r, 0, Math.PI * 2); fctx.fill();
+
+    var c0 = Math.max(0, Math.floor((x - r) / CELL));
+    var c1 = Math.min(cols - 1, Math.floor((x + r) / CELL));
+    var r0 = Math.max(0, Math.floor((y - r) / CELL));
+    var r1 = Math.min(rows - 1, Math.floor((y + r) / CELL));
+    for (var ry = r0; ry <= r1; ry++) {
+      for (var cx = c0; cx <= c1; cx++) {
+        var ccx = cx * CELL + CELL / 2, ccy = ry * CELL + CELL / 2;
+        var d = Math.hypot(ccx - x, ccy - y);
+        if (d > r) continue;
+        var idx = ry * cols + cx;
+        var add = dep * falloff(d / r);
+        var next = 1 - (1 - cov[idx]) * (1 - add);
+        cov[idx] = Math.min(next, 0.5);   // 완전 복구는 되지 않는다
+      }
+    }
+  }
+
+  // ===================== 속도 판정 =====================
+  function judge(sp) {
+    var t = tool();
+    if (gumming) return { key: 'slow', mult: CUT_GUM, label: '뭉침', color: 'var(--warn)' };
+    if (sp < t.vMin) return { key: 'slow', mult: 1, label: '느림', color: 'var(--warn)' };
+    if (sp <= t.vMax) return { key: 'good', mult: 1, label: '적정', color: 'var(--ok)' };
+    if (sp <= t.vMax * OVER_MULT) return { key: 'over', mult: CUT_OVER, label: '과속', color: 'var(--over)' };
+    return { key: 'bad', mult: CUT_BAD, label: '심한 과속', color: 'var(--bad)' };
+  }
+
+  // ===================== 포인터 =====================
+  /** 클라이언트 좌표 → 논리 좌표(640×400). 0 크기면 null을 돌려 호출부가 건너뛰게 한다. */
+  function toLocal(e) {
+    var rect = card.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return {
+      x: (e.clientX - rect.left) * (W / rect.width),
+      y: (e.clientY - rect.top) * (H / rect.height)
+    };
+  }
+
+  card.addEventListener('pointerdown', function (e) {
+    if (finished || !canvasReady) return;
+    var p = toLocal(e);
+    if (!p) return;
+    try { card.setPointerCapture(e.pointerId); } catch (err) { /* 캡처 불가 포인터는 무시 */ }
+    down = true;
+    lastX = p.x; lastY = p.y; lastT = performance.now();
+    speed = 0; slowMs = 0; gumming = false;
+    if (!startedAt) startedAt = performance.now();
+    audioDown();
+    stroke(p.x, p.y, 0);
+  });
+
+  card.addEventListener('pointermove', function (e) {
+    var p = toLocal(e);
+    if (!p) return;
+    hoverX = p.x; hoverY = p.y;
+    if (!down || finished) return;
+
+    var now = performance.now();
+    var dt = Math.max(8, now - lastT);
+    var dx = p.x - lastX, dy = p.y - lastY;
+    var dist = Math.hypot(dx, dy);
+    var inst = (dist / dt) * 1000;
+    speed += (inst - speed) * 0.35;              // EMA 평활
+
+    var t = tool();
+    if (speed < t.vMin) {
+      slowMs += dt;
+      if (slowMs >= DWELL_MS) gumming = true;
+    } else {
+      slowMs = 0; gumming = false;
+    }
+
+    stroke(p.x, p.y, dist);
+    lastX = p.x; lastY = p.y; lastT = now;
+  });
+
+  function endStroke(e) {
+    if (!down) return;
+    down = false;
+    gumming = false; slowMs = 0;
+    audioUp();
+    try { card.releasePointerCapture(e.pointerId); } catch (err) { /* 캡처가 없으면 무시 */ }
+  }
+  card.addEventListener('pointerup', endStroke);
+  card.addEventListener('pointercancel', endStroke);
+  card.addEventListener('pointerleave', function (e) {
+    hoverX = -999; hoverY = -999;
+    endStroke(e);
+  });
+
+  /** lastX,lastY → x,y 구간을 보간하며 스탬프를 찍는다. */
+  function stroke(x, y, dist) {
+    var t = tool();
+    var v = judge(speed);
+    var k = t.cut * v.mult;
+
+    // 뭉침 상태에서는 접착층을 되덮는다
+    if (gumming && dist < 4) deposit(x, y);
+
+    var step = Math.max(2, t.r / 3);
+    var n = dist > 0 ? Math.min(Math.ceil(dist / step), 28) : 1;
+    var removed = 0;
+
+    // 심한 과속이면 진행 방향 수직으로 흔들려 '미끄러짐'을 만든다
+    var jitter = 0;
+    if (v.key === 'bad') {
+      var over = Math.min(2.2, speed / (t.vMax * OVER_MULT));
+      jitter = (over - 1) * t.r * 0.55;
+    }
+    var nx = 0, ny = 0;
+    if (dist > 0) { nx = -(y - lastY) / dist; ny = (x - lastX) / dist; }
+
+    for (var i = 1; i <= n; i++) {
+      var p = n === 1 ? 1 : i / n;
+      var jx = 0, jy = 0;
+      if (jitter > 0) {
+        var w = Math.sin(p * Math.PI * 3 + performance.now() * 0.02) * jitter;
+        jx = nx * w; jy = ny * w;
+      }
+      var sx = lastX + (x - lastX) * p + jx;
+      var sy = lastY + (y - lastY) * p + jy;
+      removed += stamp(sx, sy, k);
+    }
+
+    if (v.key === 'bad' && dist > 2) {
+      slips.push({ x0: lastX, y0: lastY, x1: x, y1: y, born: performance.now() });
+      if (slips.length > 10) slips.shift();
+    }
+
+    if (down && dist > 0) {
+      travel += dist;
+      // 유효 절삭: 실제로 의미 있는 양이 벗겨진 구간만 인정
+      var area = Math.PI * t.r * t.r;
+      if (removed / area >= 0.05) effTravel += dist;
+
+      var dtSec = Math.max(0.008, (performance.now() - lastT) / 1000);
+      band[v.key] += dtSec;
+    }
+
+    spawnParticles(x, y, removed, v.key);
+  }
+
+  // ===================== 파티클 =====================
+  function spawnParticles(x, y, removed, key) {
+    if (removed < 40) return;
+    var t = tool();
+    var mult = key === 'over' ? 1.5 : key === 'bad' ? 1.6 : 1;
+    var count = Math.min(6, Math.round((removed / 900) * mult));
+    for (var i = 0; i < count; i++) {
+      if (particles.length >= MAX_PARTICLES) particles.shift();
+      var ang = Math.random() * Math.PI * 2;
+      var sp = 20 + Math.random() * 70;
+      var curl = key === 'good' || key === 'slow';
+      particles.push({
+        x: x + (Math.random() - 0.5) * t.r,
+        y: y + (Math.random() - 0.5) * t.r,
+        vx: Math.cos(ang) * sp,
+        vy: Math.sin(ang) * sp - 30,
+        rot: Math.random() * Math.PI,
+        vr: (Math.random() - 0.5) * 8,
+        len: curl ? 6 + Math.random() * 8 : 2 + Math.random() * 2,
+        wide: curl ? 2.4 : 2,
+        life: 0,
+        max: 0.6 + Math.random() * 0.6
+      });
+    }
+  }
+
+  // ===================== 공개율 · 완주 =====================
+  function revealCheck() {
+    var now = performance.now();
+    if (now - lastStatAt < 90) return;
+    lastStatAt = now;
+
+    if (!boxes.length) measureBoxes();   // 0 크기로 시작했으면 여기서 다시 잡는다
+    if (!mask || !maskCells) return;
+
+    // 공개율은 카드 전체가 아니라 **은박이 덮인 영역**만 기준으로 센다.
+    var sum = 0;
+    for (var i = 0; i < cov.length; i++) if (mask[i]) sum += cov[i];
+    revealed = 1 - sum / maskCells;
+
+    // 칸별 70% 공개 시 딸깍
+    for (var b = 0; b < boxes.length; b++) {
+      var bx = boxes[b];
+      if (bx.done) continue;
+      var c0 = Math.max(0, Math.floor(bx.x / CELL)), c1 = Math.min(cols - 1, Math.floor((bx.x + bx.w) / CELL));
+      var r0 = Math.max(0, Math.floor(bx.y / CELL)), r1 = Math.min(rows - 1, Math.floor((bx.y + bx.h) / CELL));
+      var s = 0, n = 0;
+      for (var ry = r0; ry <= r1; ry++) {
+        for (var cx = c0; cx <= c1; cx++) { s += cov[ry * cols + cx]; n++; }
+      }
+      if (n && 1 - s / n >= 0.70) { bx.done = true; audioTick(); }
+    }
+
+    if (!finished && el('optAuto').checked && revealed >= AUTO_AT) finish();
+    else if (!finished && revealed >= 0.995) finish();
+  }
+
+  /**
+   * 다음 프레임 예약. rAF가 굶는 환경에서도 반드시 진행되도록 타이머를 함께 걸고
+   * 먼저 도착한 쪽만 실행한다. 상태 전이를 rAF에만 맡기면 소프트락이 난다.
+   */
+  function nextFrame(fn) {
+    var done = false;
+    var run = function () { if (done) return; done = true; fn(); };
+    requestAnimationFrame(run);
+    setTimeout(run, 32);
+  }
+
+  function finish() {
+    finished = true;
+    down = false;
+    audioUp();
+    elapsed = startedAt ? (performance.now() - startedAt) / 1000 : 0;
+
+    // 남은 은박을 부드럽게 지운다
+    var t0 = performance.now();
+    (function wipe() {
+      var p = Math.min(1, (performance.now() - t0) / 320);
+      fctx.globalCompositeOperation = 'destination-out';
+      fctx.fillStyle = 'rgba(0,0,0,' + (0.12 + p * 0.2) + ')';
+      fctx.fillRect(0, 0, W, H);
+      if (p < 1) nextFrame(wipe);
+      else showResult();
+    })();
+  }
+
+  function showResult() {
+    // 이 벤치의 산출물: 등급별 마스크 면적과 장당 시간
+    runLog.push({
+      grade: grade().id, cells: boxes.length, maskArea: maskAreaPx,
+      sec: elapsed, eff: travel > 0 ? effTravel / travel : 0
+    });
+    renderLog();
+
+    var big = el('resultBig');
+    if (ticket.win) {
+      var amtIdx = ticket.rule === 'match3' ? ticket.prize : ticket.amounts[ticket.prizeIdx];
+      big.textContent = prizeLabel(grade(), amtIdx) + '원 당첨';
+      big.className = 'big win';
+    } else {
+      big.textContent = '꽝';
+      big.className = 'big lose';
+    }
+    el('rTime').textContent = elapsed.toFixed(1) + '초';
+    el('rEff').textContent = travel > 0 ? Math.round((effTravel / travel) * 100) + '%' : '—';
+    el('rDup').textContent = dupPct() + '%';
+    var total = band.good + band.slow + band.over + band.bad;
+    el('rGood').textContent = total > 0 ? Math.round((band.good / total) * 100) + '%' : '—';
+    resultEl.classList.add('show');
+  }
+
+  function dupPct() {
+    if (!passes) return 0;
+    var touched = 0, dup = 0;
+    for (var i = 0; i < passes.length; i++) {
+      if (mask && !mask[i]) continue;
+      if (passes[i] > 0) { touched++; if (passes[i] >= 3) dup++; }
+    }
+    return touched ? Math.round((dup / touched) * 100) : 0;
+  }
+
+  function updateStats() {
+    el('stProg').textContent = Math.round(revealed * 100) + '%';
+    el('stTime').textContent = (startedAt && !finished ? (performance.now() - startedAt) / 1000 : elapsed).toFixed(1) + '초';
+    el('stTravel').textContent = Math.round(travel).toLocaleString() + ' px';
+    el('stEff').textContent = Math.round(effTravel).toLocaleString() + ' px';
+    el('stEffPct').textContent = travel > 0 ? Math.round((effTravel / travel) * 100) + '%' : '—';
+    el('stDup').textContent = dupPct() + '%';
+
+    var total = band.good + band.slow + band.over + band.bad;
+    var map = [['good', 'bGood', 'pGood'], ['slow', 'bSlow', 'pSlow'], ['over', 'bOver', 'pOver'], ['bad', 'bBad', 'pBad']];
+    map.forEach(function (m) {
+      var pct = total > 0 ? (band[m[0]] / total) * 100 : 0;
+      el(m[1]).style.width = pct + '%';
+      el(m[2]).textContent = Math.round(pct) + '%';
+    });
+  }
+
+  // ===================== 렌더 루프 (커서 · 파티클) =====================
+  var prevFrame = performance.now();
+  var lastRafAt = 0;
+
+  /**
+   * fx 캔버스 + HUD 갱신.
+   * rAF에만 의존하면 굶는 환경(숨김 상태로 띄우는 임베드 웹뷰·프리뷰 패널)에서
+   * 이 게임의 핵심 피드백인 속도 판정이 조용히 사라진다. 워치독에서도 호출한다.
+   */
+  function paintFrame(now) {
+    var dt = Math.min(0.05, (now - prevFrame) / 1000);
+    prevFrame = now;
+
+    xctx.clearRect(0, 0, W, H);
+
+    // 미끄러짐 궤적
+    for (var s = slips.length - 1; s >= 0; s--) {
+      var age = now - slips[s].born;
+      if (age > 220) { slips.splice(s, 1); continue; }
+      xctx.save();
+      xctx.globalAlpha = (1 - age / 220) * 0.5;
+      xctx.strokeStyle = '#f87171';
+      xctx.lineWidth = 2.5; xctx.lineCap = 'round';
+      xctx.beginPath(); xctx.moveTo(slips[s].x0, slips[s].y0); xctx.lineTo(slips[s].x1, slips[s].y1); xctx.stroke();
+      xctx.restore();
+    }
+
+    // 은박 조각
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.life += dt;
+      if (p.life >= p.max) { particles.splice(i, 1); continue; }
+      p.vy += 320 * dt;
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      p.rot += p.vr * dt;
+      var a = 1 - p.life / p.max;
+      xctx.save();
+      xctx.globalAlpha = a * 0.9;
+      xctx.translate(p.x, p.y); xctx.rotate(p.rot);
+      xctx.fillStyle = a > 0.5 ? '#e8edf4' : '#b6bfcc';
+      xctx.fillRect(-p.len / 2, -p.wide / 2, p.len, p.wide);
+      xctx.restore();
+    }
+
+    // 커버리지 디버그
+    if (el('optCov').checked) {
+      xctx.save();
+      for (var ry = 0; ry < rows; ry++) {
+        for (var cx = 0; cx < cols; cx++) {
+          var v = cov[ry * cols + cx];
+          if (v > 0.98) continue;
+          xctx.globalAlpha = 0.5;
+          xctx.fillStyle = v < 0.15 ? '#22c55e' : v < 0.5 ? '#eab308' : '#ef4444';
+          xctx.fillRect(cx * CELL, ry * CELL, CELL - 1, CELL - 1);
+        }
+      }
+      xctx.restore();
+    }
+
+    // 커서 링 — 판정 색으로 즉시 피드백
+    if (hoverX > -900 && !finished) {
+      var v = judge(down ? speed : 0);
+      var color = down
+        ? (v.key === 'good' ? '#4ade80' : v.key === 'slow' ? '#fbbf24' : v.key === 'over' ? '#fb923c' : '#f87171')
+        : '#cbd5e1';
+      xctx.save();
+      xctx.strokeStyle = color;
+      xctx.lineWidth = 2;
+      xctx.globalAlpha = down ? 0.95 : 0.6;
+      xctx.beginPath(); xctx.arc(hoverX, hoverY, tool().r, 0, Math.PI * 2); xctx.stroke();
+      xctx.globalAlpha = down ? 0.18 : 0.08;
+      xctx.fillStyle = color;
+      xctx.fill();
+      xctx.restore();
+    }
+
+    // 속도 미터
+    var t = tool();
+    var scaleMax = Math.max(1200, t.vMax * OVER_MULT * 1.25);
+    var pct = function (v) { return Math.min(100, (v / scaleMax) * 100); };
+    el('zSlow').style.left = '0%';  el('zSlow').style.width = pct(t.vMin) + '%';
+    el('zGood').style.left = pct(t.vMin) + '%'; el('zGood').style.width = (pct(t.vMax) - pct(t.vMin)) + '%';
+    el('zOver').style.left = pct(t.vMax) + '%'; el('zOver').style.width = (pct(t.vMax * OVER_MULT) - pct(t.vMax)) + '%';
+    el('zBad').style.left = pct(t.vMax * OVER_MULT) + '%'; el('zBad').style.width = (100 - pct(t.vMax * OVER_MULT)) + '%';
+    el('needle').style.left = pct(down ? speed : 0) + '%';
+    el('scaleMid').textContent = Math.round(scaleMax / 2);
+    el('scaleMax').textContent = Math.round(scaleMax) + ' px/s';
+
+    var vv = judge(down ? speed : 0);
+    var vd = el('verdict');
+    vd.textContent = down ? vv.label : '대기';
+    vd.style.color = down ? vv.color : 'var(--muted)';
+    el('speedNum').textContent = Math.round(down ? speed : 0) + ' px/s';
+
+    if (down) audioUpdate(speed, vv.key);
+
+    // 공개율 계산·자동완주 판정·HUD는 포인터 이벤트가 아니라 프레임에서 돌린다.
+    // 입력에만 묶어두면 손을 뗀 순간 수렴이 멈춰, 다 긁고도 완주 판정이 안 난다.
+    revealCheck();
+    updateStats();
+  }
+
+  function loop(now) {
+    lastRafAt = now;
+    paintFrame(now);
+    requestAnimationFrame(loop);
+  }
+
+  // rAF가 120ms 이상 멈춰 있으면 타이머로 대신 그린다.
+  setInterval(function () {
+    var now = performance.now();
+    if (now - lastRafAt > 120) paintFrame(now);
+  }, 40);
+
+  // ===================== 사운드 (합성, 외부 에셋 없음) =====================
+  var ac = null, noiseSrc = null, filt = null, gain = null;
+  function audioInit() {
+    if (ac || !el('optSound').checked) return;
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ac = new AC();
+    var len = ac.sampleRate * 2;
+    var buf = ac.createBuffer(1, len, ac.sampleRate);
+    var d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    noiseSrc = ac.createBufferSource();
+    noiseSrc.buffer = buf; noiseSrc.loop = true;
+    filt = ac.createBiquadFilter();
+    filt.type = 'bandpass'; filt.frequency.value = 1800; filt.Q.value = 1.1;
+    gain = ac.createGain(); gain.gain.value = 0;
+    noiseSrc.connect(filt); filt.connect(gain); gain.connect(ac.destination);
+    noiseSrc.start();
+  }
+  function audioDown() {
+    audioInit();
+    if (!ac) return;
+    if (ac.state === 'suspended') ac.resume();
+    gain.gain.cancelScheduledValues(ac.currentTime);
+    gain.gain.linearRampToValueAtTime(0.12, ac.currentTime + 0.03);
+  }
+  function audioUp() {
+    if (!ac || !gain) return;
+    gain.gain.cancelScheduledValues(ac.currentTime);
+    gain.gain.linearRampToValueAtTime(0, ac.currentTime + 0.06);
+  }
+  function audioUpdate(sp, key) {
+    if (!ac || !filt) return;
+    // 저속 '사각' → 적정 '서걱' → 과속 '찍'
+    var f = key === 'slow' ? 700 : key === 'good' ? 1700 + Math.min(900, sp) : key === 'over' ? 4200 : 6400;
+    filt.frequency.setTargetAtTime(f, ac.currentTime, 0.04);
+    filt.Q.setTargetAtTime(key === 'bad' ? 3.2 : 1.1, ac.currentTime, 0.05);
+    gain.gain.setTargetAtTime(key === 'bad' ? 0.07 : 0.12, ac.currentTime, 0.05);
+  }
+  function audioTick() {
+    if (!ac) return;
+    var o = ac.createOscillator(), g2 = ac.createGain();
+    o.type = 'triangle'; o.frequency.value = 880;
+    g2.gain.setValueAtTime(0.0001, ac.currentTime);
+    g2.gain.exponentialRampToValueAtTime(0.06, ac.currentTime + 0.008);
+    g2.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.12);
+    o.connect(g2); g2.connect(ac.destination);
+    o.start(); o.stop(ac.currentTime + 0.14);
+  }
+
+  // ===================== 도구 UI · 튜닝 =====================
+  // ===================== 등급 UI · 실측 기록 =====================
+  function buildGrades() {
+    var host = el('grades');
+    host.innerHTML = '';
+    GRADES.forEach(function (g, i) {
+      var b = document.createElement('button');
+      b.className = 'tool' + (i === gradeIdx ? ' on' : '');
+      b.innerHTML = g.name + (g.real ? '' : ' <span style="opacity:.7">가상</span>') +
+        '<span>' + g.kind + ' · ' + cellCount(g) + '칸</span>';
+      b.addEventListener('click', function () { gradeIdx = i; buildGrades(); newCard(); });
+      host.appendChild(b);
+    });
+  }
+
+  function renderLog() {
+    var by = {};
+    runLog.forEach(function (r) {
+      if (!by[r.grade]) by[r.grade] = { cells: r.cells, area: r.maskArea, sec: 0, n: 0 };
+      by[r.grade].sec += r.sec; by[r.grade].n++;
+    });
+    var html = '';
+    GRADES.forEach(function (g) {
+      var v = by[g.id];
+      if (!v) return;
+      html += '<tr style="text-align:right"><td style="text-align:left;padding:3px 0">' + g.name + '</td>' +
+              '<td>' + v.cells + '</td>' +
+              '<td>' + Math.round(v.area / 1000) + 'k</td>' +
+              '<td style="color:var(--accent);font-weight:700">' + (v.sec / v.n).toFixed(1) + '</td>' +
+              '<td style="color:var(--muted)">' + v.n + '</td></tr>';
+    });
+    el('logBody').innerHTML = html || '<tr><td colspan="5" style="color:var(--muted);padding:6px 0">아직 없음</td></tr>';
+  }
+
+  function buildTools() {
+    var host = el('tools');
+    host.innerHTML = '';
+    TOOLS.forEach(function (t, i) {
+      var b = document.createElement('button');
+      b.className = 'tool' + (i === toolIdx ? ' on' : '');
+      b.innerHTML = t.name + '<span>r' + t.r + ' · ' + t.vMin + '~' + t.vMax + '</span>';
+      b.addEventListener('click', function () { toolIdx = i; buildTools(); syncSliders(); });
+      host.appendChild(b);
+    });
+  }
+
+  function syncSliders() {
+    var t = tool();
+    el('sR').value = t.r;     el('vR').textContent = t.r;
+    el('sCut').value = t.cut; el('vCut').textContent = t.cut.toFixed(2);
+    el('sMin').value = t.vMin; el('vMin').textContent = t.vMin;
+    el('sMax').value = t.vMax; el('vMax').textContent = t.vMax;
+  }
+
+  el('sR').addEventListener('input', function () { tool().r = +this.value; el('vR').textContent = this.value; buildTools(); });
+  el('sCut').addEventListener('input', function () { tool().cut = +this.value; el('vCut').textContent = (+this.value).toFixed(2); });
+  el('sMin').addEventListener('input', function () {
+    var v = Math.min(+this.value, tool().vMax - 40);
+    tool().vMin = v; this.value = v; el('vMin').textContent = v; buildTools();
+  });
+  el('sMax').addEventListener('input', function () {
+    var v = Math.max(+this.value, tool().vMin + 40);
+    tool().vMax = v; this.value = v; el('vMax').textContent = v; buildTools();
+  });
+  el('resetTool').addEventListener('click', function () {
+    var d = DEFAULTS[toolIdx];
+    tool().r = d.r; tool().cut = d.cut; tool().vMin = d.vMin; tool().vMax = d.vMax;
+    syncSliders(); buildTools();
+  });
+
+  // ===================== 새 복권 =====================
+  function newCard() {
+    finished = false; down = false;
+    startedAt = 0; elapsed = 0;
+    travel = 0; effTravel = 0;
+    band = { good: 0, slow: 0, over: 0, bad: 0 };
+    particles = []; slips = [];
+    speed = 0; slowMs = 0; gumming = false;
+    resultEl.classList.remove('show');
+    renderTicket();
+    paintFoil();
+    resetCoverage();
+    el('maskInfo').textContent = maskCells
+      ? Math.round(maskAreaPx).toLocaleString() + ' px² · ' + boxes.length + '칸 · 카드의 ' +
+        Math.round((maskAreaPx / (W * H)) * 100) + '%'
+      : boxes.length + '칸 · 크기 대기 중';
+    updateStats();
+  }
+  el('newCard').addEventListener('click', newCard);
+  el('again').addEventListener('click', newCard);
+  el('optSound').addEventListener('change', function () { if (this.checked) audioInit(); else audioUp(); });
+
+  // ===================== 시작 =====================
+  window.addEventListener('resize', function () { resize(); });
+  // 0 크기로 시작한 경우(숨겨진 컨테이너 등) 크기가 생기는 즉시 스스로 복구한다.
+  if (window.ResizeObserver) {
+    new ResizeObserver(function () {
+      var wasReady = canvasReady;
+      resize();
+      if (!wasReady && canvasReady) newCard();
+    }).observe(card);
+  }
+  el('clearLog').addEventListener('click', function () { runLog = []; renderLog(); });
+
+  // 은박 텍스처 — 로드 실패해도 절차적 그라디언트로 동작한다.
+  foilImg = new Image();
+  foilImg.onload = function () { foilReady = true; if (canvasReady) { paintFoil(); resetCoverage(); } };
+  foilImg.onerror = function () { foilReady = false; };
+  foilImg.src = '../../public/assets/images/lottery-foil-silver.webp';
+
+  buildGrades();
+  buildTools();
+  syncSliders();
+  renderLog();
+  resize();
+  newCard();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
