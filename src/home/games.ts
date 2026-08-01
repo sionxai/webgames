@@ -27,7 +27,7 @@ export const GAMES: GameEntry[] = [
     tagline: '확률은 차갑고, 손은 성장한다',
     description: '실제 공시 확률표를 바탕으로 복권을 긁고 숙련도를 쌓아 더 높은 등급에 도전하는 런 기반 시뮬레이션.',
     path: '/games/lottery/',
-    thumbnail: '/assets/images/lottery-ticket-500.webp',
+    thumbnail: '/assets/images/lottery-key-v1.webp',
     status: 'live'
   },
   {
