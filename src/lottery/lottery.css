@@ -43,8 +43,13 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .howto span { display: block; color: var(--sub); font-size: var(--fs-body); font-weight: 600; line-height: 1.35; }
 .prizebox { flex: 1; min-height: 0; color: var(--sub); border: .14cqw solid var(--line); border-radius: .8cqw; padding: .9cqw 1.1cqw; background: var(--panel); overflow: hidden; }
 .prize-title { color: var(--ink); font-size: var(--fs-head); font-weight: 900; line-height: 1.14; text-align: center; padding-bottom: .45cqw; margin-bottom: .55cqw; border-bottom: .14cqw solid var(--line); }
-.prize-row { display: flex; justify-content: space-between; gap: .6cqw; font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
-.prize-row span { font-weight: 600; }.prize-row b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 등위 · 당첨금 · 당첨확률 3열 — 금액만으로는 그 숫자가 무슨 뜻인지 안 보인다 */
+.prize-row { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: .2cqw .7cqw;
+  font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
+.prize-row span { font-weight: 600; }
+.prize-row b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.prize-row i { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+  text-align: right; opacity: .72; font-size: .88em; }
 .pr-play { grid-area: play; position: relative; min-height: 0; border-radius: .9cqw; background: var(--plate); border: .16cqw solid var(--line); }
 .play-tab { position: absolute; z-index: 2; top: -.95cqw; padding: .1cqw .85cqw; border-radius: .45cqw; background: var(--plate); color: var(--ink); font-size: var(--fs-tab); font-weight: 800; line-height: 1.2; white-space: nowrap; }
 .tab-l { left: 2.4cqw; }.tab-r { right: 2.4cqw; }
