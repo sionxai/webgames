@@ -130,13 +130,28 @@
         }
       },
       "stats": {
-        ".read": "true",
         "total": {
-          ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1)"
+          ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1)",
+          ".read": "true"
         },
         "days": {
           "$day": {
             ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1) && $day.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+          },
+          ".read": "true"
+        },
+        "games": {
+          "$gameId": {
+            ".read": "auth != null && root.child('portal/admins').child(auth.uid).val() === true",
+            "total": {
+              ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1)"
+            },
+            "days": {
+              "$day": {
+                ".write": "auth != null && newData.isNumber() && (!data.exists() ? newData.val() === 1 : newData.val() === data.val() + 1) && $day.matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+              }
+            },
+            ".validate": "$gameId.matches(/^[a-z0-9-]{1,32}$/)"
           }
         }
       },
@@ -144,6 +159,12 @@
         "$uid": {
           ".read": "auth != null && auth.uid === $uid",
           ".write": "auth != null && auth.uid === $uid && newData.isString() && newData.val().matches(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/)"
+        }
+      },
+      "admins": {
+        "$uid": {
+          ".read": "auth != null && auth.uid === $uid",
+          ".write": "false"
         }
       }
     }

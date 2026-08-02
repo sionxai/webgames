@@ -5,6 +5,7 @@ import { HanpanLogo } from './components/HanpanLogo';
 import { Bot, Hourglass, Play, ScrollText, ShieldCheck, Smartphone, Trophy, Zap } from 'lucide-react';
 import { AccountWidget } from './components/AccountWidget';
 import { VisitorStats } from './components/VisitorStats';
+import { recordGameVisit } from '../lib/gameStats';
 
 function GameCard({ game }: { game: GameEntry }) {
   if (game.status === 'coming-soon') {
@@ -23,7 +24,7 @@ function GameCard({ game }: { game: GameEntry }) {
   }
 
   return (
-    <a className="game-card" href={game.path}>
+    <a className="game-card" href={game.path} onClick={() => void recordGameVisit(game.id)}>
       <div
         className="game-card__thumb"
         style={game.thumbnail ? { backgroundImage: `url(${game.thumbnail})` } : undefined}
@@ -72,6 +73,7 @@ export function HomePage() {
             <a
               className="hero-card"
               href={featured.path}
+              onClick={() => void recordGameVisit(featured.id)}
               style={featured.thumbnail ? { backgroundImage: `url(${featured.thumbnail})` } : undefined}
             >
               <div className="hero-card__shade" aria-hidden="true" />
