@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
 import { createScratchEngine, type ScratchController, type ScratchProgress } from "../engine/scratch";
+import { isSettled } from "../engine/draw";
 import { ticketById } from "../data/tickets";
 import type { ActiveTicket, Balance } from "../types";
 
@@ -14,9 +15,9 @@ type Props = {
 type PrintStyle = CSSProperties & Record<`--${string}`, string>;
 
 /**
- * 칸에 찍히는 금액은 축약 표기를 쓴다.
+ * 금액 축약 표기.
  * 전체 숫자(`200,000,000원` = 207px)는 칸(136px)을 넘어 잘린다 — 실제 복권도 `2억원`으로 찍는다.
- * 당첨금 안내표는 공간이 있으므로 전체 숫자를 유지한다.
+ * 당첨금 안내표에도 쓴다: 확률 열을 붙이려면 자리가 필요하다.
  */
 function shortWon(value: number): string {
   const strip = (n: number) => String(Math.round(n * 10) / 10);
@@ -25,6 +26,21 @@ function shortWon(value: number): string {
   if (value >= 1e4) return `${strip(value / 1e4)}만원`;
   if (value >= 1e3) return `${strip(value / 1e3)}천원`;
   return `${value}원`;
+}
+
+/**
+ * 등위별 당첨확률 — 이 게임에서 가장 중요한 숫자다.
+ * 2억원 옆에 `1/400만`이 붙어야 그 금액이 무슨 뜻인지 보인다.
+ */
+function shortOdds(count: number, issued: number): string {
+  if (count <= 0) return "—";
+  const one = issued / count;
+  const trim = (value: number, digits: number) => value.toFixed(digits).replace(/\.0+$/, "");
+  if (one >= 1e8) return `1/${trim(one / 1e8, 1)}억`;
+  // 100만 이상이면 소수점이 의미 없다 — 1/166.7만보다 1/167만이 읽힌다
+  if (one >= 1e4) return `1/${trim(one / 1e4, one / 1e4 >= 100 ? 0 : 1)}만`;
+  if (one >= 1e3) return `1/${Math.round(one).toLocaleString()}`;
+  return `1/${trim(one, 1)}`;
 }
 
 export default function TicketCard({ ticket, balance, toolIndex, onProgress, onComplete }: Props) {
@@ -46,6 +62,18 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
     "--ink": print.theme.ink, "--sub": print.theme.sub, "--panel": print.theme.panel,
     "--plate": print.theme.plate, "--line": print.theme.line,
   };
+
+  const lucky = ticket.printedCells.filter((cell) => cell.kind === "lucky");
+  const mine = ticket.printedCells.filter((cell) => cell.kind !== "lucky");
+  /**
+   * 엔진의 칸 인덱스는 DOM 순서(.scratch-cell)를 따른다 — printedCells 순서가 아니다.
+   * 확정 판정도 같은 배열을 봐야 하므로 렌더와 판정이 이 하나를 공유한다.
+   */
+  const displayCells = useMemo(() => [...lucky, ...mine], [ticket.ticketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const settled = useCallback(
+    (revealed: boolean[]) => isSettled(product, displayCells, revealed),
+    [product, displayCells],
+  );
 
   useLayoutEffect(() => {
     const box = prizeRef.current;
@@ -86,7 +114,7 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
       host, foil, cells: [...host.querySelectorAll<HTMLElement>(".scratch-cell")],
       balance, toolIndex, initialReveal: ticket.revealed,
       initialRemovedArea: ticket.removedArea, initialRequiredArea: ticket.requiredArea,
-      onProgress, onComplete,
+      isSettled: settled, onProgress, onComplete,
     });
     engineRef.current = engine;
     window.__lotteryScratch = engine;
@@ -96,11 +124,9 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
     };
   }, [
     ticket.ticketId, ticket.complete, ticket.revealed, ticket.removedArea, ticket.requiredArea,
-    balance, toolIndex, onComplete, onProgress,
+    balance, toolIndex, onComplete, onProgress, settled,
   ]);
 
-  const lucky = ticket.printedCells.filter((cell) => cell.kind === "lucky");
-  const mine = ticket.printedCells.filter((cell) => cell.kind !== "lucky");
   return (
     <div ref={hostRef} className="ticket-card" style={{ backgroundImage: `url(${product.background})` }}>
       <div className="ticket-print" style={style}>
@@ -112,7 +138,13 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
           <div className="howto"><b>{product.kind}</b><span>{product.ruleText}</span></div>
           <div className="prizebox" ref={prizeRef}>
             <div className="prize-title">당첨금 안내</div>
-            {product.prizes.map((tier) => <div className="prize-row" key={tier.rank}><span>{tier.rank}등</span><b>{tier.prize.toLocaleString()}원</b></div>)}
+            {product.prizes.map((tier) => (
+              <div className="prize-row" key={tier.rank}>
+                <span>{tier.rank}등</span>
+                <b>{shortWon(tier.prize)}</b>
+                <i>{shortOdds(tier.count, product.issued)}</i>
+              </div>
+            ))}
           </div>
         </aside>
         <section className={`pr-play ${product.rule}`}>

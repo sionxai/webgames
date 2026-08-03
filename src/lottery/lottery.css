@@ -41,10 +41,16 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .howto { flex: 0 0 auto; border: .14cqw solid var(--line); border-radius: .8cqw; padding: .9cqw 1.1cqw; background: var(--panel); }
 .howto b { display: block; font-size: var(--fs-head); font-weight: 900; line-height: 1.14; margin-bottom: .35cqw; }
 .howto span { display: block; color: var(--sub); font-size: var(--fs-body); font-weight: 600; line-height: 1.35; }
+.howto::after { content: "구매 시 결과가 확정되며 새로고침 후에도 유지됩니다."; display: block; margin-top: .55cqw; color: var(--sub); font-size: var(--fs-fine); font-weight: 700; line-height: 1.3; opacity: .82; }
 .prizebox { flex: 1; min-height: 0; color: var(--sub); border: .14cqw solid var(--line); border-radius: .8cqw; padding: .9cqw 1.1cqw; background: var(--panel); overflow: hidden; }
 .prize-title { color: var(--ink); font-size: var(--fs-head); font-weight: 900; line-height: 1.14; text-align: center; padding-bottom: .45cqw; margin-bottom: .55cqw; border-bottom: .14cqw solid var(--line); }
-.prize-row { display: flex; justify-content: space-between; gap: .6cqw; font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
-.prize-row span { font-weight: 600; }.prize-row b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* 등위 · 당첨금 · 당첨확률 3열 — 금액만으로는 그 숫자가 무슨 뜻인지 안 보인다 */
+.prize-row { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: .2cqw .7cqw;
+  font-size: var(--fs-prize, var(--fs-body)); line-height: 1.5; }
+.prize-row span { font-weight: 600; }
+.prize-row b { font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.prize-row i { font-style: normal; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap;
+  text-align: right; opacity: .72; font-size: .88em; }
 .pr-play { grid-area: play; position: relative; min-height: 0; border-radius: .9cqw; background: var(--plate); border: .16cqw solid var(--line); }
 .play-tab { position: absolute; z-index: 2; top: -.95cqw; padding: .1cqw .85cqw; border-radius: .45cqw; background: var(--plate); color: var(--ink); font-size: var(--fs-tab); font-weight: 800; line-height: 1.2; white-space: nowrap; }
 .tab-l { left: 2.4cqw; }.tab-r { right: 2.4cqw; }
@@ -70,7 +76,53 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .result strong { font-size: 22px; color: #f1ce73; }
 .result button, .run-over button, .loan button, #dev-complete { background: #e0b852; color: #17130b; border: 0; border-radius: 9px; padding: 10px 14px; font-weight: 900; }
 .done-ticket { color: #99d9ad; }
-.empty-card, .run-over { min-height: 300px; display: grid; place-content: center; text-align: center; }
+
+/* ---------- 당첨 결과 팝업 ----------
+   가짜 기대 연출은 없다(지연·드럼롤·"아깝다"). 완주 즉시 사실을 띄우고,
+   화려함은 실제 당첨 등위에만 비례한다. 꽝은 조용하다. */
+.prize-modal {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px;
+  background: rgba(6, 8, 13, .72); backdrop-filter: blur(3px);
+  animation: prize-fade .16s ease-out;
+}
+@keyframes prize-fade { from { opacity: 0 } to { opacity: 1 } }
+.prize-sheet {
+  width: min(400px, 100%); padding: 26px 24px 22px; text-align: center;
+  border-radius: 18px; border: 1px solid #3a445a; background: #141926;
+  box-shadow: 0 24px 70px #000b;
+  animation: prize-rise .2s cubic-bezier(.2, .9, .3, 1.2);
+}
+@keyframes prize-rise { from { transform: translateY(14px) scale(.97); opacity: 0 } to { transform: none; opacity: 1 } }
+.prize-eyebrow { margin: 0 0 10px; font-size: 12px; font-weight: 700; color: #8d97a9; }
+.prize-rank { margin: 0 0 2px; font-size: 15px; font-weight: 800; color: #e8c65a; }
+.prize-amount { display: block; font-size: 40px; font-weight: 900; letter-spacing: -.04em; line-height: 1.25; color: #f7e6b4; }
+.prize-amount.lose { font-size: 34px; color: #7c8798; }
+.prize-odds { margin: 8px 0 0; font-size: 12.5px; color: #8d97a9; }
+.prize-repay { margin: 10px 0 0; font-size: 13px; font-weight: 700; color: #e0a06a; }
+.prize-claim {
+  margin-top: 20px; width: 100%; padding: 13px; border: 0; border-radius: 11px;
+  background: #e0b852; color: #17130b; font-size: 15px; font-weight: 900;
+}
+.prize-sheet.none .prize-claim { background: #333c4e; color: #dbe3f0; }
+/* 등위가 높을수록 크게 — 1~2등은 금테와 후광까지 */
+.prize-sheet.big { border-color: #6b5a2c; background: linear-gradient(180deg, #1d2032, #141926); }
+.prize-sheet.jackpot {
+  border-color: #e0b852; background: linear-gradient(180deg, #2a2415, #141926);
+  box-shadow: 0 24px 70px #000c, 0 0 0 1px #e0b85266, 0 0 60px #e0b85233;
+}
+.prize-sheet.jackpot .prize-amount { font-size: 46px; color: #ffe9a8; text-shadow: 0 0 24px #e0b85266; }
+@media (prefers-reduced-motion: reduce) {
+  .prize-modal, .prize-sheet { animation: none; }
+}
+.empty-card { min-height: 300px; display: grid; place-content: center; text-align: center; }
+.run-over { min-height: 300px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.summary-grid { width: min(560px, 100%); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 14px 0; text-align: left; }
+.summary-grid > div { display: flex; justify-content: space-between; gap: 10px; padding: 9px 10px; border: 1px solid #39455b; border-radius: 8px; background: #111824; }
+.summary-grid dt { color: #aeb9ca; }
+.summary-grid dd { margin: 0; color: #fff; font-weight: 900; font-variant-numeric: tabular-nums; }
+.summary-grid dd.positive { color: #99d9ad; }.summary-grid dd.negative { color: #e59a86; }
+.run-over-note { margin: 0 0 14px; color: #9ea9bb; }
+.run-over-actions, .loan-confirm-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .side-column { display: grid; gap: 14px; }
 .panel h2 { margin: 0 0 12px; font-size: 18px; }
 /* 포인트가 없을 때는 한 줄로 접어 판매대를 화면 위쪽에 유지한다 */
@@ -78,10 +130,13 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .tool-shop.collapsed h2 { margin: 0; font-size: 14px; color: #98a4b8; font-weight: 700; }
 .tool-shop.collapsed h2 strong { color: #fff; }
 .tool-shop.collapsed .muted { color: #6b7689; font-size: 12px; font-weight: 600; }
-.shop b .short { font-style: normal; color: #d98b6a; font-size: 12px; font-weight: 700; }
+.shop-subtitle { margin: -5px 0 4px; color: #8e9aae; font-size: 12px; line-height: 1.3; }
 .shop { display: grid; gap: 8px; }
 .shop h2 { margin-bottom: 4px; }
-.shop button { display: flex; justify-content: space-between; color: #f3f6fb; background: #1a2231; border: 1px solid #39455b; border-radius: 9px; padding: 10px; }
+.shop button { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #f3f6fb; background: #1a2231; border: 1px solid #39455b; border-radius: 9px; padding: 10px; text-align: left; }
+.shop-ticket-name { min-width: 0; }.shop-ticket-meta { display: grid; justify-items: end; gap: 2px; min-width: 108px; }
+.shop-ticket-meta small { color: #9eabc0; font-size: 11px; line-height: 1.2; white-space: nowrap; }
+.shop b .short { font-style: normal; color: #d98b6a; font-size: 12px; font-weight: 700; }
 .shop em { color: #d5a8fa; font-size: 11px; }
 .tool-shop-head { display: flex; justify-content: space-between; align-items: center; }.tool-shop-head h2 { margin: 0; }
 .tool-shop-head b { color: #f1ce73; }.equipped-tool { margin: 9px 0; color: #aeb9ca; }.equipped-tool strong { color: #fff; }
@@ -92,6 +147,12 @@ button:disabled { cursor: not-allowed; opacity: .42; }
 .upgrade-card.locked { border-style: dashed; }.upgrade-card.locked small { color: #e0b852; }
 .loan label, .tuning label { display: grid; gap: 4px; margin: 9px 0; color: #b8c2d3; }
 .loan input, .tuning input { width: 100%; background: #0c111b; color: white; border: 1px solid #3b465a; border-radius: 7px; padding: 8px; }
+.loan-confirmation { margin-top: 11px; padding: 12px; border: 1px solid #a67e2d; border-radius: 10px; background: #211b10; }
+.loan-confirmation h3 { margin: 0 0 10px; color: #f1ce73; font-size: 15px; }
+.loan-confirm-flow { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0 12px; color: #f1ce73; text-align: center; }
+.loan-confirm-flow strong { font-size: clamp(15px, 2vw, 21px); line-height: 1.3; white-space: nowrap; }
+.loan-confirm-flow span { color: #b8a36a; font-size: 18px; }
+.loan-confirm-actions button:last-child { background: #3a4352; color: #edf2f8; }
 .loan small { display: block; margin-top: 9px; color: #9ea9bb; }
 .tuning { margin-top: 14px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 12px; }
 .tuning h2 { grid-column: 1 / -1; }
@@ -110,6 +171,10 @@ button:disabled { cursor: not-allowed; opacity: .42; }
   .scratch-hud { font-size: 12px; gap: 8px; padding: 9px 2px 0; }
   .scratch-hud .hud-detail { display: none; }
   .tool-readout i { max-width: 22px; max-height: 22px; }
+
+  .summary-grid { grid-template-columns: 1fr; }
+  .loan-confirm-flow { gap: 3px; }
+  .loan-confirm-flow strong { font-size: 14px; }
 
   /* 카드 폭이 곧 칸 크기다 — 패딩을 줄여 되찾는다 */
   .panel { padding: 10px; }

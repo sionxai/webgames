@@ -55,6 +55,45 @@ export function readPrintedRank(product: TicketProduct, cells: PrintedCell[]): n
   return Math.min(...hits.map((cell) => cell.prizeIndex)) + 1;
 }
 
+/**
+ * 공개된 칸만으로 지급 등위가 확정됐는가.
+ *
+ * 등위는 언제나 **최상위 매치**로 정해지므로(readPrintedRank의 Math.min), 칸이 더 열리면
+ * 결과는 좋아질 수만 있고 나빠지지 않는다. 따라서 "미공개 칸이 무엇이든 등위가 그대로일 때"가
+ * 확정이고, 그 순간부터 더 긁는 건 정보 없는 노동이다.
+ *
+ * 판정은 실제 인쇄값을 훔쳐보지 않는다 — 미공개 칸에 **어떤 값이 와도** 같은 결론이 나오는지만 본다.
+ */
+export function isSettled(product: TicketProduct, cells: PrintedCell[], revealed: readonly boolean[]): boolean {
+  const hiddenCount = cells.reduce((sum, _, index) => sum + (revealed[index] ? 0 : 1), 0);
+  if (hiddenCount === 0) return true;
+  const shown = cells.filter((_, index) => revealed[index]);
+
+  if (product.rule === "match3") {
+    const counts = new Map<number, number>();
+    shown.forEach((cell) => {
+      if (cell.kind === "amount") counts.set(cell.prizeIndex, (counts.get(cell.prizeIndex) ?? 0) + 1);
+    });
+    const locked = [...counts.entries()].filter(([, count]) => count >= 3).map(([index]) => index);
+    // 아직 3매치가 없으면 '꽝'이 잠정 결론이다 — 모든 등위가 역전 후보가 된다.
+    const best = locked.length ? Math.min(...locked) : product.prizes.length;
+    for (let index = 0; index < best; index += 1) {
+      if ((counts.get(index) ?? 0) + hiddenCount >= 3) return false;
+    }
+    return true;
+  }
+
+  // 행운숫자가 하나라도 덮여 있으면 매치 관계 자체가 통째로 뒤집힌다.
+  const luckyHidden = cells.some((cell, index) => cell.kind === "lucky" && !revealed[index]);
+  const luckyNumbers = shown.filter((cell) => cell.kind === "lucky").map((cell) => cell.number);
+  const mineShown = shown.filter((cell): cell is Extract<PrintedCell, { kind: "mine" }> => cell.kind === "mine");
+  // needAll(2매치게임)은 행운숫자를 전부 맞혀야 당첨 — 덮인 칸이 조건을 완성시킬 수 있다.
+  const payable = !product.needAll
+    || (!luckyHidden && luckyNumbers.every((number) => mineShown.some((cell) => cell.number === number)));
+  // 남은 건 최상위 등위 조기 확정뿐이다. 1등이 걸렸으면 더 좋아질 여지가 없다.
+  return payable && !luckyHidden && mineShown.some((cell) => luckyNumbers.includes(cell.number) && cell.prizeIndex === 0);
+}
+
 export function printTicket(
   product: TicketProduct,
   constraintRank: number | null,
