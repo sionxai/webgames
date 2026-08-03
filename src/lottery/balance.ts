@@ -36,8 +36,12 @@ export const DEFAULT_BALANCE: Balance = {
   efficiencyGreatThreshold: 0.95,
   efficiencyGoodMultiplier: 1.2,
   efficiencyGreatMultiplier: 1.4,
+  // 정상 종료는 '등위 확정'이 맡는다(engine/draw.isSettled). 이건 판정이 어긋났을 때의 백스톱.
   autoCompleteReveal: 0.9,
+  // 실측(높이를 바꿔가며 훑는 실제 손동작): 한 줄이 1스윕 33% → 2스윕 71% → 3스윕 100%.
+  // 임계를 0.45로 낮춰도 3스윕이 2스윕이 될 뿐이라 노동량을 좌우하는 건 이 값이 아니라 완료 조건이다.
   cellRevealThreshold: 0.75,
+  settleWipeStepMs: 70,
   printFlattenExponent: 0.45,
   printRetryLimit: 500,
   progressSaveIntervalMs: 500,

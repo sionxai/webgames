@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type CSSProperties } from "react";
 import { createScratchEngine, type ScratchController, type ScratchProgress } from "../engine/scratch";
+import { isSettled } from "../engine/draw";
 import { ticketById } from "../data/tickets";
 import type { ActiveTicket, Balance } from "../types";
 
@@ -62,6 +63,18 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
     "--plate": print.theme.plate, "--line": print.theme.line,
   };
 
+  const lucky = ticket.printedCells.filter((cell) => cell.kind === "lucky");
+  const mine = ticket.printedCells.filter((cell) => cell.kind !== "lucky");
+  /**
+   * 엔진의 칸 인덱스는 DOM 순서(.scratch-cell)를 따른다 — printedCells 순서가 아니다.
+   * 확정 판정도 같은 배열을 봐야 하므로 렌더와 판정이 이 하나를 공유한다.
+   */
+  const displayCells = useMemo(() => [...lucky, ...mine], [ticket.ticketId]); // eslint-disable-line react-hooks/exhaustive-deps
+  const settled = useCallback(
+    (revealed: boolean[]) => isSettled(product, displayCells, revealed),
+    [product, displayCells],
+  );
+
   useLayoutEffect(() => {
     const box = prizeRef.current;
     if (!box) return;
@@ -101,7 +114,7 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
       host, foil, cells: [...host.querySelectorAll<HTMLElement>(".scratch-cell")],
       balance, toolIndex, initialReveal: ticket.revealed,
       initialRemovedArea: ticket.removedArea, initialRequiredArea: ticket.requiredArea,
-      onProgress, onComplete,
+      isSettled: settled, onProgress, onComplete,
     });
     engineRef.current = engine;
     window.__lotteryScratch = engine;
@@ -111,11 +124,9 @@ export default function TicketCard({ ticket, balance, toolIndex, onProgress, onC
     };
   }, [
     ticket.ticketId, ticket.complete, ticket.revealed, ticket.removedArea, ticket.requiredArea,
-    balance, toolIndex, onComplete, onProgress,
+    balance, toolIndex, onComplete, onProgress, settled,
   ]);
 
-  const lucky = ticket.printedCells.filter((cell) => cell.kind === "lucky");
-  const mine = ticket.printedCells.filter((cell) => cell.kind !== "lucky");
   return (
     <div ref={hostRef} className="ticket-card" style={{ backgroundImage: `url(${product.background})` }}>
       <div className="ticket-print" style={style}>

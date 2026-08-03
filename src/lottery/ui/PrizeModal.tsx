@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import confetti from "canvas-confetti";
+import { shortOdds } from "../balance";
 import type { TicketProduct } from "../types";
 
 type Props = {
@@ -46,7 +47,8 @@ export default function PrizeModal({ product, rank, autoRepay, onClaim }: Props)
           <>
             <p className="prize-rank">{rank}등 당첨</p>
             <strong className="prize-amount" id="prize-headline">{money(prize)}</strong>
-            <p className="prize-odds">이 등위 확률 1/{Math.round(product.issued / tier.count).toLocaleString()}</p>
+            {/* 티켓 당첨금 안내와 같은 포맷을 써야 한다 — 반올림하면 1/3.3이 1/3으로 보인다 */}
+            <p className="prize-odds">이 등위 확률 {shortOdds(tier.count, product.issued)}</p>
             {autoRepay > 0 && (
               <p className="prize-repay">빚 자동 상환 {money(autoRepay)} · 실수령 {money(prize - autoRepay)}</p>
             )}

@@ -6,6 +6,9 @@ export interface ScratchProgress {
   requiredArea: number;
   speed: number;
   verdict: string;
+  /** 완전히 공개된 칸 수 — 진행도는 포일 픽셀이 아니라 이걸로 보여준다 */
+  revealedCells: number;
+  totalCells: number;
 }
 
 export interface ScratchController {
@@ -24,6 +27,8 @@ type Options = {
   initialReveal: number;
   initialRemovedArea: number;
   initialRequiredArea: number;
+  /** 공개된 칸만으로 등위가 확정됐는지 — 규칙 판정은 게임 레이어(draw.isSettled)가 갖는다 */
+  isSettled(revealed: boolean[]): boolean;
   onProgress(progress: ScratchProgress): void;
   onComplete(progress: ScratchProgress): void;
 };
@@ -51,6 +56,8 @@ export function createScratchEngine(options: Options): ScratchController {
   let removedArea = Math.max(0, options.initialRemovedArea);
   let down = false;
   let completed = false;
+  let wiping = false;
+  let wipeTimer = 0;
   let lastX = 0;
   let lastY = 0;
   let lastMoveAt = 0;
@@ -143,11 +150,57 @@ export function createScratchEngine(options: Options): ScratchController {
     if (!remaining || !areas || !revealed) return;
     const rects = cellRects();
     const threshold = balance.cellRevealThreshold;
+    let opened = false;
     touchedCells.forEach((cellIndex) => {
       if (revealed[cellIndex] || areas[cellIndex] <= 0) return;
       const removedRatio = 1 - remaining[cellIndex] / areas[cellIndex];
-      if (removedRatio >= threshold) revealCell(cellIndex, rects);
+      if (removedRatio >= threshold) {
+        revealCell(cellIndex, rects);
+        opened = true;
+      }
     });
+    if (opened) checkSettled();
+  };
+
+  /**
+   * 등위가 확정되면 남은 칸을 대신 쓸어내고 끝낸다.
+   *
+   * 확정 이후의 긁기는 결과를 못 바꾸는 노동이다. 그렇다고 즉시 잘라내면 티켓의 나머지 인쇄를
+   * 못 보므로, 남은 칸을 순서대로 열어 준 뒤 완료를 알린다. 타이머가 죽어도(백그라운드 탭)
+   * 게임이 멈추지 않도록 완료 자체는 마지막 스텝에서 반드시 호출한다.
+   */
+  const checkSettled = () => {
+    const revealed = revealedCells;
+    if (!revealed || completed || wiping) return;
+    if (!options.isSettled([...revealed].map((flag) => flag === 1))) return;
+    const pending: number[] = [];
+    revealed.forEach((flag, cellIndex) => { if (!flag) pending.push(cellIndex); });
+    if (!pending.length) {
+      completed = true;
+      update();
+      options.onComplete(snapshot());
+      return;
+    }
+    wiping = true;
+    // 남은 칸이 많아도 총 연출 시간은 고정이다 — 12칸짜리라고 세 배 기다리게 하지 않는다.
+    const steps = Math.min(pending.length, 6);
+    const perStep = Math.ceil(pending.length / steps);
+    let cursor = 0;
+    const step = () => {
+      const rects = cellRects();
+      for (let taken = 0; taken < perStep && cursor < pending.length; taken += 1, cursor += 1) {
+        revealCell(pending[cursor], rects);
+      }
+      update();
+      if (cursor < pending.length) {
+        wipeTimer = window.setTimeout(step, balance.settleWipeStepMs);
+        return;
+      }
+      wiping = false;
+      completed = true;
+      options.onComplete(snapshot());
+    };
+    wipeTimer = window.setTimeout(step, balance.settleWipeStepMs);
   };
 
   const paintFoil = () => {
@@ -332,18 +385,30 @@ export function createScratchEngine(options: Options): ScratchController {
     try { host.releasePointerCapture(event.pointerId); } catch { /* no capture */ }
   };
 
+  const snapshot = (): ScratchProgress => {
+    let remaining = 0;
+    if (coverage && mask) for (let index = 0; index < coverage.length; index += 1) if (mask[index]) remaining += coverage[index];
+    const revealed = maskCells > 0
+      ? Math.min(1, Math.max(options.initialReveal, 1 - remaining / maskCells))
+      : options.initialReveal;
+    return {
+      revealed,
+      removedArea: Math.max(options.initialRemovedArea, removedArea),
+      requiredArea: Math.max(options.initialRequiredArea, maskCells * cellSize * cellSize),
+      speed: down ? speed : 0,
+      verdict: down ? judge().verdict : "대기",
+      revealedCells: revealedCells ? revealedCells.reduce((sum, flag) => sum + flag, 0) : 0,
+      totalCells: revealedCells ? revealedCells.length : options.cells.length,
+    };
+  };
+
   const update = () => {
     if (!coverage || !mask || maskCells <= 0) return;
-    let remaining = 0;
-    for (let index = 0; index < coverage.length; index += 1) if (mask[index]) remaining += coverage[index];
-    const revealed = Math.min(1, Math.max(options.initialReveal, 1 - remaining / maskCells));
-    const requiredArea = Math.max(options.initialRequiredArea, maskCells * cellSize * cellSize);
-    const progress = {
-      revealed, removedArea: Math.max(options.initialRemovedArea, removedArea), requiredArea,
-      speed: down ? speed : 0, verdict: down ? judge().verdict : "대기",
-    };
+    const progress = snapshot();
     options.onProgress(progress);
-    if (!completed && revealed >= balance.autoCompleteReveal) {
+    // 정상 종료는 checkSettled가 맡는다. 이건 판정이 어긋났을 때를 위한 백스톱이다 —
+    // 포일을 다 지웠는데 안 끝나는 상태가 생기면 게임이 영구히 막힌다.
+    if (!completed && !wiping && progress.revealed >= balance.autoCompleteReveal) {
       completed = true;
       options.onComplete(progress);
     }
@@ -378,6 +443,7 @@ export function createScratchEngine(options: Options): ScratchController {
     destroy() {
       cancelAnimationFrame(raf);
       clearInterval(interval);
+      clearTimeout(wipeTimer);
       observer.disconnect();
       host.removeEventListener("pointerdown", pointerDown);
       host.removeEventListener("pointermove", pointerMove);

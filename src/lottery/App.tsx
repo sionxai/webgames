@@ -39,6 +39,7 @@ export default function App() {
   const [progress, setProgress] = useState<ScratchProgress>({
     revealed: state.activeTicket?.revealed ?? 0, removedArea: state.activeTicket?.removedArea ?? 0,
     requiredArea: state.activeTicket?.requiredArea ?? 1, speed: 0, verdict: "대기",
+    revealedCells: 0, totalCells: 0,
   });
   const [loanAmount, setLoanAmount] = useState(balance.defaultLoanRequest);
   const [loanPanelOpen, setLoanPanelOpen] = useState(false);
@@ -98,7 +99,7 @@ export default function App() {
       persistSave(next);
       stateRef.current = next;
       setState(next);
-      setProgress({ revealed: 0, removedArea: 0, requiredArea: 1, speed: 0, verdict: "대기" });
+      setProgress({ revealed: 0, removedArea: 0, requiredArea: 1, speed: 0, verdict: "대기", revealedCells: 0, totalCells: 0 });
       setMessage("복권이 발행되었습니다. 긁어서 결과를 확인하세요.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "구매하지 못했습니다.");
@@ -277,7 +278,10 @@ export default function App() {
                   <i style={{ width: effectiveTool.radius, height: effectiveTool.radius }} />
                   {effectiveTool.name}<em className="hud-detail"> · 반지름 {effectiveTool.radius}px</em>
                 </span>
-                <span>공개율 {Math.round((state.activeTicket.complete ? 1 : progress.revealed) * 100)}%</span>
+                {/* 진행도는 포일 픽셀이 아니라 칸으로 센다 — 결과가 다 보이는데 "27%"라고 하면 미터가 거짓말이 된다 */}
+                <span>{state.activeTicket.complete
+                  ? "공개 완료"
+                  : `${progress.revealedCells} / ${progress.totalCells}칸`}</span>
                 <span>{Math.round(progress.speed)} px/s · {progress.verdict}</span>
               </div>
               <div className="speed-meter" aria-label={`적정 속도 ${effectiveTool.vMin}에서 ${effectiveTool.vMax} px/s`}>
