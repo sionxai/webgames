@@ -15,6 +15,7 @@ import {
   setNickname,
   type PortalProfile,
 } from '../../lib/portalProfile';
+import { isAdminUid } from '../../lib/gameStats';
 
 type ReadyAuthState = Extract<PortalAuthState, { status: 'guest' | 'google' }>;
 type PendingAction = 'save' | 'link' | 'sign-out' | null;
@@ -57,6 +58,18 @@ export function AccountPanel({
   const [actionMessage, setActionMessage] = useState('');
   const nicknameError = getNicknameError(nickname);
   const actionDisabled = pendingAction !== null;
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // 관리자로 등록된 계정에만 운영 통계 링크를 보여준다.
+  useEffect(() => {
+    let cancelled = false;
+    void isAdminUid(authState.user.uid).then(result => {
+      if (!cancelled) setIsAdmin(result);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [authState.user.uid]);
 
   useEffect(() => {
     if (!nicknameDirty) {
@@ -287,6 +300,18 @@ export function AccountPanel({
             </>
           )}
         </section>
+
+        {isAdmin && (
+          <section className="account-panel__section account-panel__connection">
+            <div>
+              <h3>운영 통계</h3>
+              <p>포털·게임별 방문 수를 확인합니다</p>
+            </div>
+            <a className="account-panel__secondary-button" href="/admin/">
+              통계 열기
+            </a>
+          </section>
+        )}
 
         <p className="account-panel__status" role="status" aria-live="polite">
           {actionMessage}

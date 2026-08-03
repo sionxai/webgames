@@ -467,6 +467,10 @@ a:focus-visible {
 .account-panel__input-row button,
 .account-panel__secondary-button,
 .account-panel__danger-button {
+  /* 관리자 통계는 링크(a)로도 쓰이므로 버튼과 같은 정렬을 보장한다 */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex: 0 0 auto;
   min-height: 40px;
   padding: 0 14px;
@@ -474,6 +478,7 @@ a:focus-visible {
   border-radius: 9px;
   font-size: 0.76rem;
   font-weight: 800;
+  text-decoration: none;
   cursor: pointer;
 }
 
