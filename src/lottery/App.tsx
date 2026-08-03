@@ -6,6 +6,7 @@ import { buyTicket, claimTicket, completeTicket, newRun } from "./game/run";
 import { loadSave, loadTuning, persistSave, persistTuning } from "./game/save";
 import type { Balance, LotterySave, TicketPrice } from "./types";
 import type { ScratchProgress } from "./engine/scratch";
+import PrizeModal from "./ui/PrizeModal";
 import TicketCard from "./ui/TicketCard";
 import ToolShop from "./ui/ToolShop";
 import TuningPanel from "./ui/TuningPanel";
@@ -221,6 +222,10 @@ export default function App() {
 
   const activeProduct = state.activeTicket ? ticketById(state.activeTicket.productId) : undefined;
   const activeRank = state.activeTicket?.complete ? state.activeTicket.rank : undefined;
+  // 팝업에서 실수령액을 미리 보여주려면 자동 상환액을 같은 공식으로 계산해야 한다
+  const pendingAutoRepay = activeRank && activeProduct
+    ? Math.min(state.debt, Math.floor(activeProduct.prizes[activeRank - 1].prize * balance.autoRepayRate))
+    : 0;
   const nextLevelXp = Math.round(balance.levelCurveBase * Math.pow(state.level + 1, balance.levelCurveExponent));
   const remainingCredit = Math.max(0, loanLimit(state, balance) - state.debt);
   const effectiveLoan = Math.max(0, Math.min(loanAmount, remainingCredit));
@@ -282,11 +287,14 @@ export default function App() {
                 }} />
                 <i style={{ left: `${Math.min(100, progress.speed / (effectiveTool.vMax * balance.scratch.overSpeedMultiplier) * 100)}%` }} />
               </div>
-              {state.activeTicket.complete && !state.activeTicket.claimed && (
-                <div className="result">
-                  <strong>{activeRank ? `${activeRank}등 · ${money(activeProduct!.prizes[activeRank - 1].prize)}` : "꽝"}</strong>
-                  <button id="claim-prize" onClick={claim}>당첨금 수령</button>
-                </div>
+              {/* 결과는 복권의 감정적 정점이다 — 미터 밑 한 줄이 아니라 팝업으로 띄운다 */}
+              {state.activeTicket.complete && !state.activeTicket.claimed && activeProduct && (
+                <PrizeModal
+                  product={activeProduct}
+                  rank={activeRank ?? null}
+                  autoRepay={pendingAutoRepay}
+                  onClaim={claim}
+                />
               )}
               {state.activeTicket.claimed && <p className="done-ticket">정산 완료 — 아래에서 다음 복권을 구매하세요.</p>}
               {devMode && !state.activeTicket.complete && <button id="dev-complete" onClick={() => window.__lotteryScratch?.completeForTesting()}>개발용 즉시 완주</button>}
