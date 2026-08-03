@@ -8,6 +8,16 @@ export const VIRTUAL_TABLE_VERSION = "virtual-2026-07-30-v1";
 export const PRODUCT_VERSION = "lottery-products-v1";
 export const MIN_TICKET_PRICE = 500;
 
+export function shortOdds(count: number, issued: number): string {
+  if (count <= 0) return "—";
+  const one = issued / count;
+  const trim = (value: number, digits: number) => value.toFixed(digits).replace(/\.0+$/, "");
+  if (one >= 1e8) return `1/${trim(one / 1e8, 1)}억`;
+  if (one >= 1e4) return `1/${trim(one / 1e4, one / 1e4 >= 100 ? 0 : 1)}만`;
+  if (one >= 1e3) return `1/${Math.round(one).toLocaleString()}`;
+  return `1/${trim(one, 1)}`;
+}
+
 export const DEFAULT_BALANCE: Balance = {
   seedCash: 250000,
   masteryFactors: { 500: 76, 1000: 139, 2000: 275, 5000: 727, 10000: 1662 },
@@ -27,6 +37,7 @@ export const DEFAULT_BALANCE: Balance = {
   efficiencyGoodMultiplier: 1.2,
   efficiencyGreatMultiplier: 1.4,
   autoCompleteReveal: 0.9,
+  cellRevealThreshold: 0.75,
   printFlattenExponent: 0.45,
   printRetryLimit: 500,
   progressSaveIntervalMs: 500,
@@ -37,10 +48,13 @@ export const DEFAULT_BALANCE: Balance = {
     5000: { safe: [10, 8.5, 10, 10], bodyTop: 36, theme: { ink: "#f7e7bb", sub: "#c3ac7e", panel: "rgba(44,22,66,0.46)", plate: "rgba(38,19,58,0.86)", line: "rgba(247,231,187,0.30)" } },
     10000: { safe: [10.5, 9, 10.5, 10], bodyTop: 36, theme: { ink: "#f2d98c", sub: "#b59d5c", panel: "rgba(0,0,0,0.48)", plate: "rgba(5,5,7,0.90)", line: "rgba(242,217,140,0.28)" } },
   },
+  // ⚠️ 표시용 값이다. 실제 효과는 아래 scratch.tools[단계]에서 온다 —
+  //    두 곳이 어긋나면 상점이 거짓말을 한다(접촉면 12px 표시 / 실제 16px).
+  //    contact = tools[].radius · cut = tools[].cut · stability = tools[].vMax - vMin
   upgrades: [
-    { key: "contact", name: "접촉면", unit: "px", values: [12, 16, 21, 27, 34, 44] },
-    { key: "cut", name: "절삭력", unit: "", values: [0.42, 0.52, 0.62, 0.72, 0.85, 1] },
-    { key: "stability", name: "안정성", unit: "px/s", values: [260, 355, 465, 595, 745, 940] },
+    { key: "contact", name: "접촉면", unit: "px", values: [16, 20, 26, 32, 38, 46] },
+    { key: "cut", name: "절삭력", unit: "", values: [0.5, 0.6, 0.7, 0.8, 0.9, 1] },
+    { key: "stability", name: "안정성", unit: "px/s", values: [750, 960, 1170, 1380, 1640, 1900] },
     { key: "workbench", name: "작업대", unit: "장", values: [1, 2, 4], locked: true },
   ],
   scratch: {
@@ -74,12 +88,12 @@ export const DEFAULT_BALANCE: Balance = {
     gumCoverageCeiling: 0.5,
     gumMaxMovement: 4,
     tools: [
-      { name: "10원", radius: 12, cut: 0.42, vMin: 120, vMax: 380 },
-      { name: "100원", radius: 16, cut: 0.52, vMin: 105, vMax: 460 },
-      { name: "500원", radius: 21, cut: 0.62, vMin: 95, vMax: 560 },
-      { name: "기념주화", radius: 27, cut: 0.72, vMin: 85, vMax: 680 },
-      { name: "황동 스크레이퍼", radius: 34, cut: 0.85, vMin: 75, vMax: 820 },
-      { name: "정밀 롤러", radius: 44, cut: 1, vMin: 60, vMax: 1000 },
+      { name: "10원", radius: 16, cut: 0.50, vMin: 150, vMax: 900 },
+      { name: "100원", radius: 20, cut: 0.60, vMin: 140, vMax: 1100 },
+      { name: "500원", radius: 26, cut: 0.70, vMin: 130, vMax: 1300 },
+      { name: "기념주화", radius: 32, cut: 0.80, vMin: 120, vMax: 1500 },
+      { name: "황동 스크레이퍼", radius: 38, cut: 0.90, vMin: 110, vMax: 1750 },
+      { name: "정밀 롤러", radius: 46, cut: 1.00, vMin: 100, vMax: 2000 },
     ],
   },
 };

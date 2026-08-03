@@ -47,12 +47,15 @@ export function creditPrize(state: LotterySave, gross: number, balance: Balance)
     cash: state.cash + gross - repayment,
     debt: state.debt - repayment,
     ledger: [...state.ledger, ...entries],
-    stats: { ...state.stats, grossWon: state.stats.grossWon + gross, repaid: state.stats.repaid + repayment },
+    stats: {
+      ...state.stats,
+      grossWon: state.stats.grossWon + gross,
+      repaid: state.stats.repaid + repayment,
+      bestPrize: Math.max(state.stats.bestPrize ?? 0, gross),
+    },
   };
 }
 
 export function isRunOver(state: LotterySave, balance: Balance): boolean {
-  const remainingCredit = Math.max(0, loanLimit(state, balance) - state.debt);
-  return state.cash < MIN_TICKET_PRICE
-    && Math.floor(remainingCredit * (1 - balance.loanUpfrontInterest)) < MIN_TICKET_PRICE;
+  return state.cash < MIN_TICKET_PRICE;
 }

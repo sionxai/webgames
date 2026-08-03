@@ -33,20 +33,21 @@ export default function ToolShop({ balance, state, onInvest }: Props) {
       <p className="equipped-tool">현재 장착 · <strong>{toolName}</strong></p>
       <div className="upgrade-list">
         {balance.upgrades.map((upgrade, axis) => {
+          if (upgrade.locked) return null;
           const savedStage = state.upgrades[axis];
-          const stage = axis === 3 ? 0 : Math.min(
+          const stage = Math.min(
             upgrade.values.length - 1,
             Math.max(0, Number.isInteger(savedStage) ? savedStage : 0),
           );
           const maxed = stage >= upgrade.values.length - 1;
           const next = upgrade.values[Math.min(stage + 1, upgrade.values.length - 1)];
           return (
-            <article className={`upgrade-card${upgrade.locked ? " locked" : ""}`} key={upgrade.key}>
+            <article className="upgrade-card" key={upgrade.key}>
               <div><strong>{upgrade.name}</strong><span>{stage + 1} / {upgrade.values.length}단계</span></div>
               <p>현재 {effect(axis, upgrade.values[stage], upgrade.unit)}</p>
-              <small>{upgrade.locked ? "준비 중 · 동시 처리는 다음 업데이트" : maxed ? "최고 단계" : `다음 ${effect(axis, next, upgrade.unit)}`}</small>
-              <button disabled={Boolean(upgrade.locked) || maxed || state.skillPoints < 1} onClick={() => onInvest(axis)}>
-                {upgrade.locked ? "잠금" : maxed ? "완료" : "1 포인트 투자"}
+              <small>{maxed ? "최고 단계" : `다음 ${effect(axis, next, upgrade.unit)}`}</small>
+              <button disabled={maxed || state.skillPoints < 1} onClick={() => onInvest(axis)}>
+                {maxed ? "완료" : "1 포인트 투자"}
               </button>
             </article>
           );

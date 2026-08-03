@@ -28,6 +28,8 @@ type Options = {
   onComplete(progress: ScratchProgress): void;
 };
 
+type CellRect = { x: number; y: number; w: number; h: number };
+
 export function createScratchEngine(options: Options): ScratchController {
   const { host, foil, balance } = options;
   const context = foil.getContext("2d");
@@ -40,6 +42,11 @@ export function createScratchEngine(options: Options): ScratchController {
   let coverage: Float32Array | null = null;
   let passes: Uint8Array | null = null;
   let mask: Uint8Array | null = null;
+  let cellOwners: Int16Array | null = null;
+  let cellIndexes: number[][] = [];
+  let cellRemaining: Float32Array | null = null;
+  let cellAreas: Float32Array | null = null;
+  let revealedCells: Uint8Array | null = null;
   let maskCells = 0;
   let removedArea = Math.max(0, options.initialRemovedArea);
   let down = false;
@@ -57,7 +64,7 @@ export function createScratchEngine(options: Options): ScratchController {
   const cellSize = balance.scratch.coverageCell;
   const tool = balance.scratch.tools[Math.min(options.toolIndex, balance.scratch.tools.length - 1)];
 
-  const cellRects = () => {
+  const cellRects = (): CellRect[] => {
     const hostRect = host.getBoundingClientRect();
     if (hostRect.width <= 0 || hostRect.height <= 0) return [];
     return options.cells.map((cell) => {
@@ -73,9 +80,16 @@ export function createScratchEngine(options: Options): ScratchController {
 
   const buildMask = () => {
     if (!coverage || !passes) return;
+    const rects = cellRects();
     mask = new Uint8Array(columns * rows);
+    cellOwners = new Int16Array(columns * rows);
+    cellOwners.fill(-1);
+    cellIndexes = rects.map(() => []);
+    cellRemaining = new Float32Array(rects.length);
+    cellAreas = new Float32Array(rects.length);
+    revealedCells = new Uint8Array(rects.length);
     maskCells = 0;
-    cellRects().forEach((rect) => {
+    rects.forEach((rect, cellIndex) => {
       const x0 = Math.max(0, Math.floor(rect.x / cellSize));
       const x1 = Math.min(columns - 1, Math.floor((rect.x + rect.w) / cellSize));
       const y0 = Math.max(0, Math.floor(rect.y / cellSize));
@@ -85,6 +99,10 @@ export function createScratchEngine(options: Options): ScratchController {
         if (!mask![index]) {
           mask![index] = 1;
           maskCells += 1;
+          cellOwners![index] = cellIndex;
+          cellIndexes[cellIndex].push(index);
+          cellRemaining![cellIndex] += 1;
+          cellAreas![cellIndex] += 1;
         }
       }
     });
@@ -96,9 +114,40 @@ export function createScratchEngine(options: Options): ScratchController {
         const column = index % columns;
         const row = Math.floor(index / columns);
         context.clearRect(column * cellSize, row * cellSize, cellSize, cellSize);
+        const cellIndex = cellOwners![index];
+        if (cellIndex >= 0) cellRemaining![cellIndex] -= 1;
         cellsToRestore -= 1;
       }
     }
+    revealTouchedCells(new Set(cellIndexes.map((_, index) => index)));
+  };
+
+  const revealCell = (cellIndex: number, rects: CellRect[]) => {
+    if (!coverage || !cellRemaining || !revealedCells || !context || revealedCells[cellIndex]) return;
+    cellIndexes[cellIndex].forEach((index) => { coverage![index] = 0; });
+    removedArea += Math.max(0, cellRemaining[cellIndex]) * cellSize * cellSize;
+    cellRemaining[cellIndex] = 0;
+    revealedCells[cellIndex] = 1;
+    const rect = rects[cellIndex];
+    if (rect) {
+      context.globalCompositeOperation = "destination-out";
+      context.clearRect(rect.x, rect.y, rect.w, rect.h);
+    }
+  };
+
+  const revealTouchedCells = (touchedCells: Set<number>) => {
+    // 타입 좁힘은 이 문장 안에서만 유지된다 — 아래 콜백까지 가져가려면 지역 상수로 캡처해야 한다.
+    const remaining = cellRemaining;
+    const areas = cellAreas;
+    const revealed = revealedCells;
+    if (!remaining || !areas || !revealed) return;
+    const rects = cellRects();
+    const threshold = balance.cellRevealThreshold;
+    touchedCells.forEach((cellIndex) => {
+      if (revealed[cellIndex] || areas[cellIndex] <= 0) return;
+      const removedRatio = 1 - remaining[cellIndex] / areas[cellIndex];
+      if (removedRatio >= threshold) revealCell(cellIndex, rects);
+    });
   };
 
   const paintFoil = () => {
@@ -149,7 +198,7 @@ export function createScratchEngine(options: Options): ScratchController {
   };
 
   const stamp = (x: number, y: number, power: number) => {
-    if (!context || !coverage || !passes || !mask || !ready) return 0;
+    if (!context || !coverage || !passes || !mask || !cellOwners || !cellRemaining || !revealedCells || !ready) return 0;
     const radius = tool.radius;
     if (![x, y, radius, power].every(Number.isFinite) || radius <= 0 || power <= 0) return 0;
     context.globalCompositeOperation = "destination-out";
@@ -167,9 +216,12 @@ export function createScratchEngine(options: Options): ScratchController {
     const x1 = Math.min(columns - 1, Math.floor((x + radius) / cellSize));
     const y0 = Math.max(0, Math.floor((y - radius) / cellSize));
     const y1 = Math.min(rows - 1, Math.floor((y + radius) / cellSize));
+    const touchedCells = new Set<number>();
     for (let row = y0; row <= y1; row += 1) for (let column = x0; column <= x1; column += 1) {
       const index = row * columns + column;
       if (!mask[index]) continue;
+      const cellIndex = cellOwners[index];
+      if (cellIndex < 0 || revealedCells[cellIndex]) continue;
       const distance = Math.hypot(column * cellSize + cellSize / 2 - x, row * cellSize + cellSize / 2 - y);
       if (distance > radius) continue;
       const falloff = Math.max(0, 1 - Math.pow(distance / radius, balance.scratch.falloffExponent));
@@ -178,13 +230,16 @@ export function createScratchEngine(options: Options): ScratchController {
       const before = coverage[index];
       coverage[index] = before * (1 - alpha);
       removed += (before - coverage[index]) * cellSize * cellSize;
+      cellRemaining[cellIndex] += coverage[index] - before;
+      touchedCells.add(cellIndex);
       if (alpha > balance.scratch.passStampAlpha && passes[index] < 255) passes[index] += 1;
     }
+    revealTouchedCells(touchedCells);
     return removed;
   };
 
   const deposit = (x: number, y: number) => {
-    if (!context || !coverage || !mask || !ready) return;
+    if (!context || !coverage || !mask || !cellOwners || !cellRemaining || !revealedCells || !ready) return;
     const radius = tool.radius * balance.scratch.gumRadiusMultiplier;
     const depositAlpha = balance.scratch.gumDepositAlpha;
     if (![x, y, radius, depositAlpha].every(Number.isFinite) || radius <= 0 || depositAlpha <= 0) return;
@@ -203,13 +258,17 @@ export function createScratchEngine(options: Options): ScratchController {
     for (let row = y0; row <= y1; row += 1) for (let column = x0; column <= x1; column += 1) {
       const index = row * columns + column;
       if (!mask[index]) continue;
+      const cellIndex = cellOwners[index];
+      if (cellIndex < 0 || revealedCells[cellIndex]) continue;
       const distance = Math.hypot(column * cellSize + cellSize / 2 - x, row * cellSize + cellSize / 2 - y);
       if (distance > radius) continue;
       const addition = depositAlpha * Math.max(0, 1 - Math.pow(distance / radius, balance.scratch.falloffExponent));
+      const before = coverage[index];
       coverage[index] = Math.min(
         1 - (1 - coverage[index]) * (1 - addition),
         balance.scratch.gumCoverageCeiling,
       );
+      cellRemaining[cellIndex] += coverage[index] - before;
     }
   };
 
@@ -327,8 +386,10 @@ export function createScratchEngine(options: Options): ScratchController {
     },
     resize,
     completeForTesting() {
-      if (!coverage || !mask) return;
+      if (!coverage || !mask || !revealedCells || !cellRemaining) return;
       for (let index = 0; index < coverage.length; index += 1) if (mask[index]) coverage[index] = 0;
+      revealedCells.fill(1);
+      cellRemaining.fill(0);
       removedArea = maskCells * cellSize * cellSize;
       update();
     },

@@ -60,6 +60,7 @@ export interface GameStats {
   spent: number;
   grossWon: number;
   repaid: number;
+  bestPrize?: number;
   runs: number;
 }
 
@@ -99,6 +100,7 @@ export interface Balance {
   efficiencyGoodMultiplier: number;
   efficiencyGreatMultiplier: number;
   autoCompleteReveal: number;
+  cellRevealThreshold: number;
   printFlattenExponent: number;
   printRetryLimit: number;
   progressSaveIntervalMs: number;

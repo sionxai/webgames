@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { SCHEMA_VERSION, SOURCE_DATE, mergeBalance } from "./balance";
+import { SCHEMA_VERSION, SOURCE_DATE, mergeBalance, shortOdds } from "./balance";
 import { TICKETS, ticketById } from "./data/tickets";
 import { borrow, investUpgrade, isRunOver, loanLimit } from "./game/economy";
 import { buyTicket, claimTicket, completeTicket, newRun } from "./game/run";
@@ -17,6 +17,10 @@ const normalizedUpgrades = (upgrades: LotterySave["upgrades"], balance: Balance)
     definition.values.length - 1,
     Math.max(0, Number.isInteger(upgrades[axis]) ? upgrades[axis] : 0),
   )) as LotterySave["upgrades"];
+const withStatsDefaults = (save: LotterySave): LotterySave => ({
+  ...save,
+  stats: { ...save.stats, bestPrize: save.stats.bestPrize ?? 0 },
+});
 
 export default function App() {
   const devMode = useMemo(() => new URLSearchParams(location.search).get("dev") === "1", []);
@@ -24,16 +28,20 @@ export default function App() {
   const persistNormalizedLoad = useRef(false);
   const [state, setState] = useState<LotterySave>(() => {
     const loaded = loadSave();
-    if (loaded?.schemaVersion !== SCHEMA_VERSION) return newRun(mergeBalance(loadTuning()));
+    if (loaded?.schemaVersion !== SCHEMA_VERSION) return withStatsDefaults(newRun(mergeBalance(loadTuning())));
     const upgrades = normalizedUpgrades(loaded.upgrades, balance);
-    persistNormalizedLoad.current = upgrades.some((stage, axis) => stage !== loaded.upgrades[axis]);
-    return persistNormalizedLoad.current ? { ...loaded, upgrades } : loaded;
+    const stats = { ...loaded.stats, bestPrize: loaded.stats.bestPrize ?? 0 };
+    persistNormalizedLoad.current = upgrades.some((stage, axis) => stage !== loaded.upgrades[axis])
+      || stats.bestPrize !== loaded.stats.bestPrize;
+    return persistNormalizedLoad.current ? { ...loaded, upgrades, stats } : loaded;
   });
   const [progress, setProgress] = useState<ScratchProgress>({
     revealed: state.activeTicket?.revealed ?? 0, removedArea: state.activeTicket?.removedArea ?? 0,
     requiredArea: state.activeTicket?.requiredArea ?? 1, speed: 0, verdict: "대기",
   });
   const [loanAmount, setLoanAmount] = useState(balance.defaultLoanRequest);
+  const [loanPanelOpen, setLoanPanelOpen] = useState(false);
+  const [loanConfirmOpen, setLoanConfirmOpen] = useState(false);
   const [message, setMessage] = useState("복권을 골라 첫 장을 구매하세요.");
   const stateRef = useRef(state);
   const balanceRef = useRef(balance);
@@ -65,6 +73,10 @@ export default function App() {
       coordinateSystem: "ticket canvas: origin top-left, x right, y down",
       mode: state.runOver ? "run-over" : state.activeTicket?.complete ? "result" : state.activeTicket ? "scratching" : "shop",
       cash: state.cash, debt: state.debt, level: state.level, masteryXp: state.masteryXp,
+      stats: {
+        bought: state.stats.bought, spent: state.stats.spent, grossWon: state.stats.grossWon,
+        bestPrize: state.stats.bestPrize ?? 0,
+      },
       activeTicket: state.activeTicket && {
         ticketId: state.activeTicket.ticketId, productId: state.activeTicket.productId,
         revealed: state.activeTicket.complete ? 1 : progress.revealed, complete: state.activeTicket.complete,
@@ -86,7 +98,7 @@ export default function App() {
       stateRef.current = next;
       setState(next);
       setProgress({ revealed: 0, removedArea: 0, requiredArea: 1, speed: 0, verdict: "대기" });
-      setMessage(`${price.toLocaleString()}원권 결과가 구매와 함께 확정·저장되었습니다.`);
+      setMessage("복권이 발행되었습니다. 긁어서 결과를 확인하세요.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "구매하지 못했습니다.");
     }
@@ -151,15 +163,24 @@ export default function App() {
       persistSave(snapshot);
       stateRef.current = snapshot;
       setState(snapshot);
+      setLoanConfirmOpen(false);
+      setLoanPanelOpen(false);
       setMessage(`${money(effectiveLoan)} 신청 · ${money(Math.floor(effectiveLoan * (1 - balance.loanUpfrontInterest)))} 입금`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "대출하지 못했습니다.");
     }
   };
 
+  const requestLoan = () => {
+    if (remainingCredit <= 0) return;
+    setLoanPanelOpen(true);
+    setLoanConfirmOpen(true);
+    document.getElementById("loan-panel")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  };
+
   const restart = () => {
     try {
-      const next = newRun(balance, state);
+      const next = withStatsDefaults(newRun(balance, state));
       persistSave(next);
       stateRef.current = next;
       setState(next);
@@ -203,6 +224,8 @@ export default function App() {
   const nextLevelXp = Math.round(balance.levelCurveBase * Math.pow(state.level + 1, balance.levelCurveExponent));
   const remainingCredit = Math.max(0, loanLimit(state, balance) - state.debt);
   const effectiveLoan = Math.max(0, Math.min(loanAmount, remainingCredit));
+  const totalRefundRate = state.stats.spent > 0 ? state.stats.grossWon / state.stats.spent : 0;
+  const netProfit = state.stats.grossWon - state.stats.spent;
 
   return (
     <main className="lottery-app">
@@ -210,8 +233,8 @@ export default function App() {
       <header className="topbar">
         <h1>긁는순간</h1>
         <div className="stat-line">
-          <span>현금 <strong id="cash">{money(state.cash)}</strong></span>
-          <span>부채 <strong id="debt">{money(state.debt)}</strong></span>
+          <span>게임머니 <strong id="cash">{money(state.cash)}</strong></span>
+          <span>빚 <strong id="debt">{money(state.debt)}</strong></span>
           <span>숙련도 <strong id="mastery">{state.masteryXp.toLocaleString()}</strong> <em>/ {nextLevelXp.toLocaleString()}</em></span>
           <span>레벨 <strong id="level">Lv.{state.level}</strong>{state.skillPoints > 0 && <em className="point-badge">포인트 {state.skillPoints}</em>}</span>
         </div>
@@ -224,10 +247,20 @@ export default function App() {
         <section className="panel play-panel">
           {state.runOver ? (
             <div className="run-over" data-testid="run-over">
-              <h2>파산 — 런 종료</h2>
-              <p>총 구매 {state.stats.bought.toLocaleString()}장 · 누적 지출 {money(state.stats.spent)}</p>
-              <p>누적 회수 {money(state.stats.grossWon)} · 숙련도와 레벨은 계승됩니다.</p>
-              <button id="restart-run" onClick={restart}>다음 런 시작</button>
+              <h2>런 종료 — 결과 요약</h2>
+              <dl className="summary-grid">
+                <div><dt>총 구매 장수</dt><dd>{state.stats.bought.toLocaleString()}장</dd></div>
+                <div><dt>총 구매액</dt><dd>{money(state.stats.spent)}</dd></div>
+                <div><dt>총 당첨금</dt><dd>{money(state.stats.grossWon)}</dd></div>
+                <div><dt>순손익</dt><dd className={netProfit >= 0 ? "positive" : "negative"}>{money(netProfit)}</dd></div>
+                <div><dt>실환급률</dt><dd>{(totalRefundRate * 100).toFixed(1)}%</dd></div>
+                <div><dt>최고 당첨금</dt><dd>{money(state.stats.bestPrize ?? 0)}</dd></div>
+              </dl>
+              <p className="run-over-note">숙련도와 레벨은 계승됩니다.</p>
+              <div className="run-over-actions">
+                <button id="restart-run" onClick={restart}>다시 시작</button>
+                <button id="continue-with-loan" disabled={remainingCredit <= 0} onClick={requestLoan}>대출로 이어가기</button>
+              </div>
             </div>
           ) : state.activeTicket ? (
             <>
@@ -258,23 +291,28 @@ export default function App() {
               {state.activeTicket.claimed && <p className="done-ticket">정산 완료 — 아래에서 다음 복권을 구매하세요.</p>}
               {devMode && !state.activeTicket.complete && <button id="dev-complete" onClick={() => window.__lotteryScratch?.completeForTesting()}>개발용 즉시 완주</button>}
             </>
-          ) : <div className="empty-card"><h2>복권을 구매하세요</h2><p>결과는 구매 순간 저장되어 새로고침으로 바뀌지 않습니다.</p></div>}
+          ) : <div className="empty-card"><h2>복권을 구매하세요</h2><p>발행된 결과는 새로고침 후에도 유지됩니다.</p></div>}
         </section>
 
         {/* 가장 자주 쓰는 순서로 둔다: 사기 → (포인트 있을 때) 업그레이드 → (돈 마를 때) 대출 */}
         <aside className="side-column">
           <section className="panel shop">
             <h2>복권 사기</h2>
+            <p className="shop-subtitle">실제 결제가 없는 가상 머니입니다</p>
             {TICKETS.map((ticket) => {
               const unlocked = state.level >= balance.unlockLevels[ticket.id];
               const noCash = state.cash < ticket.id;
+              const totalWinCount = ticket.prizes.reduce((sum, prize) => sum + prize.count, 0);
               return (
                 <button data-testid={`buy-${ticket.id}`} id={`buy-${ticket.id}`} key={ticket.id}
                   disabled={!unlocked || noCash || Boolean(state.activeTicket && !state.activeTicket.claimed)}
                   onClick={() => purchase(ticket.id)}>
-                  <span>{ticket.name}{!ticket.real && <em> 가상</em>}</span>
+                  <span className="shop-ticket-name">{ticket.name}{!ticket.real && <em> 가상</em>}</span>
                   {/* 잠금이 없으므로 막히는 이유는 '돈 부족'뿐이다 — 그걸 그대로 보여준다 */}
-                  <b>{!unlocked ? `Lv.${balance.unlockLevels[ticket.id]} 해금` : noCash ? <em className="short">잔액 부족</em> : money(ticket.id)}</b>
+                  <span className="shop-ticket-meta">
+                    <small>전체 당첨 {shortOdds(totalWinCount, ticket.issued)}</small>
+                    <b>{!unlocked ? `Lv.${balance.unlockLevels[ticket.id]} 해금` : noCash ? <em className="short">잔액 부족</em> : money(ticket.id)}</b>
+                  </span>
                 </button>
               );
             })}
@@ -282,17 +320,33 @@ export default function App() {
 
           <ToolShop balance={balance} state={state} onInvest={invest} />
 
-          {/* 대출은 상시 노출할 이유가 없다 — 살 돈이 없거나 이미 빚이 있을 때만 */}
-          {(state.cash < cheapestTicketPrice || state.debt > 0) && (
-          <section className="panel loan">
+          {(loanPanelOpen || (!state.runOver && (state.cash < cheapestTicketPrice || state.debt > 0))) && (
+          <section className="panel loan" id="loan-panel">
             <h2>선이자 대출</h2>
             <p>한도 {money(loanLimit(state, balance))} · 남은 한도 {money(remainingCredit)}</p>
             {/* 기본 신청액(10만)이 Lv.1 한도(5만)를 넘어 버튼이 늘 비활성이었다 — 남은 한도로 clamp한다. */}
             <label>신청액 <input id="loan-amount" type="number" min="1" max={remainingCredit} step="10000"
               value={effectiveLoan} onChange={(event) => setLoanAmount(Number(event.target.value))} /></label>
-            <p>{money(effectiveLoan)} 신청 → {money(Math.floor(effectiveLoan * (1 - balance.loanUpfrontInterest)))} 입금 · 부채 {money(effectiveLoan)}</p>
-            <button id="take-loan" disabled={effectiveLoan <= 0} onClick={takeLoan}>대출 실행</button>
-            <small>당첨금의 {Math.round(balance.autoRepayRate * 100)}%는 부채 범위 안에서 자동 상환됩니다.</small>
+            <p>{money(effectiveLoan)} 신청 → {money(Math.floor(effectiveLoan * (1 - balance.loanUpfrontInterest)))} 수령 · 빚 {money(effectiveLoan)}</p>
+            {!loanConfirmOpen ? (
+              <button id="take-loan" disabled={effectiveLoan <= 0} onClick={requestLoan}>대출 조건 확인</button>
+            ) : (
+              <div className="loan-confirmation" role="dialog" aria-labelledby="loan-confirm-title">
+                <h3 id="loan-confirm-title">대출 실행 전 확인</h3>
+                <div className="loan-confirm-flow">
+                  <strong>{money(effectiveLoan)} 대출</strong>
+                  <span>→</span>
+                  <strong>{money(Math.floor(effectiveLoan * (1 - balance.loanUpfrontInterest)))} 수령</strong>
+                  <span>→</span>
+                  <strong>{money(effectiveLoan)} 상환</strong>
+                </div>
+                <div className="loan-confirm-actions">
+                  <button id="confirm-loan" disabled={effectiveLoan <= 0} onClick={takeLoan}>확인하고 대출 실행</button>
+                  <button type="button" onClick={() => setLoanConfirmOpen(false)}>취소</button>
+                </div>
+              </div>
+            )}
+            <small>당첨금의 {Math.round(balance.autoRepayRate * 100)}%는 빚 범위 안에서 자동 상환됩니다.</small>
           </section>
           )}
         </aside>
