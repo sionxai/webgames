@@ -93,6 +93,20 @@ export interface AdminSession {
   isAdmin: boolean;
 }
 
+/**
+ * 이 uid가 관리자로 등록돼 있는지 확인한다.
+ * 규칙상 본인 항목만 읽을 수 있어 남의 권한은 조회되지 않는다.
+ * 실패하면 false — 관리자 링크를 숨기는 쪽이 안전하다.
+ */
+export async function isAdminUid(uid: string): Promise<boolean> {
+  try {
+    const snapshot = await get(ref(getDb(), `portal/admins/${uid}`));
+    return snapshot.val() === true;
+  } catch {
+    return false;
+  }
+}
+
 /** 로그인된 uid를 얻고, 그 uid가 관리자로 등록돼 있는지 확인한다. */
 export function resolveAdminSession(): Promise<AdminSession | null> {
   return new Promise(resolve => {
