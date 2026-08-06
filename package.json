@@ -11,7 +11,11 @@
     "test:waitdog:sim": "esbuild scripts/waitdog-sim-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/waitdog-sim-contract.mjs && node /tmp/waitdog-sim-contract.mjs",
     "test:waitdog:motion": "esbuild scripts/waitdog-motion-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/waitdog-motion-contract.mjs && node /tmp/waitdog-motion-contract.mjs",
     "test:waitdog": "npm run test:waitdog:sim && npm run test:waitdog:motion",
-    "test:lottery": "esbuild scripts/lottery-settle-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/lottery-settle-contract.mjs && node /tmp/lottery-settle-contract.mjs"
+    "test:lottery": "esbuild scripts/lottery-settle-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/lottery-settle-contract.mjs && node /tmp/lottery-settle-contract.mjs",
+    "bonpuri:build": "esbuild scripts/build-bonpuri-cards.ts --bundle --platform=node --format=esm --outfile=/tmp/bonpuri-build.mjs && node /tmp/bonpuri-build.mjs",
+    "bonpuri:verify": "esbuild scripts/verify-bonpuri-data.ts --bundle --platform=node --format=esm --outfile=/tmp/bonpuri-verify.mjs && node /tmp/bonpuri-verify.mjs",
+    "bonpuri:contract": "esbuild scripts/verify-bonpuri-contract.ts --bundle --platform=node --format=esm --outfile=/tmp/bonpuri-contract.mjs && node /tmp/bonpuri-contract.mjs",
+    "bonpuri:sim": "esbuild scripts/simulate-bonpuri.ts --bundle --platform=node --format=esm --outfile=/tmp/bonpuri-sim.mjs && node /tmp/bonpuri-sim.mjs"
   },
   "dependencies": {
     "canvas-confetti": "^1.9.4",

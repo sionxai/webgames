@@ -1,0 +1,78 @@
+:root { font-family: Georgia, "Noto Serif KR", serif; color: #f4ead4; background: #15120f; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; background: radial-gradient(circle at 50% 0, #493525 0, #15120f 48%); }
+button { font: inherit; }
+#root { min-height: 100vh; }
+main { width: min(100%, 760px); min-height: 100vh; margin: auto; padding: 14px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 2px 14px; font-size: .8rem; color: #dfc690; }
+.panel { position: relative; border: 1px solid #806a49; border-radius: 14px; padding: 14px; margin-bottom: 10px; background: linear-gradient(145deg, rgba(52,43,33,.97), rgba(24,21,18,.97)); box-shadow: inset 0 0 22px #0005; }
+.enemy { min-height: 172px; border-top: 4px solid #b4463b; }
+.player { display: grid; grid-template-columns: 1fr auto; align-items: center; border-top: 4px solid #426b73; }
+h1, h2, p { margin: 5px 0; }
+h1 { font-size: 1.5rem; } h2 { font-size: 1.15rem; }
+small { color: #c9bda7; }
+.vitals, .resources { display: flex; gap: 13px; align-items: center; color: #e8c65a; }
+.intent { margin-top: 14px; padding: 9px 11px; border-left: 3px solid #b4463b; background: #0003; }
+.statuses { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.statuses span, .statuses button, .piles span { padding: 3px 7px; border-radius: 999px; color: inherit; background: #e8dcc516; border: 1px solid #b5a58766; font-size: .73rem; }
+.piles { display: flex; justify-content: center; gap: 7px; padding: 4px 0 10px; color: #d7c9b1; }
+.hand, .rewards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.card { position: relative; min-width: 0; min-height: 164px; padding: 25px 9px 10px; overflow: hidden; color: #f8f0df; text-align: left; border: 3px double var(--frame); border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--frame) 22%, #221d18), #171411 70%); box-shadow: inset 0 0 0 2px #0008; cursor: pointer; }
+.card:hover:not([aria-disabled="true"]) { transform: translateY(-2px); filter: brightness(1.15); }
+.card[aria-disabled="true"] { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
+.card strong, .card small, .card-effects, .card em { display: block; }
+.card strong { font-size: 1rem; padding-right: 20px; }
+.card small { min-height: 34px; margin-top: 3px; font-size: .68rem; }
+.card-effects { margin-top: 7px; font-size: .76rem; line-height: 1.45; }
+.card em { margin-top: 7px; color: #f2d16b; font-size: .67rem; font-style: normal; }
+.card-cost { position: absolute; top: 6px; right: 7px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #15120f; background: #e8c65a; font-weight: 900; }
+.card-0 { --frame: #397bb1; } .card-1 { --frame: #b94438; } .card-2 { --frame: #d0a92e; }
+.card-3 { --frame: #e7e0d5; } .card-4 { --frame: #292d31; }
+.end-turn, .skip, .restart, .primary, .secondary { display: block; width: 100%; margin-top: 12px; border: 1px solid #e2c26c; border-radius: 9px; padding: 13px; color: #17130e; background: #e2c26c; font-weight: 900; cursor: pointer; }
+.secondary { color: #f4ead4; background: transparent; }
+.primary:disabled { opacity: .45; }
+.notice { padding: 10px; border: 1px solid #b94438; border-radius: 8px; color: #ffd1c9 !important; background: #6b201c55; }
+.home-summary { width: 100%; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
+.home-summary div { display: grid; gap: 5px; }
+.text-button { border: 0; color: #dfc690; background: transparent; }
+.deck-list { display: grid; gap: 9px; }
+.deck-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(150px, 180px); gap: 8px; }
+.deck-row .card { min-height: 125px; }
+.deck-row > div { display: grid; align-content: center; gap: 7px; }
+.deck-row > div button { min-height: 35px; }
+.deck-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.deck-controls button { min-width: 0; padding: 4px; }
+.deck-count-invalid { padding: 4px 7px; border-radius: 6px; color: #ffd1c9; background: #6b201c; }
+/* 규칙 패널은 position:fixed 라 스크롤 끝에서도 하단을 덮는다.
+   패널 높이만큼 여백을 확보하지 않으면 '턴 종료' 버튼을 누를 수 없다. */
+.battle-main { padding-bottom: 64px; }
+.battle-main.rules-open { padding-bottom: 165px; }
+.rules-panel { position: fixed; z-index: 10; left: 50%; bottom: 0; transform: translateX(-50%); width: min(calc(100% - 20px), 740px); padding: 9px 12px; border: 1px solid #806a49; border-radius: 12px 12px 0 0; background: #211c17f5; }
+.rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78rem; }
+.rules-heading button { flex: none; color: #f4ead4; border: 1px solid #806a49; border-radius: 6px; background: #0003; }
+.rules-panel dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 9px 0 0; }
+.rules-panel dl div { padding: 6px; background: #fff1; }
+.rules-panel dt { color: #e8c65a; font-weight: 900; }
+.rules-panel dd { margin: 2px 0 0; font-size: .7rem; }
+.intent { width: 100%; color: inherit; text-align: left; border-top: 0; border-right: 0; border-bottom: 0; }
+.tooltip-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
+.tooltip { position: relative; width: min(100%, 340px); max-height: calc(100vh - 24px); overflow: auto; padding: 18px; border: 1px solid #e2c26c; border-radius: 12px; color: #f4ead4; background: #211c17; box-shadow: 0 8px 30px #000b; }
+.tooltip-close { position: absolute; top: 5px; right: 7px; color: #f4ead4; border: 0; background: transparent; font-size: 1.4rem; }
+.result-cards { width: 100%; }
+.centered { display: flex; flex-direction: column; justify-content: center; text-align: center; }
+.centered > p { margin-bottom: 20px; color: #cdbfa8; }
+.rewards { width: 100%; text-align: left; }
+.seal { width: 90px; height: 90px; margin: 0 auto 15px; display: grid; place-items: center; border: 5px double #b94438; border-radius: 50%; color: #b94438; font-size: 2.5rem; font-weight: 900; transform: rotate(-5deg); }
+
+@media (max-width: 420px) {
+  main { padding: 10px; }
+  .hand { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rewards { grid-template-columns: 1fr; }
+  .rewards .card { min-height: 130px; }
+  .player { grid-template-columns: 1fr; }
+  .card { min-height: 151px; }
+  .deck-row { grid-template-columns: minmax(105px, 1fr) minmax(135px, 1fr); }
+  /* 좁은 화면에서는 패널이 1열로 쌓여 더 높아지므로 여백도 함께 늘린다. */
+  .rules-panel dl { grid-template-columns: 1fr; }
+  .battle-main.rules-open { padding-bottom: 235px; }
+}

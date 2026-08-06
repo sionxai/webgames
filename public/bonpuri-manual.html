@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>본풀이 · 다섯 굿 — 놀이 설명서</title>
+  <meta name="description" content="본풀이 카드 게임을 처음 하는 친구를 위한 그림 설명서" />
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: "Noto Sans KR", -apple-system, sans-serif;
+      background: #faf3e3; color: #3a2f26;
+      line-height: 1.7; font-size: 17px;
+    }
+    main { max-width: 720px; margin: 0 auto; padding: 20px 16px 60px; }
+    .hero { text-align: center; padding: 8px 0 4px; }
+    .hero img { width: 100%; border-radius: 18px; box-shadow: 0 6px 24px #0002; }
+    h1 { font-size: 1.9rem; margin: 18px 0 4px; letter-spacing: 1px; }
+    .sub { color: #8a7452; font-size: 1.02rem; }
+    section {
+      background: #fffdf6; border: 1px solid #eadfc6;
+      border-radius: 18px; padding: 20px 18px 24px;
+      margin-top: 26px; box-shadow: 0 3px 14px #00000010;
+    }
+    section img { width: 100%; border-radius: 12px; margin: 4px 0 14px; }
+    h2 { font-size: 1.3rem; margin-bottom: 12px; display: flex; align-items: center; gap: 9px; }
+    .no {
+      flex: none; width: 32px; height: 32px; border-radius: 50%;
+      display: grid; place-items: center; color: #fff;
+      font-size: 1.02rem; font-weight: 800;
+    }
+    p { margin: 8px 0; }
+    .tip {
+      margin-top: 12px; padding: 10px 13px; border-radius: 10px;
+      background: #f5ecd8; font-size: .95rem;
+    }
+    .tip b { color: #a34d3f; }
+    ul { padding-left: 6px; list-style: none; }
+    li { margin: 9px 0; padding-left: 30px; position: relative; }
+    li::before {
+      content: ""; position: absolute; left: 4px; top: 9px;
+      width: 12px; height: 12px; border-radius: 4px; background: var(--dot, #d9b44a);
+    }
+    table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: .98rem; }
+    td, th { padding: 8px 10px; border-bottom: 1px solid #eee3cb; text-align: left; }
+    th { color: #8a7452; font-weight: 600; width: 46%; }
+    footer { text-align: center; margin-top: 34px; color: #b3a184; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <div class="hero">
+    <img src="assets/bonpuri-manual/01-cover.webp" alt="심방과 한국의 신들" />
+    <h1>본풀이 · 다섯 굿</h1>
+    <p class="sub">신들의 이야기를 읊는 심방이 되어 보세요!</p>
+  </div>
+
+  <section>
+    <h2><span class="no" style="background:#397bb1">1</span>무슨 게임이에요?</h2>
+    <p>여러분은 <b>심방</b>이에요. 심방은 노래와 이야기로 신을 부르는 사람이에요.</p>
+    <p>카드를 내면서 <b>다섯 번의 굿</b>을 해내면 승리!</p>
+    <p>졌다고 슬퍼하지 마세요. 모은 카드는 전부 남으니까요.</p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#b94438">2</span>세 가지 힘</h2>
+    <img src="assets/bonpuri-manual/02-resources.webp" alt="하트, 장구, 방패" />
+    <ul>
+      <li style="--dot:#d34c3e"><b>명</b> — 나의 생명이에요. <b>0이 되면 굿이 끝나요.</b> 다섯 굿 내내 이어지니 아껴야 해요.</li>
+      <li style="--dot:#d9b44a"><b>장단</b> — 카드를 낼 힘이에요. 내 차례마다 <b>3개</b> 생겨요. 남겨도 이월은 안 돼요!</li>
+      <li style="--dot:#397bb1"><b>넋</b> — 나를 지키는 방패예요. 공격을 대신 맞아줘요. 단, <b>내 차례가 시작되면 사라져요.</b></li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#d9a52e">3</span>내 차례엔 이렇게</h2>
+    <img src="assets/bonpuri-manual/03-turn.webp" alt="카드를 던지는 심방" />
+    <p>① 카드를 뽑아요. 처음엔 <b>7장</b>, 다음부터는 5장까지.</p>
+    <p>② 장단이 허락하는 만큼 카드를 내요. 카드마다 값이 적혀 있어요.</p>
+    <p>③ 다 냈으면 <b>턴 종료</b>를 눌러요.</p>
+    <p class="tip">남은 손패는 버림더미로 가요. 걱정 마세요 — 덱이 다 떨어지면 <b>다시 섞여서 돌아와요.</b></p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#5a7d4f">4</span>적을 잘 보세요</h2>
+    <img src="assets/bonpuri-manual/04-intent.webp" alt="말풍선으로 다음 행동을 보여주는 도깨비" />
+    <p>적은 착하게도 <b>다음에 뭘 할지 미리</b> 보여줘요.</p>
+    <p>주먹이면 공격! 예상 피해 숫자까지 알려주니, 그만큼 <b>넋</b>을 쌓아 막으면 돼요.</p>
+    <p class="tip"><b>부정</b>이라는 나쁜 기운은 방패를 뚫고 들어와요. 이건 빨리 풀어주는 게 좋아요.</p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#8464a3">5</span>카드는 네 가지</h2>
+    <img src="assets/bonpuri-manual/05-cardtypes.webp" alt="네 가지 카드" />
+    <ul>
+      <li style="--dot:#397bb1"><b>신(神)</b> — 신령의 힘이에요. 공격도 하고 방패도 만들어요. 쓰면 버림더미로 가요.</li>
+      <li style="--dot:#b94438"><b>무구</b> — 심방의 도구예요. 한 번 꺼내면 <b>굿이 끝날 때까지 계속</b> 도와줘요.</li>
+      <li style="--dot:#d9a52e"><b>굿</b> — 아주 강한 의식이에요. 대신 <b>한 턴에 한 장만</b> 쓸 수 있어요.</li>
+      <li style="--dot:#9a938a"><b>좌정</b> — 신을 집에 모시는 거예요. <b>한 분만</b> 모실 수 있고, 매 턴 도와주세요. 새로 모시면 먼저 분은 떠나요.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#c98a2d">6</span>연계 — 본풀이를 완성해요!</h2>
+    <img src="assets/bonpuri-manual/06-bond.webp" alt="세 조각이 맞춰지며 완성되는 두루마리" />
+    <p>같은 이야기(본풀이)에 나오는 신들은 서로 도와요.</p>
+    <p>같은 이야기 카드를 이어서 낼수록 점점 세져요.</p>
+    <p>첫 장은 그냥, 둘째 장은 <b>더 세게</b>, 셋째 장은 <b>훨씬 세게!</b></p>
+    <p class="tip">세 번 읊으면 <b>본풀이 완성!</b> 이야기가 다 완성되면 그게 최고예요. 그 뒤로는 더 세지지 않아요.</p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#3f7d6d">7</span>이기면 선물을 골라요</h2>
+    <img src="assets/bonpuri-manual/07-reward.webp" alt="갈림길에 선 심방" />
+    <p>굿을 이기면 둘 중 하나를 골라요.</p>
+    <ul>
+      <li style="--dot:#d9a52e"><b>새 신 모시기</b> — 고른 카드가 <b>3장</b> 들어와요. 대신 기본 카드 3장이 빠져요. 덱은 늘 50장!</li>
+      <li style="--dot:#397bb1"><b>정화하기</b> — 명을 회복하고, 기본 카드 1장을 정리해요. 덱이 깔끔해져요.</li>
+    </ul>
+    <p class="tip">고른 카드는 <b>보관함에도 영원히</b> 저장돼요. 다음 굿을 준비할 때 덱에 넣을 수 있어요.</p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#4a4f8f">8</span>승천 — 더 높은 도전</h2>
+    <img src="assets/bonpuri-manual/08-ascension.webp" alt="하늘 계단 앞의 심방" />
+    <p>다섯 굿을 다 이기면 <b>승천</b>에 도전할 수 있어요.</p>
+    <p>계단을 오를수록 적이 무시무시해져요. 꼭대기 문은 최고의 심방만 열 수 있대요!</p>
+  </section>
+
+  <section>
+    <h2><span class="no" style="background:#6b625a">9</span>숫자 한눈에 보기</h2>
+    <table>
+      <tr><th>시작 생명(명)</th><td>70</td></tr>
+      <tr><th>내 차례의 장단</th><td>3</td></tr>
+      <tr><th>첫 손패</th><td>7장 (다음 턴부터 5장)</td></tr>
+      <tr><th>덱</th><td>딱 50장</td></tr>
+      <tr><th>같은 카드</th><td>4장까지 (신칼·넋가림·사설 풀기는 무제한)</td></tr>
+      <tr><th>이기는 법</th><td>다섯 굿 연속 승리</td></tr>
+    </table>
+  </section>
+
+  <footer>본풀이 · 다섯 굿 — 제주와 한국의 신화에서 온 이야기들</footer>
+</main>
+</body>
+</html>
