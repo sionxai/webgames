@@ -21,6 +21,17 @@ export interface GameEntry {
  */
 export const GAMES: GameEntry[] = [
   {
+    id: 'bonpuri',
+    title: '본풀이: 다섯 굿',
+    genre: '한국 신화 로그라이크 덱빌더',
+    tagline: '신들의 이야기를 모아 나만의 굿을 준비하세요',
+    description:
+      '심방이 되어 본풀이 카드를 엮고 다섯 굿을 헤쳐 나가며, 신들의 인연과 굿 자원을 활용해 저승길의 적에 맞서는 덱빌더.',
+    path: '/games/bonpuri/',
+    thumbnail: '/assets/bonpuri-manual/01-cover.webp',
+    status: 'live'
+  },
+  {
     id: 'lottery',
     title: '긁는순간',
     genre: '즉석복권 긁기 시뮬',

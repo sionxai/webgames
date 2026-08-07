@@ -1,0 +1,229 @@
+:root { font-family: Georgia, "Noto Serif KR", serif; color: #f4ead4; background: #15120f; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; overflow-x: hidden; background: radial-gradient(circle at 50% 0, #493525 0, #15120f 48%); }
+button { font: inherit; }
+#root { min-height: 100vh; }
+main { width: min(100%, 760px); min-height: 100vh; margin: auto; padding: 14px; }
+header { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 6px 2px 14px; font-size: .8rem; color: #dfc690; }
+.panel { position: relative; border: 1px solid #806a49; border-radius: 14px; padding: 14px; margin-bottom: 10px; background: linear-gradient(145deg, rgba(52,43,33,.97), rgba(24,21,18,.97)); box-shadow: inset 0 0 22px #0005; }
+.enemy { min-height: 172px; border-top: 4px solid #b4463b; }
+.enemy.has-background { overflow: hidden; }
+.enemy-background { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.enemy.has-background::after { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(90deg, #0908068c, #090806d9); }
+.enemy-layout { position: relative; z-index: 2; min-width: 0; }
+.enemy-layout.has-portrait { display: grid; grid-template-columns: minmax(105px, 132px) minmax(0, 1fr); gap: 14px; align-items: center; }
+.enemy-details { position: relative; min-width: 0; }
+.enemy-portrait-slot { position: relative; align-self: center; }
+.enemy-portrait-frame { aspect-ratio: 2 / 3; overflow: hidden; border: 4px solid #100d0b; border-radius: 9px; background: #100d0b; box-shadow: 0 0 0 1px #b99b6799, 0 8px 20px #000a; }
+.enemy-portrait-frame img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.health-bar { width: min(100%, 280px); height: 10px; margin-top: 6px; overflow: hidden; border: 1px solid #e4d6bd66; border-radius: 999px; background: #080706b8; box-shadow: inset 0 1px 4px #000b; }
+.health-bar span { display: block; height: 100%; border-radius: inherit; transition: width 280ms ease-out; }
+.health-bar-enemy span { background: linear-gradient(90deg, #8b241f, #df6253); }
+.health-bar-player span { background: linear-gradient(90deg, #2b6069, #62aab2); }
+.player { display: grid; grid-template-columns: 1fr auto; align-items: center; border-top: 4px solid #426b73; }
+h1, h2, p { margin: 5px 0; }
+h1 { font-size: 1.5rem; } h2 { font-size: 1.15rem; }
+small { color: #c9bda7; }
+.vitals, .resources { display: flex; gap: 13px; align-items: center; color: #e8c65a; }
+.intent { margin-top: 14px; padding: 9px 11px; border-left: 3px solid #b4463b; background: #0003; }
+.statuses { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 8px; }
+.statuses span, .statuses button, .piles span { padding: 3px 7px; border-radius: 999px; color: inherit; background: #e8dcc516; border: 1px solid #b5a58766; font-size: .73rem; }
+.piles { display: flex; justify-content: center; gap: 7px; padding: 4px 0 10px; color: #d7c9b1; }
+.hand, .rewards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.hand { position: relative; }
+.card { position: relative; min-width: 0; min-height: 164px; padding: 25px 9px 10px; overflow: hidden; color: #f8f0df; text-align: left; border: 3px double var(--frame); border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--frame) 22%, #221d18), #171411 70%); box-shadow: inset 0 0 0 2px #0008; cursor: pointer; }
+.card:hover:not([aria-disabled="true"]) { transform: translateY(-2px); filter: brightness(1.15); }
+.card[aria-disabled="true"] { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
+.card.has-art { min-height: 220px; isolation: isolate; }
+/* button 은 내용을 세로 가운데로 모은다. 164px 일 때는 문제가 없었지만 그림이 붙어 220px 이 되면
+   글자가 그림 한복판에 뜨고 아래를 어둡게 깐 그라데이션은 빈 채로 남는다. 글자를 그 어두운 띠로 내린다. */
+.card.has-art { display: flex; flex-direction: column; justify-content: flex-end; }
+/* 유형 배지는 툴팁 클릭 대상이다. flex 기본 stretch 로 넓어지면 그 줄 전체가 카드 사용 클릭을 가로챈다. */
+.card.has-art .card-type { align-self: flex-start; }
+.card.has-art::after { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(to bottom, #090806ed 0, #0b0907c9 22%, #0b090740 38%, #0b09071f 55%, #0b09078f 73%, #090806f2 100%); }
+.card-art { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.card.has-art .card-cost { z-index: 2; }
+.card.has-art .card-type, .card.has-art strong, .card.has-art small, .card.has-art .card-effects, .card.has-art em { position: relative; z-index: 2; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
+.card strong, .card small, .card-effects, .card em { display: block; }
+.card strong { font-size: 1rem; padding-right: 20px; }
+.card small { min-height: 34px; margin-top: 3px; font-size: .68rem; }
+.card-effects { margin-top: 7px; font-size: .76rem; line-height: 1.45; }
+.card em { margin-top: 7px; color: #f2d16b; font-size: .67rem; font-style: normal; }
+.card-cost { position: absolute; top: 6px; right: 7px; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; color: #15120f; background: #e8c65a; font-weight: 900; }
+.card-0 { --frame: #397bb1; } .card-1 { --frame: #b94438; } .card-2 { --frame: #d0a92e; }
+.card-3 { --frame: #e7e0d5; } .card-4 { --frame: #292d31; }
+.end-turn, .skip, .restart, .primary, .secondary { display: block; width: 100%; margin-top: 12px; border: 1px solid #e2c26c; border-radius: 9px; padding: 13px; color: #17130e; background: #e2c26c; font-weight: 900; cursor: pointer; }
+.secondary { color: #f4ead4; background: transparent; }
+.primary:disabled { opacity: .45; }
+.notice { padding: 10px; border: 1px solid #b94438; border-radius: 8px; color: #ffd1c9 !important; background: #6b201c55; }
+.home-summary { width: 100%; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
+.home-summary div { display: grid; gap: 5px; }
+.text-button { border: 0; color: #dfc690; background: transparent; }
+.deck-list { display: grid; gap: 9px; }
+.deck-row { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(150px, 180px); gap: 8px; }
+.deck-row .card { min-height: 125px; }
+.deck-row > div { display: grid; align-content: center; gap: 7px; }
+.deck-row > div button { min-height: 35px; }
+.deck-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.deck-controls button { min-width: 0; padding: 4px; }
+.deck-count-invalid { padding: 4px 7px; border-radius: 6px; color: #ffd1c9; background: #6b201c; }
+/* 규칙 패널은 원래 position:fixed 였다. 카드에 그림이 붙어 손패가 두 배 높이가 되자
+   어떤 하단 여백을 줘도 스크롤 도중에는 손패를 덮었다(375px 실측 교차 219,077px²).
+   여백으로 보정하는 대신 문서 흐름 안으로 내려 교차 자체를 없앤다. */
+.rules-panel { margin-top: 12px; padding: 9px 12px; border: 1px solid #806a49; border-radius: 12px; background: #211c17f5; }
+.rules-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: .78rem; }
+.rules-heading button { flex: none; color: #f4ead4; border: 1px solid #806a49; border-radius: 6px; background: #0003; }
+.rules-panel dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 9px 0 0; }
+.rules-panel dl div { padding: 6px; background: #fff1; }
+.rules-panel dt { color: #e8c65a; font-weight: 900; }
+.rules-panel dd { margin: 2px 0 0; font-size: .7rem; }
+.intent { width: 100%; color: inherit; text-align: left; border-top: 0; border-right: 0; border-bottom: 0; }
+.tooltip-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
+.tooltip { position: relative; width: min(100%, 340px); max-height: calc(100vh - 24px); overflow: auto; padding: 18px; border: 1px solid #e2c26c; border-radius: 12px; color: #f4ead4; background: #211c17; box-shadow: 0 8px 30px #000b; }
+.tooltip-close { position: absolute; top: 5px; right: 7px; color: #f4ead4; border: 0; background: transparent; font-size: 1.4rem; }
+.result-cards { width: 100%; }
+.centered { display: flex; flex-direction: column; justify-content: center; text-align: center; }
+.centered > p { margin-bottom: 20px; color: #cdbfa8; }
+.rewards { width: 100%; text-align: left; }
+/* 보상 3장은 그림 유무로 높이가 달라져 아래 설명 문단의 세로 위치가 어긋난다.
+   카드를 셀 높이에 맞춰 늘려 한 줄로 정렬한다. */
+.rewards > div { display: grid; grid-template-rows: 1fr auto; }
+.reward-screen { animation: reward-screen-in 260ms ease-out backwards; }
+.reward-screen .rewards .card { animation: reward-card-in 380ms cubic-bezier(.2,.8,.2,1) backwards; }
+.reward-screen .rewards > :nth-child(1) .card { animation-delay: 60ms; }
+.reward-screen .rewards > :nth-child(2) .card { animation-delay: 130ms; }
+.reward-screen .rewards > :nth-child(3) .card { animation-delay: 200ms; }
+.enemy-layout.is-hit-a { animation: enemy-hit-shake-a 360ms ease-out; }
+.enemy-layout.is-hit-b { animation: enemy-hit-shake-b 360ms ease-out; }
+.enemy-damage { position: absolute; z-index: 3; top: 40%; left: 50%; color: #ffdf9c; font-size: 1.5rem; font-weight: 900; text-shadow: 0 2px 3px #000, 0 0 10px #b4261e; transform: translateX(-50%); pointer-events: none; animation: enemy-damage-rise 700ms ease-out both; }
+.enemy-damage-fallback { top: 4px; right: 6px; left: auto; transform: none; }
+.card-play-overlay { position: fixed; z-index: 20; inset: 0; display: grid; place-items: end center; padding-bottom: max(18vh, 110px); pointer-events: none; }
+.played-card { position: relative; isolation: isolate; width: min(34vw, 160px); aspect-ratio: 2 / 3; overflow: hidden; padding: 28px 10px 12px; border: 3px double #e8c65a; border-radius: 11px; color: #fff7e8; background: linear-gradient(160deg, #57451f, #171411 70%); box-shadow: 0 0 26px #fff1a699, inset 0 0 0 2px #0008; animation: card-play-rise 650ms ease-out both; }
+.played-card::after { content: ""; position: absolute; z-index: 1; inset: 0; background: linear-gradient(to bottom, #090806dc, transparent 48%, #090806e8); }
+.played-card img { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.played-card span, .played-card small, .played-card strong { position: relative; z-index: 2; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
+.played-card span { position: absolute; top: 7px; right: 8px; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; color: #17130e; background: #e8c65a; font-weight: 900; text-shadow: none; }
+.played-card small, .played-card strong { display: block; }
+.played-card strong { margin-top: 5px; }
+.battle-fx { position: absolute; z-index: 4; inset: 0; isolation: isolate; pointer-events: none; }
+.battle-fx-attack { overflow: hidden; border-radius: inherit; background: radial-gradient(circle at 58% 48%, #fff5dfb8 0, #ff5b4538 24%, transparent 57%); animation: battle-fx-attack-flash 500ms ease-out both; }
+.battle-fx-attack::before { content: ""; position: absolute; z-index: 1; top: 52%; left: 50%; width: 78%; height: 10px; border-radius: 999px; background: linear-gradient(90deg, transparent, #fff2cf 14%, #fff 48%, #ff8a70 76%, transparent); box-shadow: 0 0 7px #fff, 0 0 18px #ff3b2f, 0 0 34px #b51610; transform-origin: center; animation: battle-fx-attack-slash 500ms cubic-bezier(.18,.72,.22,1) both; }
+.battle-fx-attack::after { content: ""; position: absolute; z-index: 0; top: 48%; left: 58%; width: 82px; aspect-ratio: 1; border: 2px solid #ffd7c5; border-radius: 50%; background: radial-gradient(circle, #fff8dccc 0 8%, #ff4a3e88 22%, transparent 66%); box-shadow: 0 0 18px #ff3b2faa; animation: battle-fx-attack-impact 500ms ease-out both; }
+/* 카드 사용 오버레이(.card-play-overlay)는 z-index 20 의 화면 중앙 고정 레이어다.
+   방어·특수 표시는 그 아래에 깔리면 글자가 가려지므로 그 위로 올린다. 툴팁(50)보다는 낮다. */
+.battle-fx-block, .battle-fx-special { z-index: 25; }
+.battle-fx-block { display: grid; place-items: center; color: #bffff7; font-size: clamp(1.05rem, 4vw, 1.45rem); font-weight: 900; text-shadow: 0 2px 3px #031516, 0 0 12px #50e5db; animation: battle-fx-block-label 600ms ease-out both; }
+.battle-fx-block::before { content: ""; position: absolute; z-index: -2; inset: 9% 5%; border: 2px solid #72fff1d9; border-radius: 48% 48% 42% 42%; background: linear-gradient(135deg, #c5fff833, #37aaa124 48%, #0d3f4538); box-shadow: inset 0 0 22px #75fff26b, 0 0 18px #36cfc488; animation: battle-fx-block-barrier 600ms ease-out both; }
+.battle-fx-block::after { content: ""; position: absolute; z-index: -1; top: 50%; left: 50%; width: 62px; aspect-ratio: 1; border: 2px solid #bffff7; border-radius: 50%; box-shadow: 0 0 0 12px #77f8ed66, 0 0 0 28px #3bd8ce33; animation: battle-fx-block-ripple 600ms ease-out both; }
+/* 손패 하단에 앵커하면 1280x720 에서 접힘선 아래로 내려가 아무것도 보이지 않는다(실측).
+   덱 더미(.piles)가 손패 바로 위에 있으므로, 위에서 손패로 내려오게 잡아야
+   "카드 더미 → 손패" 방향도 성립하고 화면 안에도 들어온다. */
+.battle-fx-special { display: grid; place-items: start center; padding-top: 4px; color: #ffe99a; font-size: clamp(1rem, 4vw, 1.4rem); font-weight: 900; text-shadow: 0 2px 3px #261903, 0 0 13px #ffcc49; animation: battle-fx-special-label 700ms ease-out both; }
+.battle-fx-special::before { content: ""; position: absolute; z-index: -1; top: 4px; left: 50%; width: 7px; height: 12px; border-radius: 50% 50% 42% 42%; background: #fff0a4; box-shadow: -128px -22px #ffd65e, -84px 6px #fff0a4, -43px -16px #eebc3f, 39px 9px #ffe783, 82px -20px #f5c64a, 126px 3px #fff3b2; animation: battle-fx-special-particles 700ms ease-out both; }
+.battle-fx-special::after { content: ""; position: absolute; z-index: -2; top: 30px; left: 50%; width: 32px; height: 58px; border: 1px solid #fff0a4; border-radius: 3px; background: linear-gradient(90deg, transparent 46%, #865616 46% 54%, transparent 54%), linear-gradient(0deg, transparent 43%, #865616 43% 49%, transparent 49% 65%, #865616 65% 71%, transparent 71%), linear-gradient(#fff0a4, #d79a28); box-shadow: 0 0 18px #ffd04f99; clip-path: polygon(0 0, 100% 0, 88% 100%, 50% 88%, 12% 100%); animation: battle-fx-special-talisman 700ms ease-out both; }
+.seal { width: 90px; height: 90px; margin: 0 auto 15px; display: grid; place-items: center; border: 5px double #b94438; border-radius: 50%; color: #b94438; font-size: 2.5rem; font-weight: 900; transform: rotate(-5deg); }
+
+@keyframes battle-fx-attack-flash {
+  0% { opacity: 0; }
+  28% { opacity: 1; }
+  64% { opacity: .72; }
+  100% { opacity: 0; }
+}
+@keyframes battle-fx-attack-slash {
+  0% { opacity: 0; transform: translate(-74%, 80%) rotate(-32deg) scaleX(.08); }
+  40% { opacity: 1; transform: translate(-50%, -50%) rotate(-32deg) scaleX(1); }
+  54% { opacity: 1; transform: translate(-50%, -50%) rotate(-32deg) scaleX(1); }
+  100% { opacity: 0; transform: translate(-18%, -180%) rotate(-32deg) scaleX(.48); }
+}
+@keyframes battle-fx-attack-impact {
+  0%, 32% { opacity: 0; transform: translate(-50%, -50%) scale(.18); }
+  54% { opacity: 1; transform: translate(-50%, -50%) scale(.78); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+@keyframes battle-fx-block-label {
+  0% { opacity: 0; transform: translateY(8px); }
+  32%, 72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-5px); }
+}
+@keyframes battle-fx-block-barrier {
+  0% { opacity: 0; transform: scale(.72); }
+  34% { opacity: 1; transform: scale(1); }
+  76% { opacity: .8; transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1.05); }
+}
+@keyframes battle-fx-block-ripple {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); }
+  34% { opacity: 1; transform: translate(-50%, -50%) scale(.62); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.65); }
+}
+/* 특수는 덱 더미에서 손패로 '내려온다'. 위(-Y)에서 시작해 아래(+Y)로 흐른다. */
+@keyframes battle-fx-special-label {
+  0% { opacity: 0; transform: translateY(-14px); }
+  34%, 72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+@keyframes battle-fx-special-particles {
+  0% { opacity: 0; transform: translate(-50%, -30px) scale(.65); }
+  30% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 74px) scale(.85); }
+}
+@keyframes battle-fx-special-talisman {
+  0% { opacity: 0; transform: translate(-50%, -34px) rotate(-8deg) scale(.82); }
+  34% { opacity: 1; transform: translate(-50%, 0) rotate(3deg) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 62px) rotate(-3deg) scale(.94); }
+}
+@keyframes enemy-hit-shake-a {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px) rotate(-1deg); }
+  50% { transform: translateX(6px) rotate(1deg); }
+  75% { transform: translateX(-3px); }
+}
+@keyframes enemy-hit-shake-b {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-7px) rotate(-1deg); }
+  50% { transform: translateX(6px) rotate(1deg); }
+  75% { transform: translateX(-3px); }
+}
+@keyframes enemy-damage-rise {
+  0% { opacity: 0; transform: translate(-50%, 8px) scale(.85); }
+  20% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+  100% { opacity: 0; transform: translate(-50%, -42px) scale(1); }
+}
+@keyframes card-play-rise {
+  0% { opacity: 0; transform: translateY(34px) scale(.88); filter: brightness(1); }
+  35% { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1.45); }
+  100% { opacity: 0; transform: translateY(-58px) scale(1.04); filter: brightness(1.12); }
+}
+@keyframes reward-screen-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes reward-card-in {
+  from { opacity: 0; transform: translateY(20px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@media (max-width: 420px) {
+  main { padding: 10px; }
+  .hand { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rewards { grid-template-columns: 1fr; }
+  .rewards .card { min-height: 130px; }
+  .rewards .card.has-art { min-height: 220px; }
+  .enemy-layout.has-portrait { grid-template-columns: 104px minmax(0, 1fr); gap: 10px; }
+  .player { grid-template-columns: 1fr; }
+  .card { min-height: 151px; }
+  .deck-row { grid-template-columns: minmax(105px, 1fr) minmax(135px, 1fr); }
+  .rules-panel dl { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .health-bar span { transition: none; }
+  .enemy-layout.is-hit-a, .enemy-layout.is-hit-b, .enemy-damage, .played-card, .reward-screen, .reward-screen .rewards .card { animation: none; }
+  .battle-fx, .battle-fx::before, .battle-fx::after { opacity: 1; transform: none; filter: none; animation: none; }
+  .battle-fx-attack { background: radial-gradient(circle at 58% 48%, #ff5b4547 0, transparent 46%); }
+  .battle-fx-attack::before { inset: 12% 6%; width: auto; height: auto; border-radius: 0; background: linear-gradient(135deg, transparent 45%, #fff2cf 47%, #fff 49%, #ff6c58 51%, transparent 54%); box-shadow: 0 0 12px #ff3b2f; }
+  .battle-fx-attack::after { top: 48%; left: 58%; width: 72px; margin: -36px 0 0 -36px; }
+  .battle-fx-block::after { width: 62px; margin: -31px 0 0 -31px; }
+  .battle-fx-special::before { margin-left: -3px; }
+  .battle-fx-special::after { margin-left: -16px; }
+}
