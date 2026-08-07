@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { battleBackground, cardArt, enemyArt } from '../content/presentation';
 import type { CardArt } from '../content/presentation';
-import type { BattleCard, BattleState, Intent } from '../core/types';
+import type { BattleCard, BattleState, Effect, Intent } from '../core/types';
 import { previewHpDamage } from '../core/battle';
-import { CardView, passiveText } from './CardView';
+import { CardView, passiveText, previewEffects } from './CardView';
 import { RulesPanel } from './RulesPanel';
 import { Tooltip } from './Tooltip';
 
@@ -23,6 +23,14 @@ const typeHelp: Record<string, string> = {
 
 const ENEMY_HIT_VISIBLE_MS = 700;
 const CARD_PLAY_VISIBLE_MS = 650;
+
+type FxKind = 'attack' | 'block' | 'special';
+
+const FX_VISIBLE_MS: Record<FxKind, number> = {
+  attack: 500,
+  block: 600,
+  special: 700,
+};
 
 type EnemyHpSnapshot = {
   enemyId: string;
@@ -48,6 +56,27 @@ type PlayedCard = {
 function hpPercent(hp: number, maxHp: number): number {
   if (maxHp <= 0) return 0;
   return Math.max(0, Math.min(100, hp / maxHp * 100));
+}
+
+function fxKindOf(effects: readonly Effect[]): FxKind | null {
+  if (effects.some((effect) => effect.kind === 'damage' || effect.kind === 'execute')) return 'attack';
+  if (effects.some((effect) => effect.kind === 'block')) return 'block';
+  if (effects.some((effect) => effect.kind === 'draw')) return 'special';
+  return null;
+}
+
+function fxAmountOf(effects: readonly Effect[], kind: FxKind | null): number {
+  if (kind === 'block') {
+    for (const effect of effects) {
+      if (effect.kind === 'block') return effect.amount;
+    }
+  }
+  if (kind === 'special') {
+    for (const effect of effects) {
+      if (effect.kind === 'draw') return effect.amount;
+    }
+  }
+  return 0;
 }
 
 function HealthBar({ hp, maxHp, owner }: { hp: number; maxHp: number; owner: 'enemy' | 'player' }) {
@@ -77,11 +106,14 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
   const [tip, setTip] = useState<{ title: string; text: string } | null>(null);
   const [hit, setHit] = useState<EnemyHit | null>(null);
   const [playedCard, setPlayedCard] = useState<PlayedCard | null>(null);
+  const [fx, setFx] = useState<{ key: number; kind: FxKind; amount: number } | null>(null);
   const enemyHp = useRef<EnemyHpSnapshot>({ enemyId: enemy.id, battleNumber, hp: enemy.hp });
   const hitKey = useRef(0);
   const playKey = useRef(0);
+  const fxKey = useRef(0);
   const hitTimer = useRef<number | undefined>();
   const playTimer = useRef<number | undefined>();
+  const fxTimer = useRef<number | undefined>();
   const portrait = enemyArt(enemy.id);
   const background = battleBackground(enemy.id);
   const activeHit = hit?.enemyId === enemy.id && hit.battleNumber === battleNumber ? hit : null;
@@ -109,6 +141,7 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
   useEffect(() => () => {
     if (hitTimer.current !== undefined) window.clearTimeout(hitTimer.current);
     if (playTimer.current !== undefined) window.clearTimeout(playTimer.current);
+    if (fxTimer.current !== undefined) window.clearTimeout(fxTimer.current);
   }, []);
 
   const play = (card: BattleCard, index: number) => {
@@ -118,13 +151,25 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
       cost: Math.max(0, card.cost - battle.costReduction),
       art: cardArt(card.id),
     };
+    const stacks = card.bondGroup ? battle.playedMyths[card.bondGroup] ?? 0 : 0;
+    const preview = previewEffects(card, stacks);
+    const kind = fxKindOf(card.effects);
+    const amount = fxAmountOf(preview, kind);
     onPlay(index);
-    const key = ++playKey.current;
+    const playedKey = ++playKey.current;
     if (playTimer.current !== undefined) window.clearTimeout(playTimer.current);
-    setPlayedCard({ key, ...snapshot });
+    setPlayedCard({ key: playedKey, ...snapshot });
     playTimer.current = window.setTimeout(() => {
-      setPlayedCard((value) => value?.key === key ? null : value);
+      setPlayedCard((value) => value?.key === playedKey ? null : value);
     }, CARD_PLAY_VISIBLE_MS);
+    if (kind !== null) {
+      const key = ++fxKey.current;
+      if (fxTimer.current !== undefined) window.clearTimeout(fxTimer.current);
+      setFx({ key, kind, amount });
+      fxTimer.current = window.setTimeout(() => {
+        setFx((value) => value?.key === key ? null : value);
+      }, FX_VISIBLE_MS[kind]);
+    }
   };
 
   const statuses = (values: BattleState['player']['statuses']) =>
@@ -135,6 +180,7 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
       <header><span>본풀이 · 다섯 굿</span><b>{battleNumber} / 5 전투</b></header>
       <section className={`enemy panel${background ? ' has-background' : ''}`}>
         {background && <img className="enemy-background" src={background} alt="" aria-hidden="true" />}
+        {fx?.kind === 'attack' && <div key={fx.key} className="battle-fx battle-fx-attack" data-fx="attack" aria-hidden="true" />}
         <div className={`enemy-layout${portrait ? ' has-portrait' : ''}${hitClass}`}>
           {portrait && <div className="enemy-portrait-slot">
             <div className="enemy-portrait-frame">
@@ -160,6 +206,7 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
         <span>좌정 {battle.installed ? `${battle.installed.name} (${passiveText(battle.installed)})` : '없음'}</span>
       </section>
       <section className="player panel">
+        {fx?.kind === 'block' && <div key={fx.key} className="battle-fx battle-fx-block" data-fx="block" aria-hidden="true">넋 +{fx.amount}</div>}
         <div><small>심방 · {battle.turn}번째 장단</small><h2>명 {battle.player.hp} / {battle.player.maxHp}</h2>
           <HealthBar hp={battle.player.hp} maxHp={battle.player.maxHp} owner="player" /></div>
         <div className="resources"><b>장단 {battle.energy} / {battle.maxEnergy}</b><span>넋 {battle.player.block}</span></div>
@@ -167,6 +214,7 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
       </section>
       <div className="piles"><span>덱 {battle.drawPile.length}</span><span>버림 {battle.discardPile.length}</span><span>소멸 {battle.exhaustPile.length}</span></div>
       <section className="hand" aria-label="손패">
+        {fx?.kind === 'special' && <div key={fx.key} className="battle-fx battle-fx-special" data-fx="special" aria-hidden="true">+{fx.amount} 뽑기</div>}
         {battle.hand.map((card, index) => (
           <CardView key={card.id} card={card} stacks={card.bondGroup ? battle.playedMyths[card.bondGroup] ?? 0 : 0}
             displayedCost={Math.max(0, card.cost - battle.costReduction)}

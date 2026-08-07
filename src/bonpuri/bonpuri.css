@@ -30,6 +30,7 @@ small { color: #c9bda7; }
 .statuses span, .statuses button, .piles span { padding: 3px 7px; border-radius: 999px; color: inherit; background: #e8dcc516; border: 1px solid #b5a58766; font-size: .73rem; }
 .piles { display: flex; justify-content: center; gap: 7px; padding: 4px 0 10px; color: #d7c9b1; }
 .hand, .rewards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.hand { position: relative; }
 .card { position: relative; min-width: 0; min-height: 164px; padding: 25px 9px 10px; overflow: hidden; color: #f8f0df; text-align: left; border: 3px double var(--frame); border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--frame) 22%, #221d18), #171411 70%); box-shadow: inset 0 0 0 2px #0008; cursor: pointer; }
 .card:hover:not([aria-disabled="true"]) { transform: translateY(-2px); filter: brightness(1.15); }
 .card[aria-disabled="true"] { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
@@ -104,8 +105,73 @@ small { color: #c9bda7; }
 .played-card span { position: absolute; top: 7px; right: 8px; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; color: #17130e; background: #e8c65a; font-weight: 900; text-shadow: none; }
 .played-card small, .played-card strong { display: block; }
 .played-card strong { margin-top: 5px; }
+.battle-fx { position: absolute; z-index: 4; inset: 0; isolation: isolate; pointer-events: none; }
+.battle-fx-attack { overflow: hidden; border-radius: inherit; background: radial-gradient(circle at 58% 48%, #fff5dfb8 0, #ff5b4538 24%, transparent 57%); animation: battle-fx-attack-flash 500ms ease-out both; }
+.battle-fx-attack::before { content: ""; position: absolute; z-index: 1; top: 52%; left: 50%; width: 78%; height: 10px; border-radius: 999px; background: linear-gradient(90deg, transparent, #fff2cf 14%, #fff 48%, #ff8a70 76%, transparent); box-shadow: 0 0 7px #fff, 0 0 18px #ff3b2f, 0 0 34px #b51610; transform-origin: center; animation: battle-fx-attack-slash 500ms cubic-bezier(.18,.72,.22,1) both; }
+.battle-fx-attack::after { content: ""; position: absolute; z-index: 0; top: 48%; left: 58%; width: 82px; aspect-ratio: 1; border: 2px solid #ffd7c5; border-radius: 50%; background: radial-gradient(circle, #fff8dccc 0 8%, #ff4a3e88 22%, transparent 66%); box-shadow: 0 0 18px #ff3b2faa; animation: battle-fx-attack-impact 500ms ease-out both; }
+/* 카드 사용 오버레이(.card-play-overlay)는 z-index 20 의 화면 중앙 고정 레이어다.
+   방어·특수 표시는 그 아래에 깔리면 글자가 가려지므로 그 위로 올린다. 툴팁(50)보다는 낮다. */
+.battle-fx-block, .battle-fx-special { z-index: 25; }
+.battle-fx-block { display: grid; place-items: center; color: #bffff7; font-size: clamp(1.05rem, 4vw, 1.45rem); font-weight: 900; text-shadow: 0 2px 3px #031516, 0 0 12px #50e5db; animation: battle-fx-block-label 600ms ease-out both; }
+.battle-fx-block::before { content: ""; position: absolute; z-index: -2; inset: 9% 5%; border: 2px solid #72fff1d9; border-radius: 48% 48% 42% 42%; background: linear-gradient(135deg, #c5fff833, #37aaa124 48%, #0d3f4538); box-shadow: inset 0 0 22px #75fff26b, 0 0 18px #36cfc488; animation: battle-fx-block-barrier 600ms ease-out both; }
+.battle-fx-block::after { content: ""; position: absolute; z-index: -1; top: 50%; left: 50%; width: 62px; aspect-ratio: 1; border: 2px solid #bffff7; border-radius: 50%; box-shadow: 0 0 0 12px #77f8ed66, 0 0 0 28px #3bd8ce33; animation: battle-fx-block-ripple 600ms ease-out both; }
+/* 손패 하단에 앵커하면 1280x720 에서 접힘선 아래로 내려가 아무것도 보이지 않는다(실측).
+   덱 더미(.piles)가 손패 바로 위에 있으므로, 위에서 손패로 내려오게 잡아야
+   "카드 더미 → 손패" 방향도 성립하고 화면 안에도 들어온다. */
+.battle-fx-special { display: grid; place-items: start center; padding-top: 4px; color: #ffe99a; font-size: clamp(1rem, 4vw, 1.4rem); font-weight: 900; text-shadow: 0 2px 3px #261903, 0 0 13px #ffcc49; animation: battle-fx-special-label 700ms ease-out both; }
+.battle-fx-special::before { content: ""; position: absolute; z-index: -1; top: 4px; left: 50%; width: 7px; height: 12px; border-radius: 50% 50% 42% 42%; background: #fff0a4; box-shadow: -128px -22px #ffd65e, -84px 6px #fff0a4, -43px -16px #eebc3f, 39px 9px #ffe783, 82px -20px #f5c64a, 126px 3px #fff3b2; animation: battle-fx-special-particles 700ms ease-out both; }
+.battle-fx-special::after { content: ""; position: absolute; z-index: -2; top: 30px; left: 50%; width: 32px; height: 58px; border: 1px solid #fff0a4; border-radius: 3px; background: linear-gradient(90deg, transparent 46%, #865616 46% 54%, transparent 54%), linear-gradient(0deg, transparent 43%, #865616 43% 49%, transparent 49% 65%, #865616 65% 71%, transparent 71%), linear-gradient(#fff0a4, #d79a28); box-shadow: 0 0 18px #ffd04f99; clip-path: polygon(0 0, 100% 0, 88% 100%, 50% 88%, 12% 100%); animation: battle-fx-special-talisman 700ms ease-out both; }
 .seal { width: 90px; height: 90px; margin: 0 auto 15px; display: grid; place-items: center; border: 5px double #b94438; border-radius: 50%; color: #b94438; font-size: 2.5rem; font-weight: 900; transform: rotate(-5deg); }
 
+@keyframes battle-fx-attack-flash {
+  0% { opacity: 0; }
+  28% { opacity: 1; }
+  64% { opacity: .72; }
+  100% { opacity: 0; }
+}
+@keyframes battle-fx-attack-slash {
+  0% { opacity: 0; transform: translate(-74%, 80%) rotate(-32deg) scaleX(.08); }
+  40% { opacity: 1; transform: translate(-50%, -50%) rotate(-32deg) scaleX(1); }
+  54% { opacity: 1; transform: translate(-50%, -50%) rotate(-32deg) scaleX(1); }
+  100% { opacity: 0; transform: translate(-18%, -180%) rotate(-32deg) scaleX(.48); }
+}
+@keyframes battle-fx-attack-impact {
+  0%, 32% { opacity: 0; transform: translate(-50%, -50%) scale(.18); }
+  54% { opacity: 1; transform: translate(-50%, -50%) scale(.78); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.5); }
+}
+@keyframes battle-fx-block-label {
+  0% { opacity: 0; transform: translateY(8px); }
+  32%, 72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-5px); }
+}
+@keyframes battle-fx-block-barrier {
+  0% { opacity: 0; transform: scale(.72); }
+  34% { opacity: 1; transform: scale(1); }
+  76% { opacity: .8; transform: scale(1.02); }
+  100% { opacity: 0; transform: scale(1.05); }
+}
+@keyframes battle-fx-block-ripple {
+  0% { opacity: 0; transform: translate(-50%, -50%) scale(.25); }
+  34% { opacity: 1; transform: translate(-50%, -50%) scale(.62); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.65); }
+}
+/* 특수는 덱 더미에서 손패로 '내려온다'. 위(-Y)에서 시작해 아래(+Y)로 흐른다. */
+@keyframes battle-fx-special-label {
+  0% { opacity: 0; transform: translateY(-14px); }
+  34%, 72% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(20px); }
+}
+@keyframes battle-fx-special-particles {
+  0% { opacity: 0; transform: translate(-50%, -30px) scale(.65); }
+  30% { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 74px) scale(.85); }
+}
+@keyframes battle-fx-special-talisman {
+  0% { opacity: 0; transform: translate(-50%, -34px) rotate(-8deg) scale(.82); }
+  34% { opacity: 1; transform: translate(-50%, 0) rotate(3deg) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, 62px) rotate(-3deg) scale(.94); }
+}
 @keyframes enemy-hit-shake-a {
   0%, 100% { transform: translateX(0); }
   25% { transform: translateX(-7px) rotate(-1deg); }
@@ -153,4 +219,11 @@ small { color: #c9bda7; }
 @media (prefers-reduced-motion: reduce) {
   .health-bar span { transition: none; }
   .enemy-layout.is-hit-a, .enemy-layout.is-hit-b, .enemy-damage, .played-card, .reward-screen, .reward-screen .rewards .card { animation: none; }
+  .battle-fx, .battle-fx::before, .battle-fx::after { opacity: 1; transform: none; filter: none; animation: none; }
+  .battle-fx-attack { background: radial-gradient(circle at 58% 48%, #ff5b4547 0, transparent 46%); }
+  .battle-fx-attack::before { inset: 12% 6%; width: auto; height: auto; border-radius: 0; background: linear-gradient(135deg, transparent 45%, #fff2cf 47%, #fff 49%, #ff6c58 51%, transparent 54%); box-shadow: 0 0 12px #ff3b2f; }
+  .battle-fx-attack::after { top: 48%; left: 58%; width: 72px; margin: -36px 0 0 -36px; }
+  .battle-fx-block::after { width: 62px; margin: -31px 0 0 -31px; }
+  .battle-fx-special::before { margin-left: -3px; }
+  .battle-fx-special::after { margin-left: -16px; }
 }
