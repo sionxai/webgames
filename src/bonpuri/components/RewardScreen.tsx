@@ -18,7 +18,7 @@ export function RewardScreen({ rewards, hp, onChoose, onSkip }: {
   const formatCleanseRemovals = (removals: readonly RemovalSummary[]) => removals.length === 0
     ? '기본 카드 없음 · 덱 유지'
     : `${removals.map((item) => `${item.name} ${item.count}장`).join(' · ')} 제거`;
-  return <main className="centered">
+  return <main className="centered reward-screen">
     <header><span>굿을 마쳤다</span><b>명 {hp} / 70</b></header>
     <h1>새 신격을 모실까요?</h1>
     <p>카드 3장을 교체하거나, 정화하며 덱을 압축하세요.</p>

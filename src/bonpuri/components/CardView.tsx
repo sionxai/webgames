@@ -1,5 +1,6 @@
 import { useRef } from 'react';
 import type { CSSProperties, PointerEvent } from 'react';
+import { cardArt } from '../content/presentation';
 import { BOND_STACK_CAP } from '../core/battle';
 import type { BattleCard, CardType, Effect } from '../core/types';
 
@@ -69,6 +70,7 @@ type Props = {
 
 export function CardView({ card, stacks = 0, disabled = false, displayedCost = card.cost, replacingInstalled = false, onClick, onTooltip }: Props) {
   const bonus = (card.bond?.perStack ?? 0) * Math.min(stacks, BOND_STACK_CAP);
+  const art = cardArt(card.id);
   const frameStyle = { '--frame': frameColors[card.cardType ?? '신'] } as CSSProperties;
   const timer = useRef<number | undefined>();
   const longPressed = useRef(false);
@@ -82,9 +84,11 @@ export function CardView({ card, stacks = 0, disabled = false, displayedCost = c
   const click = () => { if (!longPressed.current && !disabled) onClick?.(); longPressed.current = false; };
   const summary = card.passive ? passiveText(card) : previewEffects(card, stacks).map(effectText).join(' · ');
   return (
-    <button className={`card card-${card.cardType ?? '신'} card-${card.id.length % 5}`} style={frameStyle} aria-disabled={disabled}
+    <button className={`card card-${card.cardType ?? '신'} card-${card.id.length % 5}${art ? ' has-art' : ''}`} style={frameStyle} aria-disabled={disabled}
       aria-label={`${card.name}, ${card.cardType ?? '신'}, 비용 ${displayedCost}, ${summary}`}
       onPointerDown={pointerDown} onPointerUp={stopTimer} onPointerCancel={stopTimer} onClick={click}>
+      {art && <img className="card-art" src={art.src} alt="" aria-hidden="true" loading="lazy"
+        style={art.objectPosition ? { objectPosition: art.objectPosition } : undefined} />}
       <span className="card-cost">{displayedCost}</span>
       <span className="card-type" role={onTooltip ? 'button' : undefined} tabIndex={onTooltip ? 0 : undefined}
         onPointerDown={(event) => event.stopPropagation()}
