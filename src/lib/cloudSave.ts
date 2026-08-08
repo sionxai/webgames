@@ -21,7 +21,7 @@ export interface CloudSaveRecord {
   device: string;
 }
 
-type GameId = 'forge' | 'waitdog';
+type GameId = 'forge' | 'waitdog' | 'bonpuri';
 type StateListener = (state: CloudSaveState) => void;
 
 const SAVE_DEBOUNCE_MS = 3_000;
