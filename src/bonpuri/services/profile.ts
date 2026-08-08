@@ -77,27 +77,42 @@ export const createDefaultProfile = (): BonpuriProfile => ({
   ascensionSelected: 0,
 });
 
+/**
+ * 어떤 스키마의 프로필이든 최신(v3)으로 올린다. **저장 부작용이 없는 순수 함수**다 —
+ * 클라우드에서 받은 payload 도 같은 경로로 검증·변환해야 하므로 저장과 분리해 둔다.
+ * deckReset: v1 은 10장 덱이라 기본 50장으로 되돌아간다. 사용자에게 알려야 하는 유일한 손실이다.
+ */
+export function migrateProfile(value: unknown): { profile: BonpuriProfile; from: 1 | 2 | 3; deckReset: boolean } | null {
+  if (isBonpuriProfile(value)) return { profile: value, from: 3, deckReset: false };
+  if (isProfileV1(value) || isProfileV2(value)) {
+    const deckReset = isProfileV1(value);
+    return {
+      profile: {
+        ...value,
+        schemaVersion: 3,
+        collection: { ...value.collection },
+        startingDeck: deckReset ? [...DEFAULT_STARTING_DECK] : [...value.startingDeck],
+        ascensionUnlocked: unlockedFromHistory(value.runsWon),
+        ascensionSelected: 0,
+      },
+      from: deckReset ? 1 : 2,
+      deckReset,
+    };
+  }
+  return null;
+}
+
 export function loadProfile(storage: StorageAdapter): LoadProfileResult {
   try {
     const raw = storage.getItem(BONPURI_PROFILE_KEY);
     if (raw === null) return { ok: true, profile: null };
-    const profile: unknown = JSON.parse(raw);
-    if (isBonpuriProfile(profile)) return { ok: true, profile };
-    // v1 은 덱까지 되돌아가므로 사용자에게 알린다(migrated). v2 는 덱이 그대로라 알릴 것이 없다.
-    if (isProfileV1(profile) || isProfileV2(profile)) {
-      const deckReset = isProfileV1(profile);
-      const upgraded: BonpuriProfile = {
-        ...profile,
-        schemaVersion: 3,
-        collection: { ...profile.collection },
-        startingDeck: deckReset ? [...DEFAULT_STARTING_DECK] : [...profile.startingDeck],
-        ascensionUnlocked: unlockedFromHistory(profile.runsWon),
-        ascensionSelected: 0,
-      };
-      const saved = saveProfile(storage, upgraded);
-      return saved.ok ? { ok: true, profile: upgraded, migrated: deckReset ? true : undefined } : saved;
-    }
-    return { ok: false, error: '저장된 본풀이 기록의 형식이 올바르지 않습니다.' };
+    const migrated = migrateProfile(JSON.parse(raw));
+    if (migrated === null) return { ok: false, error: '저장된 본풀이 기록의 형식이 올바르지 않습니다.' };
+    if (migrated.from === 3) return { ok: true, profile: migrated.profile };
+    const saved = saveProfile(storage, migrated.profile);
+    return saved.ok
+      ? { ok: true, profile: migrated.profile, migrated: migrated.deckReset ? true : undefined }
+      : saved;
   } catch {
     return { ok: false, error: '저장된 본풀이 기록을 읽지 못했습니다.' };
   }

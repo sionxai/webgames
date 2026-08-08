@@ -17,8 +17,15 @@ import {
   nextAscensionUnlocked,
   saveProfile,
   validateStartingDeck,
+  type BonpuriProfile,
   type StorageAdapter,
 } from '../src/bonpuri/services/profile';
+import {
+  backupProfile, canonicalProfileJson, classifyOwner, isMeaningfulProfile, isSupportedEnvelope,
+  MAX_CLOUD_PAYLOAD_LENGTH, parseCloudPayload, PROFILE_BACKUP_KEY, PROFILE_META_KEY,
+  readBackup, readMeta, restoreBackup, sameProfile, summarizeProfile, writeMeta,
+  type ProfileMeta, type ProfileOwner,
+} from '../src/bonpuri/services/cloudProfile';
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -927,6 +934,148 @@ const tests: Array<[string, () => void]> = [
     assert(high.battle.enemies[0].maxHp === Math.floor(miniRunEnemies[0].maxHp * modifier.enemyHpMultiplier), '적 명 배율 적용');
     assert(high.battle.enemies[0].maxHp > base.battle.enemies[0].maxHp, '승천이 높을수록 적 명 증가');
     assert(high.playerHp === modifier.startingHp, '시작 명 적용');
+  }],
+
+  // ── WO-009 Phase 1 클라우드 저장 · 순수 데이터 경계 ──────────────────
+  ['79 소유자 메타 왕복과 손상 데이터 거부', () => {
+    const box: Record<string, string> = {};
+    const storage: StorageAdapter = { getItem: (k) => box[k] ?? null, setItem: (k, v) => { box[k] = v; } };
+    const meta: ProfileMeta = { schemaVersion: 1, owner: { kind: 'google', uid: 'uid-a' }, savedAt: 1000, device: 'dev-1' };
+    assert(writeMeta(storage, meta).ok, '메타 저장');
+    equal(readMeta(storage), meta, '메타 왕복');
+    box[PROFILE_META_KEY] = '{';
+    assert(readMeta(storage) === null, '손상 메타는 null');
+    box[PROFILE_META_KEY] = JSON.stringify({ schemaVersion: 1, owner: { kind: 'google' }, savedAt: 1, device: 'd' });
+    assert(readMeta(storage) === null, 'uid 없는 google 소유자 거부');
+  }],
+  ['80 소유자 관계 판정 — legacy/guest/동일/전환', () => {
+    const meta = (owner: ProfileOwner): ProfileMeta => ({ schemaVersion: 1, owner, savedAt: 1, device: 'd' });
+    equal(classifyOwner(null, false, 'uid-a').kind, 'no-local-record', '로컬 기록 없음');
+    equal(classifyOwner(null, true, 'uid-a').kind, 'legacy-local', '메타 없는 기존 기록');
+    equal(classifyOwner(meta({ kind: 'legacy-local' }), true, 'uid-a').kind, 'legacy-local', 'legacy 명시');
+    equal(classifyOwner(meta({ kind: 'guest' }), true, 'uid-a').kind, 'guest-record', '게스트 기록');
+    // 익명 UID 를 Google 에 연결해 UID 가 유지된 경우는 같은 사용자다.
+    equal(classifyOwner(meta({ kind: 'google', uid: 'uid-a' }), true, 'uid-a').kind, 'same-owner', '동일 UID');
+    equal(classifyOwner(meta({ kind: 'google', uid: 'uid-a' }), true, 'uid-b').kind, 'account-changed', 'UID 전환');
+    equal(classifyOwner(meta({ kind: 'google', uid: 'uid-a' }), true, null).kind, 'account-changed', '로그아웃 상태');
+  }],
+  ['81 의미 있는 기록 판정', () => {
+    const empty = createDefaultProfile();
+    assert(!isMeaningfulProfile(empty), '빈 기록은 물어볼 가치 없음');
+    assert(isMeaningfulProfile({ ...empty, collection: { jacheongbi: 1 } }), '획득 카드');
+    assert(isMeaningfulProfile({ ...empty, runsCompleted: 1 }), '완료 런');
+    assert(isMeaningfulProfile({ ...empty, runsWon: 1 }), '승리 기록');
+    assert(isMeaningfulProfile({ ...empty, ascensionUnlocked: 1 }), '승천 해금');
+    const deck = [...empty.startingDeck]; deck[0] = 'neokgarim';
+    assert(isMeaningfulProfile({ ...empty, startingDeck: deck }), '기본과 다른 덱');
+    assert(!isMeaningfulProfile({ ...empty, collection: { jacheongbi: 0 } }), '0장 보유는 의미 없음');
+  }],
+  ['82 클라우드 payload 검증 — 정상 v3', () => {
+    const profile = { ...createDefaultProfile(), collection: { jacheongbi: 2 }, runsCompleted: 3, runsWon: 1, ascensionUnlocked: 1, ascensionSelected: 1 };
+    const result = parseCloudPayload(JSON.stringify(profile));
+    assert(result.ok && result.from === 3 && !result.deckReset, 'v3 통과');
+    equal(result.profile.collection, profile.collection, 'collection 보존');
+  }],
+  ['83 클라우드 payload 검증 — v1·v2 마이그레이션', () => {
+    const v2 = { schemaVersion: 2, collection: { sanpan: 1 }, startingDeck: Array(50).fill('sinkal'), runsCompleted: 2, runsWon: 1, rulesPanelOpen: false };
+    const r2 = parseCloudPayload(JSON.stringify(v2));
+    assert(r2.ok && r2.from === 2 && !r2.deckReset, 'v2 변환');
+    assert(r2.profile.schemaVersion === 3 && r2.profile.ascensionUnlocked === 1, 'v2 → v3 · 승천 1 해금');
+    assert(r2.profile.rulesPanelOpen === false, 'v2 설정 보존');
+    const v1 = { schemaVersion: 1, collection: {}, startingDeck: Array(10).fill('sinkal'), runsCompleted: 0, runsWon: 0, rulesPanelOpen: true };
+    const r1 = parseCloudPayload(JSON.stringify(v1));
+    assert(r1.ok && r1.from === 1 && r1.deckReset, 'v1 변환 · 덱 초기화 표시');
+    assert(r1.profile.startingDeck.length === 50, 'v1 덱 50장 복구');
+  }],
+  ['84 클라우드 payload 거부 — malformed·잘못된 덱·보유량 초과·범위 밖', () => {
+    const bad: [string, unknown][] = [
+      ['문자열 아님', 42],
+      ['빈 문자열', ''],
+      ['깨진 JSON', '{'],
+      ['알 수 없는 스키마', JSON.stringify({ schemaVersion: 9, collection: {}, startingDeck: [], runsCompleted: 0, runsWon: 0, rulesPanelOpen: true })],
+      ['덱 49장', JSON.stringify({ ...createDefaultProfile(), startingDeck: Array(49).fill('sinkal') })],
+      ['존재하지 않는 카드', JSON.stringify({ ...createDefaultProfile(), startingDeck: [...Array(49).fill('sinkal'), 'not_a_card'] })],
+      ['보유량 초과', JSON.stringify({ ...createDefaultProfile(), collection: { jacheongbi: 1 }, startingDeck: [...Array(48).fill('sinkal'), 'jacheongbi', 'jacheongbi'] })],
+      ['같은 카드 5장', JSON.stringify({ ...createDefaultProfile(), collection: { jacheongbi: 9 }, startingDeck: [...Array(45).fill('sinkal'), ...Array(5).fill('jacheongbi')] })],
+      ['음수 보유량', JSON.stringify({ ...createDefaultProfile(), collection: { jacheongbi: -1 } })],
+      ['승천 범위 밖', JSON.stringify({ ...createDefaultProfile(), ascensionUnlocked: 99 })],
+      ['선택 > 해금', JSON.stringify({ ...createDefaultProfile(), ascensionUnlocked: 1, ascensionSelected: 5 })],
+      ['상한 초과 크기', `"${'x'.repeat(MAX_CLOUD_PAYLOAD_LENGTH)}"`],
+    ];
+    for (const [label, raw] of bad) {
+      assert(!parseCloudPayload(raw).ok, `${label}: 거부해야 함`);
+    }
+    // 상한 경계 바로 아래의 정상 payload 는 통과해야 한다.
+    const ok = JSON.stringify(createDefaultProfile());
+    assert(ok.length < MAX_CLOUD_PAYLOAD_LENGTH && parseCloudPayload(ok).ok, '상한 미만 정상 payload 통과');
+  }],
+  ['85 envelope schema 는 3만 허용', () => {
+    assert(isSupportedEnvelope(3), 'schema 3 허용');
+    for (const bad of [2, 1, 4, '3', null, undefined]) {
+      assert(!isSupportedEnvelope(bad), `envelope ${String(bad)} 거부`);
+    }
+  }],
+  ['86 동일 기록 판정은 키 순서에 흔들리지 않음', () => {
+    const base = { ...createDefaultProfile(), collection: { jacheongbi: 2, sanpan: 1 } };
+    const shuffled: BonpuriProfile = { ...base, collection: { sanpan: 1, jacheongbi: 2 } };
+    assert(sameProfile(base, shuffled), '키 순서가 달라도 같은 기록');
+    assert(sameProfile(base, { ...base, collection: { ...base.collection, mulsaek: 0 } }), '0장은 무시');
+    assert(!sameProfile(base, { ...base, runsWon: 1 }), '전적이 다르면 다른 기록');
+    assert(!sameProfile(base, { ...base, collection: { jacheongbi: 3, sanpan: 1 } }), '수량이 다르면 다른 기록');
+    assert(canonicalProfileJson(base) === canonicalProfileJson(shuffled), '정규화 문자열 동일');
+  }],
+  ['87 충돌 요약은 UID·원시 JSON 을 담지 않음', () => {
+    const profile = { ...createDefaultProfile(), collection: { jacheongbi: 2, sanpan: 1, mulsaek: 0 }, runsCompleted: 4, runsWon: 2, ascensionUnlocked: 2, ascensionSelected: 1 };
+    const summary = summarizeProfile(profile, 'cloud', 1700);
+    equal(summary, { source: 'cloud', cards: 3, kinds: 2, runsCompleted: 4, runsWon: 2, ascensionUnlocked: 2, deckSize: 50, savedAt: 1700 }, '요약 내용');
+    const serialized = JSON.stringify(summary);
+    for (const leak of ['uid', 'startingDeck', 'collection', 'portal/saves', 'schemaVersion']) {
+      assert(!serialized.includes(leak), `요약에 ${leak} 누출`);
+    }
+  }],
+  ['88 백업 왕복과 손상 백업 거부', () => {
+    const box: Record<string, string> = {};
+    const storage: StorageAdapter = { getItem: (k) => box[k] ?? null, setItem: (k, v) => { box[k] = v; } };
+    assert(readBackup(storage) === null, '백업 없음');
+    const profile = { ...createDefaultProfile(), collection: { jacheongbi: 1 } };
+    const ok = backupProfile(storage, { schemaVersion: 1, payload: JSON.stringify(profile), source: 'cloud', savedAt: 500, owner: { kind: 'google', uid: 'uid-a' }, profileSchema: 3 });
+    assert(ok.ok, '백업 저장');
+    const read = readBackup(storage);
+    assert(read !== null && read.source === 'cloud' && read.savedAt === 500, '백업 왕복');
+    box[PROFILE_BACKUP_KEY] = JSON.stringify({ schemaVersion: 1, payload: '', source: 'cloud', savedAt: 1, owner: { kind: 'guest' }, profileSchema: 3 });
+    assert(readBackup(storage) === null, '빈 payload 백업 거부');
+  }],
+  ['89 복원은 현재 기록을 먼저 백업한 뒤 수행', () => {
+    const box: Record<string, string> = {};
+    const storage: StorageAdapter = { getItem: (k) => box[k] ?? null, setItem: (k, v) => { box[k] = v; } };
+    const lost = { ...createDefaultProfile(), collection: { jacheongbi: 4 }, runsWon: 3, ascensionUnlocked: 1 };
+    const current = { ...createDefaultProfile(), collection: { sanpan: 1 } };
+    backupProfile(storage, { schemaVersion: 1, payload: JSON.stringify(lost), source: 'local', savedAt: 100, owner: { kind: 'guest' }, profileSchema: 3 });
+    const restored = restoreBackup(storage, { profile: current, owner: { kind: 'guest' } }, 900);
+    assert(restored.ok, '복원 성공');
+    equal(restored.profile.collection, lost.collection, '잃었던 기록이 돌아옴');
+    // 복원이 또 다른 소실이 되면 안 된다 — 방금 밀려난 기록이 백업에 들어가야 한다.
+    const swapped = readBackup(storage);
+    assert(swapped !== null && swapped.savedAt === 900, '현재 기록이 새 백업으로 교체');
+    equal(JSON.parse(swapped.payload).collection, current.collection, '밀려난 기록 보존');
+    assert(JSON.parse(box['bonpuri_profile_v1']).collection.jacheongbi === 4, '프로필 키에 복원본 저장');
+  }],
+  ['90 복원 실패 시 현재 기록을 건드리지 않음', () => {
+    const box: Record<string, string> = { bonpuri_profile_v1: JSON.stringify(createDefaultProfile()) };
+    const storage: StorageAdapter = { getItem: (k) => box[k] ?? null, setItem: (k, v) => { box[k] = v; } };
+    assert(!restoreBackup(storage, null, 1).ok, '백업 없으면 실패');
+    box[PROFILE_BACKUP_KEY] = JSON.stringify({ schemaVersion: 1, payload: '{', source: 'local', savedAt: 1, owner: { kind: 'guest' }, profileSchema: 3 });
+    assert(!restoreBackup(storage, null, 1).ok, '깨진 백업이면 실패');
+    equal(JSON.parse(box['bonpuri_profile_v1']), createDefaultProfile(), '프로필 무변경');
+  }],
+  ['91 localStorage 실패는 메타·백업·복원 모두에서 실패로 전파', () => {
+    const failing: StorageAdapter = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+    assert(!writeMeta(failing, { schemaVersion: 1, owner: { kind: 'guest' }, savedAt: 1, device: 'd' }).ok, '메타 저장 실패');
+    assert(!backupProfile(failing, { schemaVersion: 1, payload: '{}', source: 'local', savedAt: 1, owner: { kind: 'guest' }, profileSchema: 3 }).ok, '백업 실패');
+    // 백업이 실패하면 복원도 진행하지 않는다 — 덮어쓰기 전에 남길 수 없으면 덮지 않는다.
+    const box: Record<string, string> = { [PROFILE_BACKUP_KEY]: JSON.stringify({ schemaVersion: 1, payload: JSON.stringify(createDefaultProfile()), source: 'local', savedAt: 1, owner: { kind: 'guest' }, profileSchema: 3 }) };
+    const halfFailing: StorageAdapter = { getItem: (k) => box[k] ?? null, setItem: () => { throw new Error('quota'); } };
+    assert(!restoreBackup(halfFailing, { profile: createDefaultProfile(), owner: { kind: 'guest' } }, 2).ok, '백업 못 하면 복원 중단');
   }],
 ];
 
