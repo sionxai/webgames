@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { battleBackground, cardArt, enemyArt } from '../content/presentation';
 import type { CardArt } from '../content/presentation';
 import type { BattleCard, BattleState, Effect, Intent } from '../core/types';
-import { previewHpDamage } from '../core/battle';
+import { currentIntent, forecastTurnEnd, type TurnEndForecast } from '../core/battle';
 import { CardView, passiveText, previewEffects } from './CardView';
 import { RulesPanel } from './RulesPanel';
 import { Tooltip } from './Tooltip';
@@ -85,13 +85,28 @@ function HealthBar({ hp, maxHp, owner }: { hp: number; maxHp: number; owner: 'en
   </div>;
 }
 
-function intentText(intent: Intent | undefined, battle: BattleState): string {
+function intentLabel(intent: Intent | undefined): string {
   if (!intent) return '행동 없음';
-  if (intent.kind === 'attack') {
-    return `공격 ${intent.amount} · 예상 명 -${previewHpDamage(battle.enemies[0], battle.player, intent.amount)}`;
-  }
+  if (intent.kind === 'attack') return `공격 ${intent.amount}`;
   if (intent.kind === 'block') return `넋 ${intent.amount}`;
   return `${intent.status} +${intent.amount}`;
+}
+
+/** 예상값은 코어의 forecastTurnEnd 하나만 쓴다. 화면이 전투 공식을 다시 구현하지 않는다. */
+function intentText(intent: Intent | undefined, forecast: TurnEndForecast): string {
+  const label = intentLabel(intent);
+  if (forecast.total <= 0) return label;
+  // 공격 의도면 '예상 명', 그 외(넋·상태부여)에서 명이 줄면 원인이 턴 종료 부정이므로 그렇게 밝힌다.
+  const prefix = intent?.kind === 'attack' ? '예상 명' : '턴 종료 예상 명';
+  return `${label} · ${prefix} -${forecast.total}`;
+}
+
+/** 명이 줄어드는 원인이 둘 이상이거나 공격이 아닐 때만 내역을 덧붙인다. */
+function intentBreakdown(forecast: TurnEndForecast): string | null {
+  if (forecast.corruption <= 0) return null;
+  const parts = [`부정 ${forecast.corruption}`];
+  if (forecast.attack > 0) parts.push(`공격 ${forecast.attack}`);
+  return parts.join(' + ');
 }
 
 export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPanelOpen, onToggleRules }: {
@@ -116,6 +131,10 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
   const fxTimer = useRef<number | undefined>();
   const portrait = enemyArt(enemy.id);
   const background = battleBackground(enemy.id);
+  // 표시할 의도와 예상값은 전부 코어에서 받는다 — 화면이 인덱스나 피해 공식을 따로 계산하지 않는다.
+  const intent = currentIntent(enemy);
+  const forecast = forecastTurnEnd(battle);
+  const breakdown = intentBreakdown(forecast);
   const activeHit = hit?.enemyId === enemy.id && hit.battleNumber === battleNumber ? hit : null;
   const hitClass = activeHit ? activeHit.key % 2 === 0 ? ' is-hit-b' : ' is-hit-a' : '';
 
@@ -193,8 +212,9 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
             <div className="vitals"><b>명 {enemy.hp} / {enemy.maxHp}</b><span>넋 {enemy.block}</span></div>
             <HealthBar hp={enemy.hp} maxHp={enemy.maxHp} owner="enemy" />
             {statuses(enemy.statuses)}
-            <button className="intent" onClick={() => setTip({ title: '적 의도', text: '다음 턴에 적이 할 행동. 공격은 현재 넋·상태를 반영한 예상 피해' })}>
-              다음 의도 <strong>{intentText(enemy.intents[enemy.intentIndex], battle)}</strong></button>
+            <button className="intent" onClick={() => setTip({ title: '적 의도', text: '다음 턴에 적이 할 행동. 예상 명은 지금 턴을 끝냈을 때 실제로 줄어드는 명이며, 턴 종료 시 부정 피해와 넋 흡수까지 반영한 값입니다' })}>
+              다음 의도 <strong>{intentText(intent, forecast)}</strong>
+              {breakdown && <small className="intent-breakdown">{breakdown}</small>}</button>
             {!portrait && activeHit && <>
               <span key={activeHit.key} className="enemy-damage enemy-damage-fallback" aria-hidden="true">-{activeHit.amount}</span>
             </>}

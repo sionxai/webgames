@@ -19,7 +19,10 @@ declare global {
 }
 
 type Screen = 'home' | 'deck' | 'run' | 'result';
-type ResultState = { won: boolean; acquired: string[]; pack: string[]; error?: string };
+type ResultState = {
+  won: boolean; acquired: string[]; pack: string[]; error?: string;
+  ascension: number; ascensionUnlockedNow: boolean; unlockedAscension: number;
+};
 
 const storage: StorageAdapter = {
   getItem: (key) => window.localStorage.getItem(key),
@@ -47,15 +50,24 @@ export default function App() {
   useEffect(() => {
     if (!run || (run.phase !== 'won' && run.phase !== 'lost') || finalized.current === run) return;
     finalized.current = run;
-    const completed = completeRunFailClosed(storage, profile, run.acquiredCardIds, run.phase === 'won', rng);
+    const completed = completeRunFailClosed(storage, profile, run.acquiredCardIds, run.phase === 'won', rng, run.ascension);
     if (completed.ok) {
       setProfile(completed.profile);
-      setResult({ won: run.phase === 'won', acquired: run.acquiredCardIds, pack: completed.pack });
+      setResult({
+        won: run.phase === 'won', acquired: run.acquiredCardIds, pack: completed.pack,
+        ascension: run.ascension,
+        ascensionUnlockedNow: completed.ascensionUnlockedNow,
+        unlockedAscension: completed.profile.ascensionUnlocked,
+      });
     } else {
+      // 저장 실패면 해금도 성립하지 않는다. 화면에 해금을 띄우지 않는다.
       setResult({
         won: run.phase === 'won',
         acquired: run.acquiredCardIds,
         pack: [],
+        ascension: run.ascension,
+        ascensionUnlockedNow: false,
+        unlockedAscension: profile.ascensionUnlocked,
         error: '기록을 저장하지 못했습니다. 획득 카드가 보관되지 않았습니다.',
       });
     }
@@ -77,7 +89,9 @@ export default function App() {
   }, [run, screen]);
 
   const start = (deck = profile.startingDeck) => {
-    setRun(startMiniRun(rng, deck));
+    // 해금 범위를 벗어난 값이 저장돼 있어도 실제 런은 안전한 단계로 시작한다.
+    const ascension = Math.max(0, Math.min(profile.ascensionSelected, profile.ascensionUnlocked));
+    setRun(startMiniRun(rng, deck, ascension));
     setResult(null);
     setScreen('run');
   };
@@ -86,10 +100,18 @@ export default function App() {
     if (saved.ok) { setProfile(candidate); setNotice(''); }
     return saved;
   };
-  if (screen === 'home') return <HomeScreen profile={profile} notice={notice} onStart={() => start()} onEdit={() => setScreen('deck')} />;
+  const selectAscension = (ascension: number) => {
+    const clamped = Math.max(0, Math.min(ascension, profile.ascensionUnlocked));
+    const saved = persist({ ...profile, ascensionSelected: clamped });
+    if (!saved.ok) setNotice(saved.error);
+  };
+  if (screen === 'home') return <HomeScreen profile={profile} notice={notice} onStart={() => start()}
+    onEdit={() => setScreen('deck')} onSelectAscension={selectAscension} />;
   if (screen === 'deck') return <DeckEditor profile={profile} onBack={() => setScreen('home')}
     onSave={(deck) => persist({ ...profile, startingDeck: deck })} onStart={start} />;
   if (screen === 'result' && result) return <EndScreen won={result.won} acquiredCardIds={result.acquired}
+    ascension={result.ascension} ascensionUnlockedNow={result.ascensionUnlockedNow}
+    unlockedAscension={result.unlockedAscension}
     pack={result.pack} saveError={result.error} onHome={() => { setRun(null); setScreen('home'); }} />;
   if (!run) return null;
   if (run.phase === 'reward') return <RewardScreen rewards={run.rewards} hp={run.playerHp}

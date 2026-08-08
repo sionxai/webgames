@@ -1,5 +1,6 @@
 import type { Rng } from '../core/rng';
 import { rewardCards } from '../content/cards';
+import { MAX_ASCENSION } from '../content/ascension';
 
 export const BONPURI_PROFILE_KEY = 'bonpuri_profile_v1';
 export const BASIC_CARD_IDS = ['sinkal', 'neokgarim', 'saseol'] as const;
@@ -10,12 +11,16 @@ export const DEFAULT_STARTING_DECK = [
 ] as const;
 
 export type BonpuriProfile = {
-  schemaVersion: 2;
+  schemaVersion: 3;
   collection: Record<string, number>;
   startingDeck: string[];
   runsCompleted: number;
   runsWon: number;
   rulesPanelOpen: boolean;
+  /** 해금된 최고 승천 단계. 0이면 아직 승천이 열리지 않았다. */
+  ascensionUnlocked: number;
+  /** 다음 런에 적용할 단계. 0 이상 ascensionUnlocked 이하. */
+  ascensionSelected: number;
 };
 
 export type StorageAdapter = {
@@ -27,14 +32,17 @@ export type LoadProfileResult =
   | { ok: true; profile: BonpuriProfile | null; migrated?: boolean }
   | { ok: false; error: string };
 export type SaveProfileResult = { ok: true } | { ok: false; error: string };
-type LegacyBonpuriProfile = Omit<BonpuriProfile, 'schemaVersion'> & { schemaVersion: 1 };
+/** v1: 10장 덱 시절. v2: 50장 덱, 승천 필드 없음. 둘 다 최신 스키마로 변환해 받아들인다. */
+type ProfileV1 = { schemaVersion: 1; collection: Record<string, number>; startingDeck: string[]; runsCompleted: number; runsWon: number; rulesPanelOpen: boolean };
+type ProfileV2 = Omit<ProfileV1, 'schemaVersion'> & { schemaVersion: 2 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export function isBonpuriProfile(value: unknown): value is BonpuriProfile {
-  if (!isRecord(value) || value.schemaVersion !== 2 || !isRecord(value.collection) ||
-    !Array.isArray(value.startingDeck) || value.startingDeck.length !== 50 ||
+/** 스키마와 무관하게 공통인 부분 — 덱 길이만 버전마다 다르다. */
+function hasCommonProfileShape(value: unknown, deckLength: number): boolean {
+  if (!isRecord(value) || !isRecord(value.collection) ||
+    !Array.isArray(value.startingDeck) || value.startingDeck.length !== deckLength ||
     !value.startingDeck.every((id) => typeof id === 'string') ||
     !Number.isInteger(value.runsCompleted) || (value.runsCompleted as number) < 0 ||
     !Number.isInteger(value.runsWon) || (value.runsWon as number) < 0 ||
@@ -42,23 +50,31 @@ export function isBonpuriProfile(value: unknown): value is BonpuriProfile {
   return Object.values(value.collection).every((count) => Number.isInteger(count) && (count as number) >= 0);
 }
 
-function isLegacyBonpuriProfile(value: unknown): value is LegacyBonpuriProfile {
-  if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.collection) ||
-    !Array.isArray(value.startingDeck) || value.startingDeck.length !== 10 ||
-    !value.startingDeck.every((id) => typeof id === 'string') ||
-    !Number.isInteger(value.runsCompleted) || (value.runsCompleted as number) < 0 ||
-    !Number.isInteger(value.runsWon) || (value.runsWon as number) < 0 ||
-    typeof value.rulesPanelOpen !== 'boolean') return false;
-  return Object.values(value.collection).every((count) => Number.isInteger(count) && (count as number) >= 0);
+export function isBonpuriProfile(value: unknown): value is BonpuriProfile {
+  if (!isRecord(value) || value.schemaVersion !== 3 || !hasCommonProfileShape(value, 50)) return false;
+  const unlocked = value.ascensionUnlocked;
+  const selected = value.ascensionSelected;
+  if (!Number.isInteger(unlocked) || (unlocked as number) < 0 || (unlocked as number) > MAX_ASCENSION) return false;
+  return Number.isInteger(selected) && (selected as number) >= 0 && (selected as number) <= (unlocked as number);
 }
+
+const isProfileV1 = (value: unknown): value is ProfileV1 =>
+  isRecord(value) && value.schemaVersion === 1 && hasCommonProfileShape(value, 10);
+const isProfileV2 = (value: unknown): value is ProfileV2 =>
+  isRecord(value) && value.schemaVersion === 2 && hasCommonProfileShape(value, 50);
+
+/** 이미 다섯 굿을 마친 기록이 있으면 승천 1을 열어 준다. 없으면 승천 0만 가능하다. */
+const unlockedFromHistory = (runsWon: number): number => (runsWon >= 1 ? 1 : 0);
 
 export const createDefaultProfile = (): BonpuriProfile => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   collection: {},
   startingDeck: [...DEFAULT_STARTING_DECK],
   runsCompleted: 0,
   runsWon: 0,
   rulesPanelOpen: true,
+  ascensionUnlocked: 0,
+  ascensionSelected: 0,
 });
 
 export function loadProfile(storage: StorageAdapter): LoadProfileResult {
@@ -67,15 +83,19 @@ export function loadProfile(storage: StorageAdapter): LoadProfileResult {
     if (raw === null) return { ok: true, profile: null };
     const profile: unknown = JSON.parse(raw);
     if (isBonpuriProfile(profile)) return { ok: true, profile };
-    if (isLegacyBonpuriProfile(profile)) {
-      const migrated: BonpuriProfile = {
+    // v1 은 덱까지 되돌아가므로 사용자에게 알린다(migrated). v2 는 덱이 그대로라 알릴 것이 없다.
+    if (isProfileV1(profile) || isProfileV2(profile)) {
+      const deckReset = isProfileV1(profile);
+      const upgraded: BonpuriProfile = {
         ...profile,
-        schemaVersion: 2,
+        schemaVersion: 3,
         collection: { ...profile.collection },
-        startingDeck: [...DEFAULT_STARTING_DECK],
+        startingDeck: deckReset ? [...DEFAULT_STARTING_DECK] : [...profile.startingDeck],
+        ascensionUnlocked: unlockedFromHistory(profile.runsWon),
+        ascensionSelected: 0,
       };
-      const saved = saveProfile(storage, migrated);
-      return saved.ok ? { ok: true, profile: migrated, migrated: true } : saved;
+      const saved = saveProfile(storage, upgraded);
+      return saved.ok ? { ok: true, profile: upgraded, migrated: deckReset ? true : undefined } : saved;
     }
     return { ok: false, error: '저장된 본풀이 기록의 형식이 올바르지 않습니다.' };
   } catch {
@@ -118,23 +138,38 @@ export function drawBonpuriPack(rng: Rng): string[] {
   return Array.from({ length: 3 }, () => rewardCards[Math.floor(rng() * rewardCards.length)].id);
 }
 
+/**
+ * 해금은 '지금 해금된 최고 단계를 이겼을 때'만 한 칸 오른다.
+ * 낮은 단계를 다시 이겨도 건너뛰지 않고, 패배하면 오르지 않으며, MAX_ASCENSION 에서 멈춘다.
+ */
+export function nextAscensionUnlocked(profile: BonpuriProfile, ranAscension: number, won: boolean): number {
+  if (!won || ranAscension !== profile.ascensionUnlocked) return profile.ascensionUnlocked;
+  return Math.min(profile.ascensionUnlocked + 1, MAX_ASCENSION);
+}
+
 export function calculateCompletedProfile(
   profile: BonpuriProfile,
   acquiredCardIds: readonly string[],
   won: boolean,
   rng: Rng,
-): { profile: BonpuriProfile; pack: string[] } {
+  ranAscension = 0,
+): { profile: BonpuriProfile; pack: string[]; ascensionUnlockedNow: boolean } {
   const pack = won ? drawBonpuriPack(rng) : [];
   const collection = { ...profile.collection };
   for (const id of [...acquiredCardIds, ...pack]) collection[id] = (collection[id] ?? 0) + 1;
+  const ascensionUnlocked = nextAscensionUnlocked(profile, ranAscension, won);
   return {
     profile: {
       ...profile,
       collection,
       runsCompleted: profile.runsCompleted + 1,
       runsWon: profile.runsWon + (won ? 1 : 0),
+      ascensionUnlocked,
+      // 선택 단계는 사용자가 고른 값을 유지하되 해금 범위를 벗어나지 않게 묶는다.
+      ascensionSelected: Math.min(profile.ascensionSelected, ascensionUnlocked),
     },
     pack,
+    ascensionUnlockedNow: ascensionUnlocked > profile.ascensionUnlocked,
   };
 }
 
@@ -144,8 +179,10 @@ export function completeRunFailClosed(
   acquiredCardIds: readonly string[],
   won: boolean,
   rng: Rng,
-): { ok: true; profile: BonpuriProfile; pack: string[] } | { ok: false; error: string } {
-  const candidate = calculateCompletedProfile(profile, acquiredCardIds, won, rng);
+  ranAscension = 0,
+): { ok: true; profile: BonpuriProfile; pack: string[]; ascensionUnlockedNow: boolean } | { ok: false; error: string } {
+  const candidate = calculateCompletedProfile(profile, acquiredCardIds, won, rng, ranAscension);
   const saved = saveProfile(storage, candidate.profile);
+  // 저장에 실패하면 해금도 없던 일이다 — 화면에 거짓 해금을 띄우지 않는다.
   return saved.ok ? { ok: true, ...candidate } : saved;
 }

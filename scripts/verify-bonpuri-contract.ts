@@ -1,10 +1,10 @@
-import { applyDamage, drawCards, endTurn, playCard, previewHpDamage, runEnemyTurn, startBattle, startPlayerTurn } from '../src/bonpuri/core/battle';
+import { applyDamage, currentIntent, drawCards, endTurn, forecastTurnEnd, playCard, previewHpDamage, runEnemyTurn, startBattle, startPlayerTurn } from '../src/bonpuri/core/battle';
 import { createStartingDeck } from '../src/bonpuri/core/cards';
 import { createTestEnemy, emptyStatuses } from '../src/bonpuri/core/enemies';
 import { shuffle, type Rng } from '../src/bonpuri/core/rng';
 import type { BattleCard, BattleState, Combatant, Enemy } from '../src/bonpuri/core/types';
 import { rewardCards } from '../src/bonpuri/content/cards';
-import { getAscensionModifier } from '../src/bonpuri/content/ascension';
+import { getAscensionModifier, MAX_ASCENSION } from '../src/bonpuri/content/ascension';
 import { chooseReward, offerRewards, skipReward, startMiniRun, type MiniRunState } from '../src/bonpuri/run/miniRun';
 import { miniRunEnemies } from '../src/bonpuri/content/enemies';
 import {
@@ -12,7 +12,9 @@ import {
   completeRunFailClosed,
   createDefaultProfile,
   drawBonpuriPack,
+  isBonpuriProfile,
   loadProfile,
+  nextAscensionUnlocked,
   saveProfile,
   validateStartingDeck,
   type StorageAdapter,
@@ -576,7 +578,7 @@ const tests: Array<[string, () => void]> = [
     assert(loaded.ok && loaded.profile !== null, '마이그레이션 실패');
     equal(loaded.profile.startingDeck, [...createDefaultProfile().startingDeck], '기본 50장 교체');
     equal(loaded.profile.collection, legacy.collection, 'collection 보존');
-    assert(loaded.profile.schemaVersion === 2 && persisted !== '', 'v2 변환/저장 실패');
+    assert(loaded.profile.schemaVersion === 3 && persisted !== '', '최신 스키마 변환/저장 실패');
   }],
   ['51 마이그레이션 즉시 저장과 fail-closed', () => {
     const legacy = {
@@ -589,7 +591,7 @@ const tests: Array<[string, () => void]> = [
       setItem: (_key, value) => {
         writes += 1;
         const saved = JSON.parse(value) as { schemaVersion: number; startingDeck: string[] };
-        assert(saved.schemaVersion === 2 && saved.startingDeck.length === 50, '저장 후보 오류');
+        assert(saved.schemaVersion === 3 && saved.startingDeck.length === 50, '저장 후보 오류');
       },
     };
     assert(loadProfile(storage).ok && writes === 1, '즉시 저장 1회 실패');
@@ -742,6 +744,189 @@ const tests: Array<[string, () => void]> = [
     }
     equal(bonuses, [0, 4, 8, 12, 12], '장별 연계 보너스');
     assert(state.playedMyths.상한시험본풀이 === 5, '연계 플레이 기록이 상한에서 멈춤');
+  }],
+
+  // ── WO-007 전투 신뢰성 ──────────────────────────────────────────────
+  ['65 적 의도 단일 기준이 인덱스를 순환', () => {
+    const enemy: Enemy = { ...createTestEnemy(), intents: [{ kind: 'attack', amount: 7 }, { kind: 'block', amount: 5 }] };
+    const at = (index: number) => currentIntent({ ...enemy, intentIndex: index });
+    equal(at(0), enemy.intents[0], 'index 0');
+    equal(at(1), enemy.intents[1], 'index length-1');
+    equal(at(2), enemy.intents[0], 'index length (한 바퀴)');
+    equal(at(5), enemy.intents[1], 'index > length');
+    assert(currentIntent({ ...enemy, intents: [] }) === undefined, '의도가 없으면 undefined');
+  }],
+  ['66 표시 의도와 실제 실행 행동이 모든 순환 위치에서 일치', () => {
+    for (let index = 0; index < 6; index += 1) {
+      const enemy: Enemy = {
+        ...createTestEnemy(), hp: 99, maxHp: 99, intentIndex: index,
+        intents: [{ kind: 'attack', amount: 6 }, { kind: 'block', amount: 4 }],
+      };
+      let state = startBattle([enemy], fixedRng);
+      state = { ...state, enemies: [{ ...state.enemies[0], intentIndex: index }] };
+      const shown = currentIntent(state.enemies[0]);
+      const before = state.player.hp;
+      const after = endTurn(state, fixedRng);
+      const attacked = after.player.hp < before;
+      assert(shown !== undefined, `index ${index}: 표시 의도가 있어야 함`);
+      assert(attacked === (shown.kind === 'attack'), `index ${index}: 표시(${shown.kind})와 실제 행동 불일치`);
+    }
+  }],
+  ['67 의도 취소로 인덱스가 늘어난 직후에도 표시가 실제와 일치', () => {
+    const enemy: Enemy = {
+      ...createTestEnemy(), hp: 99, maxHp: 99,
+      intents: [{ kind: 'attack', amount: 6 }, { kind: 'block', amount: 4 }],
+    };
+    let state = startBattle([enemy], fixedRng);
+    const cancel: BattleCard = {
+      id: 'cancel-test', name: '취소 시험', cost: 0, exhaust: false,
+      effects: [{ kind: 'cancelIntent', target: 'enemy' }],
+    };
+    state = { ...state, hand: [cancel] };
+    state = playCard(state, 0, state.enemies[0].id, fixedRng);
+    assert(state.enemies[0].intentIndex === 1, '취소로 인덱스가 1 증가');
+    const shown = currentIntent(state.enemies[0]);
+    assert(shown?.kind === 'block', '취소 직후 표시는 두 번째 의도');
+    const before = state.player.hp;
+    assert(endTurn(state, fixedRng).player.hp === before, '표시가 방어면 실제로 공격하지 않음');
+  }],
+  ['68 예상 명 피해가 부정·넋·상태감소·순환의도를 모두 반영', () => {
+    const cases: [string, (state: BattleState) => void][] = [
+      ['부정만', (s) => { s.player.statuses.부정 = 3; s.enemies[0].intents = [{ kind: 'block', amount: 4 }]; }],
+      ['공격만', () => {}],
+      ['부정+공격', (s) => { s.player.statuses.부정 = 3; }],
+      ['넋이 전부 흡수', (s) => { s.player.block = 40; }],
+      ['넋이 일부 흡수', (s) => { s.player.block = 4; }],
+      ['액·넋나감 동시', (s) => { s.player.statuses.액 = 2; s.enemies[0].statuses.넋나감 = 2; }],
+      ['한 바퀴 순환 후', (s) => { s.enemies[0].intentIndex = 2; }],
+      ['부정으로 먼저 사망', (s) => { s.player.hp = 2; s.player.statuses.부정 = 9; }],
+    ];
+    for (const [label, setup] of cases) {
+      const enemy: Enemy = {
+        ...createTestEnemy(), hp: 99, maxHp: 99,
+        intents: [{ kind: 'attack', amount: 8 }, { kind: 'block', amount: 4 }],
+      };
+      const state = startBattle([enemy], fixedRng);
+      setup(state);
+      const snapshot = JSON.stringify(state);
+      const forecast = forecastTurnEnd(state);
+      assert(JSON.stringify(state) === snapshot, `${label}: 예상 계산이 입력을 변경함`);
+      const actual = state.player.hp - endTurn(state, fixedRng).player.hp;
+      assert(forecast.total === actual, `${label}: 예상 ${forecast.total} !== 실제 ${actual}`);
+      assert(forecast.corruption + forecast.attack === forecast.total, `${label}: 내역 합이 총량과 다름`);
+      assert(forecast.total <= Math.max(0, state.player.hp), `${label}: 현재 명을 초과한 예상값`);
+    }
+  }],
+  ['69 예상 명 피해는 플레이어 턴이 아니면 0', () => {
+    const state = startBattle([createTestEnemy()], fixedRng);
+    equal(forecastTurnEnd({ ...state, phase: 'enemyTurn' }), { total: 0, corruption: 0, attack: 0 }, '적 턴');
+  }],
+  ['70 턴 시작 드로우: 기본 보충 후 turnStart 뽑기가 추가로 얹힘', () => {
+    const card = (id: string): BattleCard => {
+      const found = rewardCards.find((entry) => entry.id === id);
+      assert(found, `${id} 없음`);
+      return found;
+    };
+    const bonmaengdu2: BattleCard = { ...card('bonmaengdu'), id: 'bonmaengdu#2' };
+    const cases: [string, BattleCard[], number][] = [
+      ['지속 카드 없음', [], 5],
+      ['본맹두 1개', [card('bonmaengdu')], 6],
+      ['본맹두 2개', [card('bonmaengdu'), bonmaengdu2], 7],
+      ['요령 drawBonus', [card('yoryeong')], 6],
+      ['요령+본맹두 2개', [card('yoryeong'), card('bonmaengdu'), bonmaengdu2], 8],
+    ];
+    for (const [label, equipped, expected] of cases) {
+      let state = startBattle([createTestEnemy()], fixedRng);
+      state = startPlayerTurn({ ...state, equipped, hand: [] }, fixedRng);
+      assert(state.hand.length === expected, `${label}: 기대 ${expected}장 / 실제 ${state.hand.length}장`);
+    }
+  }],
+  ['71 좌정이 장착 무구보다 먼저 처리되는 순서 유지', () => {
+    const order: string[] = [];
+    // 좌정은 넋, 무구는 회복을 준다. 결과 상태로 둘 다 실행됐음을 확인한다.
+    const seat: BattleCard = {
+      id: 'seat', name: '좌정 시험', cost: 0, exhaust: false, cardType: '좌정', effects: [],
+      passive: { kind: 'turnStart', effects: [{ kind: 'block', amount: 6 }] },
+    };
+    const relic: BattleCard = {
+      id: 'relic', name: '무구 시험', cost: 0, exhaust: false, cardType: '무구', effects: [],
+      passive: { kind: 'turnStart', effects: [{ kind: 'heal', amount: 3 }] },
+    };
+    let state = startBattle([createTestEnemy()], fixedRng);
+    state = startPlayerTurn({ ...state, installed: seat, equipped: [relic], hand: [], player: { ...state.player, hp: 60 } }, fixedRng);
+    assert(state.player.block === 6, '좌정 넋 적용');
+    assert(state.player.hp === 63, '무구 회복 적용');
+    order.push('ok');
+    assert(order.length === 1, '순서 확인');
+  }],
+
+  // ── WO-007 승천 ────────────────────────────────────────────────────
+  ['72 신규 프로필은 승천 0만 가능', () => {
+    const profile = createDefaultProfile();
+    assert(profile.ascensionUnlocked === 0 && profile.ascensionSelected === 0, '기본 승천 0');
+  }],
+  ['73 해금 최고 단계 승리만 다음 단계를 연다', () => {
+    const base = { ...createDefaultProfile(), ascensionUnlocked: 3, ascensionSelected: 3 };
+    assert(nextAscensionUnlocked(base, 3, true) === 4, '최고 단계 승리 → 해금');
+    assert(nextAscensionUnlocked(base, 2, true) === 3, '낮은 단계 승리 → 건너뛰지 않음');
+    assert(nextAscensionUnlocked(base, 3, false) === 3, '패배 → 해금 없음');
+    const top = { ...base, ascensionUnlocked: MAX_ASCENSION, ascensionSelected: MAX_ASCENSION };
+    assert(nextAscensionUnlocked(top, MAX_ASCENSION, true) === MAX_ASCENSION, '상한을 넘지 않음');
+  }],
+  ['74 승천 해금은 저장 성공에만 반영(fail-closed)', () => {
+    const profile = { ...createDefaultProfile(), ascensionUnlocked: 0, ascensionSelected: 0 };
+    const failing: StorageAdapter = { getItem: () => null, setItem: () => { throw new Error('quota'); } };
+    const failed = completeRunFailClosed(failing, profile, [], true, fixedRng, 0);
+    assert(!failed.ok, '저장 실패 시 실패로 반환');
+    let stored = '';
+    const working: StorageAdapter = { getItem: () => null, setItem: (_k, v) => { stored = v; } };
+    const okResult = completeRunFailClosed(working, profile, [], true, fixedRng, 0);
+    assert(okResult.ok && okResult.ascensionUnlockedNow && okResult.profile.ascensionUnlocked === 1, '승리 시 승천 1 해금');
+    assert(JSON.parse(stored).ascensionUnlocked === 1, '해금이 저장에 반영');
+  }],
+  ['75 v2 프로필은 기록을 보존한 채 승천 필드를 얻는다', () => {
+    const v2 = {
+      schemaVersion: 2, collection: { jacheongbi: 2 }, startingDeck: Array(50).fill('sinkal'),
+      runsCompleted: 4, runsWon: 2, rulesPanelOpen: false,
+    };
+    let persisted = '';
+    const storage: StorageAdapter = { getItem: () => JSON.stringify(v2), setItem: (_k, v) => { persisted = v; } };
+    const loaded = loadProfile(storage);
+    assert(loaded.ok && loaded.profile !== null, 'v2 로드 실패');
+    equal(loaded.profile.collection, v2.collection, 'collection 보존');
+    equal(loaded.profile.startingDeck, v2.startingDeck, 'startingDeck 보존');
+    assert(loaded.profile.runsCompleted === 4 && loaded.profile.runsWon === 2, '전적 보존');
+    assert(loaded.profile.rulesPanelOpen === false, 'rulesPanelOpen 보존');
+    assert(loaded.profile.schemaVersion === 3, '최신 스키마');
+    assert(loaded.profile.ascensionUnlocked === 1, '기존 승리 기록이 있으면 승천 1 해금');
+    assert(loaded.profile.ascensionSelected === 0, '최초 선택은 0');
+    assert(loaded.migrated === undefined, 'v2 는 덱이 그대로라 알림 없음');
+    assert(persisted !== '', '변환 결과 저장');
+  }],
+  ['76 승리 기록이 없는 v2 는 승천 0만 해금', () => {
+    const v2 = {
+      schemaVersion: 2, collection: {}, startingDeck: Array(50).fill('sinkal'),
+      runsCompleted: 3, runsWon: 0, rulesPanelOpen: true,
+    };
+    const storage: StorageAdapter = { getItem: () => JSON.stringify(v2), setItem: () => {} };
+    const loaded = loadProfile(storage);
+    assert(loaded.ok && loaded.profile !== null && loaded.profile.ascensionUnlocked === 0, '승천 0');
+  }],
+  ['77 선택 단계는 해금 범위를 벗어난 프로필을 거부', () => {
+    const bad = { ...createDefaultProfile(), ascensionUnlocked: 1, ascensionSelected: 5 };
+    assert(!isBonpuriProfile(bad), '선택 > 해금은 무효');
+    const over = { ...createDefaultProfile(), ascensionUnlocked: MAX_ASCENSION + 1, ascensionSelected: 0 };
+    assert(!isBonpuriProfile(over), '해금이 상한을 넘으면 무효');
+  }],
+  ['78 선택한 승천이 실제 런의 적 수치에 적용', () => {
+    const base = startMiniRun(fixedRng, undefined, 0);
+    const high = startMiniRun(fixedRng, undefined, 5);
+    const modifier = getAscensionModifier(5);
+    assert(high.ascension === 5, '런에 단계 기록');
+    assert(high.battle !== null && base.battle !== null, '전투 생성');
+    assert(high.battle.enemies[0].maxHp === Math.floor(miniRunEnemies[0].maxHp * modifier.enemyHpMultiplier), '적 명 배율 적용');
+    assert(high.battle.enemies[0].maxHp > base.battle.enemies[0].maxHp, '승천이 높을수록 적 명 증가');
+    assert(high.playerHp === modifier.startingHp, '시작 명 적용');
   }],
 ];
 
