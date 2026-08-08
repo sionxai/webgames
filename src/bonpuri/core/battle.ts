@@ -1,7 +1,7 @@
 import { createStartingDeck } from './cards';
 import { emptyStatuses } from './enemies';
 import { shuffle, type Rng } from './rng';
-import type { BattleCard, BattleState, Combatant, Effect, Enemy, StatusKey, Statuses } from './types';
+import type { BattleCard, BattleState, Combatant, Effect, Enemy, Intent, StatusKey, Statuses } from './types';
 
 const STARTING_HP = 70;
 const TURN_ENERGY = 3;
@@ -99,6 +99,17 @@ export function previewHpDamage(attacker: Combatant, target: Combatant, base: nu
   return nonnegative(target.hp - after.hp);
 }
 
+/**
+ * 적이 지금 실행할 의도. intentIndex 는 계속 증가하므로 반드시 길이로 나눈 나머지를 봐야 한다.
+ * 전투 실행과 화면 표시가 이 함수 하나만 쓴다 — 둘이 각자 인덱스를 계산하면 한 바퀴 돈 뒤부터
+ * 화면은 '행동 없음'인데 실제로는 공격이 실행되는 어긋남이 생긴다.
+ */
+export function currentIntent(enemy: Enemy): Intent | undefined {
+  const length = enemy.intents.length;
+  if (length === 0) return undefined;
+  return enemy.intents[((enemy.intentIndex % length) + length) % length];
+}
+
 function determineOutcome(state: BattleState): BattleState {
   if (state.player.hp <= 0) return { ...state, phase: 'lost' };
   if (state.enemies.every((enemy) => enemy.hp <= 0)) return { ...state, phase: 'won' };
@@ -140,6 +151,15 @@ export function startPlayerTurn(state: BattleState, rng: Rng): BattleState {
       statuses: { ...next.player.statuses, 신명: 0 },
     },
   };
+  // 기본 손패를 먼저 채운 뒤에 지속 효과를 실행한다. 순서가 반대면 본맹두의 '턴 시작: 1장 뽑기'가
+  // 목표 장수까지 채우는 보충에 흡수돼 손패가 늘지 않는다(카드 문구와 실제 동작이 어긋남).
+  // drawBonus(요령)는 목표 장수 자체를 올리는 효과라 여기서 합산하고,
+  // turnStart 의 draw(본맹두)는 채운 뒤에 얹혀 순수하게 추가된다.
+  const baseHandSize = next.turn === 1 ? FIRST_HAND_SIZE : HAND_SIZE;
+  const handSize = baseHandSize + passives.reduce((sum, card) =>
+    sum + (card.passive?.kind === 'drawBonus' ? card.passive.amount : 0), 0);
+  next = drawCards(next, Math.max(0, handSize - next.hand.length), rng);
+  // 좌정 → 장착 무구 순서는 기존 그대로 유지한다.
   for (const card of passives) {
     if (card.passive?.kind === 'turnStart') {
       for (const effect of card.passive.effects) {
@@ -148,10 +168,7 @@ export function startPlayerTurn(state: BattleState, rng: Rng): BattleState {
       }
     }
   }
-  const baseHandSize = next.turn === 1 ? FIRST_HAND_SIZE : HAND_SIZE;
-  const handSize = baseHandSize + passives.reduce((sum, card) =>
-    sum + (card.passive?.kind === 'drawBonus' ? card.passive.amount : 0), 0);
-  return drawCards(next, Math.max(0, handSize - next.hand.length), rng);
+  return next;
 }
 
 export function startBattle(
@@ -326,9 +343,7 @@ export function runEnemyTurn(state: BattleState): BattleState {
     if (enemy.hp <= 0) continue;
     enemy = { ...enemy, block: 0 };
     next.enemies[index] = enemy;
-    const intent = enemy.intents.length > 0
-      ? enemy.intents[enemy.intentIndex % enemy.intents.length]
-      : undefined;
+    const intent = currentIntent(enemy);
     if (intent) {
       if (intent.kind === 'attack') {
         next = determineOutcome({ ...next, player: applyDamage(enemy, next.player, intent.amount) });
@@ -348,8 +363,12 @@ export function runEnemyTurn(state: BattleState): BattleState {
   return next;
 }
 
-export function endTurn(state: BattleState, rng: Rng): BattleState {
-  if (state.phase !== 'playerTurn') return cloneBattleState(state);
+/**
+ * 턴 종료의 결정 구간 — 손패 버림 → 부정 정산 → 상태 감소 → 적 턴.
+ * rng 를 쓰지 않아 순수하며, 그래서 예상값 계산이 이 함수를 그대로 재사용할 수 있다.
+ * 다음 턴 시작(드로우)은 여기 포함하지 않는다.
+ */
+function resolveTurnEnd(state: BattleState): BattleState {
   let next = cloneBattleState(state);
   next = {
     ...next,
@@ -360,7 +379,35 @@ export function endTurn(state: BattleState, rng: Rng): BattleState {
   next = determineOutcome(next);
   if (next.phase === 'won' || next.phase === 'lost') return next;
   next = { ...next, player: decreaseStatuses(next.player), phase: 'enemyTurn' };
-  next = runEnemyTurn(next);
+  return runEnemyTurn(next);
+}
+
+export type TurnEndForecast = {
+  /** 지금 턴을 끝냈을 때 실제로 줄어드는 명 */
+  total: number;
+  /** 그중 턴 종료 부정으로 직접 줄어드는 명 */
+  corruption: number;
+  /** 그중 적 행동으로 줄어드는 명 */
+  attack: number;
+};
+
+/**
+ * 지금 '턴 종료'를 누르면 명이 얼마나 줄어드는지 상태 변경 없이 계산한다.
+ * 실제 종료 경로(resolveTurnEnd)를 그대로 돌려 값을 재므로 규칙을 두 번 구현하지 않는다 —
+ * 부정 직접 피해, 부정 이후의 상태 감소(액·넋나감이 1 줄어든 뒤 공격이 들어온다),
+ * 순환된 실제 의도, 넋 흡수, 단계별 내림, 현재 명 상한이 저절로 반영된다.
+ */
+export function forecastTurnEnd(state: BattleState): TurnEndForecast {
+  if (state.phase !== 'playerTurn') return { total: 0, corruption: 0, attack: 0 };
+  const before = state.player.hp;
+  const corruption = nonnegative(before - settleCorruption(cloneCombatant(state.player)).hp);
+  const total = nonnegative(before - resolveTurnEnd(state).player.hp);
+  return { total, corruption, attack: nonnegative(total - corruption) };
+}
+
+export function endTurn(state: BattleState, rng: Rng): BattleState {
+  if (state.phase !== 'playerTurn') return cloneBattleState(state);
+  const next = resolveTurnEnd(state);
   if (next.phase === 'won' || next.phase === 'lost') return next;
   return startPlayerTurn(next, rng);
 }

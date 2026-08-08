@@ -57,6 +57,19 @@ small { color: #c9bda7; }
 .primary:disabled { opacity: .45; }
 .notice { padding: 10px; border: 1px solid #b94438; border-radius: 8px; color: #ffd1c9 !important; background: #6b201c55; }
 .home-summary { width: 100%; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
+/* 승천 0~10을 버튼 11개로 늘어놓으면 모바일에서 못 누른다. 단계 조절 방식으로 두고 터치 44px 확보. */
+.ascension { width: 100%; text-align: left; }
+.ascension-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ascension-step { display: flex; align-items: center; gap: 8px; }
+.ascension-step b { min-width: 74px; text-align: center; color: #e8c65a; }
+.ascension-step button { min-width: 44px; min-height: 44px; border: 1px solid #806a49; border-radius: 9px; color: #f4ead4; background: #0003; font-size: 1.2rem; font-weight: 900; cursor: pointer; }
+.ascension-step button:disabled { opacity: .35; cursor: not-allowed; }
+.ascension-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin: 11px 0 0; }
+.ascension-facts div { padding: 7px; border-radius: 7px; background: #fff1; }
+.ascension-facts dt { color: #dfc690; font-size: .7rem; }
+.ascension-facts dd { margin: 3px 0 0; font-weight: 900; font-size: .95rem; }
+.ascension-hint { margin-top: 10px; color: #c9bda7; font-size: .78rem; }
+.ascension-unlocked { width: 100%; margin-bottom: 4px; padding: 11px; border: 1px solid #e2c26c; border-radius: 9px; background: #e2c26c1f; color: #f2d16b; }
 .home-summary div { display: grid; gap: 5px; }
 .text-button { border: 0; color: #dfc690; background: transparent; }
 .deck-list { display: grid; gap: 9px; }
@@ -78,6 +91,8 @@ small { color: #c9bda7; }
 .rules-panel dt { color: #e8c65a; font-weight: 900; }
 .rules-panel dd { margin: 2px 0 0; font-size: .7rem; }
 .intent { width: 100%; color: inherit; text-align: left; border-top: 0; border-right: 0; border-bottom: 0; }
+/* 명이 줄어드는 원인이 둘 이상일 때만 뜨는 내역 줄. 값이 아니라 왜 그 값인지를 알려준다. */
+.intent-breakdown { display: block; margin-top: 3px; color: #e2a89a; font-size: .72rem; }
 .tooltip-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
 .tooltip { position: relative; width: min(100%, 340px); max-height: calc(100vh - 24px); overflow: auto; padding: 18px; border: 1px solid #e2c26c; border-radius: 12px; color: #f4ead4; background: #211c17; box-shadow: 0 8px 30px #000b; }
 .tooltip-close { position: absolute; top: 5px; right: 7px; color: #f4ead4; border: 0; background: transparent; font-size: 1.4rem; }
@@ -211,6 +226,8 @@ small { color: #c9bda7; }
   .rewards .card.has-art { min-height: 220px; }
   .enemy-layout.has-portrait { grid-template-columns: 104px minmax(0, 1fr); gap: 10px; }
   .player { grid-template-columns: 1fr; }
+  .ascension-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ascension-heading { flex-direction: column; align-items: flex-start; }
   .card { min-height: 151px; }
   .deck-row { grid-template-columns: minmax(105px, 1fr) minmax(135px, 1fr); }
   .rules-panel dl { grid-template-columns: 1fr; }
