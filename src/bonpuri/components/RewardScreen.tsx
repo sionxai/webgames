@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import type { BattleCard } from '../core/types';
 import type { RewardOffer, RemovalSummary } from '../run/miniRun';
+import { CardDetailModal } from './CardDetailModal';
 import { CardView } from './CardView';
-import { Tooltip } from './Tooltip';
 
 export function RewardScreen({ rewards, hp, onChoose, onSkip }: {
   rewards: RewardOffer[];
@@ -30,8 +30,6 @@ export function RewardScreen({ rewards, hp, onChoose, onSkip }: {
         <p>{card.name} 3장 교체 · {formatCardRemovals(card.rewardPreview?.cardRemovals ?? [])}</p>
       </div>)}</section>
     <button className="skip" onClick={onSkip}>건너뛰고 정화하기 — 명 8 회복 · {formatCleanseRemovals(preview?.cleanseRemovals ?? [])}</button>
-    {tip && <Tooltip title={tip.name} onClose={() => setTip(null)}>
-      <p>{tip.cardType ?? '신'} · {tip.bondGroup ? '같은 본풀이·계열 카드를 이미 낸 만큼 효과가 커집니다.' : '연계 없음'}</p>
-    </Tooltip>}
+    {tip && <CardDetailModal card={tip} onClose={() => setTip(null)} />}
   </main>;
 }

@@ -4,6 +4,8 @@ import { createTestEnemy, emptyStatuses } from '../src/bonpuri/core/enemies';
 import { shuffle, type Rng } from '../src/bonpuri/core/rng';
 import type { BattleCard, BattleState, Combatant, Enemy } from '../src/bonpuri/core/types';
 import { rewardCards } from '../src/bonpuri/content/cards';
+import { CARD_DETAILS, cardDetail } from '../src/bonpuri/content/cardDetails';
+import { baseCardId } from '../src/bonpuri/content/presentation';
 import { getAscensionModifier, MAX_ASCENSION } from '../src/bonpuri/content/ascension';
 import { chooseReward, offerRewards, skipReward, startMiniRun, type MiniRunState } from '../src/bonpuri/run/miniRun';
 import { miniRunEnemies } from '../src/bonpuri/content/enemies';
@@ -1193,6 +1195,29 @@ const tests: Array<[string, () => void]> = [
     assert(!restoreBackup(box.storage, null, 1).ok, '백업 없음');
     equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), createDefaultProfile(), '프로필 무변경');
     assert(recoverFromJournal(box.storage).kind === 'nothing', 'journal 없음');
+  }],
+  ['97 활성 카드 45종과 상세 원고 키가 정확히 일치', () => {
+    const activeIds = [...new Set([
+      ...createStartingDeck().map((card) => baseCardId(card.id)),
+      ...rewardCards.map((card) => baseCardId(card.id)),
+    ])].sort();
+    const detailIds = Object.keys(CARD_DETAILS).sort();
+    assert(activeIds.length === 45, `활성 카드가 45종이 아님: ${activeIds.length}`);
+    assert(detailIds.length === 45, `상세 원고가 45종이 아님: ${detailIds.length}`);
+    equal(detailIds, activeIds, '활성 카드/상세 원고 누락·초과');
+    assert(new Set(detailIds).size === detailIds.length, '상세 원고 ID 중복');
+  }],
+  ['98 상세 원고 비어있지 않음·일련번호 조회·카드 수치 불변', () => {
+    const before = JSON.stringify({ starting: createStartingDeck(), rewards: rewardCards });
+    for (const [id, detail] of Object.entries(CARD_DETAILS)) {
+      for (const [field, value] of Object.entries(detail)) {
+        assert(typeof value === 'string' && value.trim().length > 0, `${id}.${field} 비어 있음`);
+      }
+      assert(cardDetail(id) === detail, `${id} 기본 ID 조회 불일치`);
+      assert(cardDetail(`${id}#contract-17`) === detail, `${id} 일련번호 조회 불일치`);
+    }
+    assert(cardDetail('not-an-active-card') === undefined, '알 수 없는 카드에 상세 원고 반환');
+    equal(JSON.stringify({ starting: createStartingDeck(), rewards: rewardCards }), before, '상세 조회가 카드 수치 변경');
   }],
 ];
 

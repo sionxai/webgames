@@ -3,6 +3,7 @@ import { battleBackground, cardArt, enemyArt } from '../content/presentation';
 import type { CardArt } from '../content/presentation';
 import type { BattleCard, BattleState, Effect, Intent } from '../core/types';
 import { currentIntent, forecastTurnEnd, type TurnEndForecast } from '../core/battle';
+import { CardDetailModal } from './CardDetailModal';
 import { CardView, passiveText, previewEffects } from './CardView';
 import { RulesPanel } from './RulesPanel';
 import { Tooltip } from './Tooltip';
@@ -14,13 +15,6 @@ const statusHelp: Record<string, string> = {
   정성: '주는 피해 +N, 전투 내내 유지',
   신명: '다음 턴 장단 +N',
 };
-const typeHelp: Record<string, string> = {
-  신: '제약 없음',
-  무구: '장착해 전투 내내 지속',
-  굿: '턴당 1장',
-  좌정: '동시 1개, 새로 내면 교체',
-};
-
 const ENEMY_HIT_VISIBLE_MS = 700;
 const CARD_PLAY_VISIBLE_MS = 650;
 
@@ -51,6 +45,12 @@ type PlayedCard = {
   cardType: string;
   cost: number;
   art: CardArt | undefined;
+};
+
+type DetailCard = {
+  card: BattleCard;
+  stacks: number;
+  displayedCost: number;
 };
 
 function hpPercent(hp: number, maxHp: number): number {
@@ -119,6 +119,7 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
 }) {
   const enemy = battle.enemies[0];
   const [tip, setTip] = useState<{ title: string; text: string } | null>(null);
+  const [detailCard, setDetailCard] = useState<DetailCard | null>(null);
   const [hit, setHit] = useState<EnemyHit | null>(null);
   const [playedCard, setPlayedCard] = useState<PlayedCard | null>(null);
   const [fx, setFx] = useState<{ key: number; kind: FxKind; amount: number } | null>(null);
@@ -242,7 +243,11 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
             disabled={Math.max(0, card.cost - battle.costReduction) > battle.energy ||
               battle.phase !== 'playerTurn' || (card.cardType === '굿' && battle.gutPlayedThisTurn)}
             onClick={() => play(card, index)}
-            onTooltip={() => setTip({ title: card.name, text: `${typeHelp[card.cardType ?? '신']}${card.bondGroup ? ` · 연계: 같은 본풀이·계열 카드를 이미 낸 만큼 효과가 커집니다. 첫 장은 보너스 없음` : ''}` })} />
+            onTooltip={() => setDetailCard({
+              card,
+              stacks: card.bondGroup ? battle.playedMyths[card.bondGroup] ?? 0 : 0,
+              displayedCost: Math.max(0, card.cost - battle.costReduction),
+            })} />
         ))}
       </section>
       <button className="end-turn" onClick={onEndTurn}>턴 종료</button>
@@ -255,6 +260,8 @@ export function BattleScreen({ battle, battleNumber, onPlay, onEndTurn, rulesPan
       </div>}
       <RulesPanel open={rulesPanelOpen} onToggle={onToggleRules} />
       {tip && <Tooltip title={tip.title} onClose={() => setTip(null)}><p>{tip.text}</p></Tooltip>}
+      {detailCard && <CardDetailModal card={detailCard.card} stacks={detailCard.stacks}
+        displayedCost={detailCard.displayedCost} onClose={() => setDetailCard(null)} />}
     </main>
   );
 }

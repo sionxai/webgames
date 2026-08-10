@@ -528,3 +528,15 @@ Next.js custom server·Socket.IO·SQLite·iron-session 의존을 제거하고, �
 `waitdog-motion-contract.ts`와 기록 파일만 변경한다. door transition, 저장 v3,
 RNG 소비, 기존 slide 구현은 변경하지 않으며 `waitdog-sim-contract.ts`,
 `App.tsx`, `HouseCanvas.tsx`는 수정하지 않는다.
+
+## 2026-08-10 — Bonpuri 카드 상세 팝업
+
+- [x] 기존 WIP·활성 45종·전면 원화 조사
+- [x] 45종 readonly 상세 카탈로그와 base/serial 조회
+- [x] 실제 공통 뒷면 토글·8개 테마·공용 상세 대화상자
+- [x] 전투/보상 짧은 탭 보존·400ms 길게/상세 배지·덱 비활성 카드 연결
+- [x] Escape·바깥 닫기·focus trap/복귀·320px 내부 스크롤
+- [x] 45 ID/문구/일련번호/수치 불변 계약 검사
+- [x] 계약·TypeScript·빌드·브라우저 실검 및 독립 검수
+
+고정 범위: 카드 효과·비용·코어·프로필·클라우드 계약은 변경하지 않는다.
