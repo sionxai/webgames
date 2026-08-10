@@ -793,18 +793,11 @@ async function recordPvPResult(result, opponent) {
   const myUid = state.user.uid;
   const oppUid = opponent.uid;
   const currentMyStats = state.profile.pvpStats || createEmptyPvpStats();
-  const currentOppStats = opponent.rawStats || createEmptyPvpStats();
   const myStats = {
     wins: ensureNumber(currentMyStats.wins),
     losses: ensureNumber(currentMyStats.losses),
     draws: ensureNumber(currentMyStats.draws),
     history: Array.isArray(currentMyStats.history) ? [...currentMyStats.history] : []
-  };
-  const oppStats = {
-    wins: ensureNumber(currentOppStats.wins),
-    losses: ensureNumber(currentOppStats.losses),
-    draws: ensureNumber(currentOppStats.draws),
-    history: Array.isArray(currentOppStats.history) ? [...currentOppStats.history] : []
   };
   let myResult = 'draw';
   let oppResult = 'draw';
@@ -812,15 +805,12 @@ async function recordPvPResult(result, opponent) {
     myResult = 'win';
     oppResult = 'loss';
     myStats.wins += 1;
-    oppStats.losses += 1;
   } else if (result.winner && result.winner.uid === oppUid) {
     myResult = 'loss';
     oppResult = 'win';
     myStats.losses += 1;
-    oppStats.wins += 1;
   } else {
     myStats.draws += 1;
-    oppStats.draws += 1;
   }
   const historyEntryMe = {
     opponent: oppUid,
@@ -837,11 +827,8 @@ async function recordPvPResult(result, opponent) {
     timestamp: now
   };
   myStats.history = [...myStats.history, historyEntryMe].slice(-20);
-  oppStats.history = [...oppStats.history, historyEntryOpp].slice(-20);
-  state.profile.pvpStats = myStats;
   const matchId = `match_${now}`;
-  const updates = {};
-  updates[`pvpMatches/${matchId}`] = {
+  const matchPayload = {
     createdAt: now,
     playerA: myUid,
     playerB: oppUid,
@@ -849,9 +836,67 @@ async function recordPvPResult(result, opponent) {
     turns: result.turns,
     log: result.logs
   };
-  updates[`users/${myUid}/pvpStats`] = myStats;
-  updates[`users/${oppUid}/pvpStats`] = oppStats;
-  await update(ref(db), updates);
+  const permissionCodes = new Set([
+    'permission-denied',
+    'permission_denied',
+    'database/permission-denied'
+  ]);
+  const isPermissionDenied = (error) => {
+    const normalize = (value) => String(value ?? '').trim().toLowerCase();
+    const matchesPermissionCode = (value) => {
+      const normalized = normalize(value);
+      if (permissionCodes.has(normalized)) return true;
+      const messageCode = normalized.match(/^([a-z_/-]+)\s*:/)?.[1];
+      return messageCode ? permissionCodes.has(messageCode) : false;
+    };
+    return matchesPermissionCode(error?.code) || matchesPermissionCode(error?.message);
+  };
+  const loadOpponentStats = async () => {
+    const snapshot = await get(ref(db, `users/${oppUid}/pvpStats`));
+    const currentOppStats = snapshot.val() || createEmptyPvpStats();
+    const nextOppStats = {
+      wins: ensureNumber(currentOppStats.wins),
+      losses: ensureNumber(currentOppStats.losses),
+      draws: ensureNumber(currentOppStats.draws),
+      history: Array.isArray(currentOppStats.history) ? [...currentOppStats.history] : []
+    };
+    if (oppResult === 'win') {
+      nextOppStats.wins += 1;
+    } else if (oppResult === 'loss') {
+      nextOppStats.losses += 1;
+    } else {
+      nextOppStats.draws += 1;
+    }
+    nextOppStats.history = [...nextOppStats.history, historyEntryOpp].slice(-20);
+    return nextOppStats;
+  };
+  const buildFullUpdates = (oppStats) => ({
+    [`pvpMatches/${matchId}`]: matchPayload,
+    [`users/${myUid}/pvpStats`]: myStats,
+    [`users/${oppUid}/pvpStats`]: oppStats
+  });
+
+  let oppStats = await loadOpponentStats();
+  try {
+    await update(ref(db), buildFullUpdates(oppStats));
+  } catch (firstError) {
+    if (!isPermissionDenied(firstError)) throw firstError;
+    oppStats = await loadOpponentStats();
+    try {
+      await update(ref(db), buildFullUpdates(oppStats));
+    } catch (secondError) {
+      if (!isPermissionDenied(secondError)) throw secondError;
+      await update(ref(db), {
+        [`pvpMatches/${matchId}`]: matchPayload,
+        [`users/${myUid}/pvpStats`]: myStats
+      });
+      state.profile.pvpStats = myStats;
+      console.error('상대 전적 갱신 재시도에 실패했습니다.', secondError);
+      setLoadingState('상대 전적 갱신에 실패했습니다. 내 기록은 반영되었습니다.');
+      return;
+    }
+  }
+  state.profile.pvpStats = myStats;
   opponent.rawStats = oppStats;
 }
 

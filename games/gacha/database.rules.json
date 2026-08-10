@@ -12,7 +12,7 @@
           ".validate": "(!data.exists() && newData.val() === 'user') || newData.val() === data.val()"
         },
         "pvpStats": {
-          ".write": "auth != null",
+          ".write": "auth != null && (auth.uid === $uid || root.child('users').child(auth.uid).child('role').val() === 'admin' || (newData.child('wins').isNumber() && newData.child('losses').isNumber() && newData.child('draws').isNumber() && ((!data.exists() && newData.child('wins').val() >= 0 && newData.child('losses').val() >= 0 && newData.child('draws').val() >= 0 && newData.child('wins').val() + newData.child('losses').val() + newData.child('draws').val() === 1) || (data.exists() && newData.child('wins').val() >= data.child('wins').val() && newData.child('losses').val() >= data.child('losses').val() && newData.child('draws').val() >= data.child('draws').val() && newData.child('wins').val() + newData.child('losses').val() + newData.child('draws').val() === data.child('wins').val() + data.child('losses').val() + data.child('draws').val() + 1))))",
           ".validate": "newData.hasChildren(['wins','losses','draws']) && newData.child('wins').isNumber() && newData.child('losses').isNumber() && newData.child('draws').isNumber()"
         }
       }
