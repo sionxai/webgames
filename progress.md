@@ -218,6 +218,18 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
 - 기준 HEAD `4397f2b01db0927c20cec75afae177288b26fd41`; 기존 `games/**`, `public/hanpan-tokens.css`, 명세 변경은 보존.
 - `src/App.tsx`, `src/components/game/EnhancePanel.tsx`, `src/index.css`만 제품 코드 변경. `services/constants/types`는 무변경.
 - 기본 simple·localStorage 유지, 두 패널 공유 토글, 핵심 강화/매각/균열 요약, 상세 복원, 차단·경고·파괴 복구 우선 표시를 구현.
+
+## 2026-08-10 — Bonpuri 카드 상세 팝업 초안
+
+- 기준 HEAD `889f463df3028cab50f2cfa62b2310406143aa25`, 브랜치 `codex/bonpuri-card-details`, 워크트리 clean 상태에서 시작.
+- 기존 진행 흔적 확인 결과 Bonpuri 카드 상세 팝업 WIP는 없었고, 전투/보상은 길게 누르기·유형 배지 기반의 짧은 툴팁만 있었다. 덱 편집에는 상세 진입이 없었다.
+- `src/bonpuri/content/cardDetails.ts`에 카드 45종(기본 3 + 보상 42) 전건의 `story/background/tip/motif/reverse` 텍스트를 추가하고, 누락 시 모듈 로드 단계에서 실패하는 완전성 체크를 넣었다.
+- `CardDetailModal`을 새로 추가해 전면 아트 + CSS 기반 뒷면 시안 + 짧은 이야기/배경 설명/운용 팁을 한 번에 보여 주도록 구성했다.
+- `CardView`에 눈에 보이는 `정보` affordance를 추가했고, 전투/보상의 짧은 클릭 사용/선택은 유지하면서 상세는 정보 버튼·유형 배지·길게 누르기에서 열리게 했다.
+- `DeckEditor`에서도 disabled 카드에 상세 진입을 연결했다. 기존 저장/덱 검증/전투 밸런스 로직은 수정하지 않았다.
+- `Tooltip`에는 `aria-modal`, Escape 닫기, 닫기 버튼 초기 포커스를 추가했다.
+- 정적 확인: `git diff --check` exit 0, 카드 상세 45/45 완전성 스크립트 exit 0.
+- 환경 한계: 이 워크트리에는 `node_modules`가 없어 `npm run build`와 `npm run bonpuri:contract`가 각각 `tsc/esbuild: command not found`로 exit 127. 로컬 브라우저 실검도 같은 이유로 미실행.
 - 검증: TypeScript exit 0, Forge 계약 141 assertions, waitdog 계약 368 assertions, diff check exit 0. `npm run build`는 사용자 지시로 미실행.
 - 390px simple/detail, 1280px simple 2열을 육안 확인했고 가로 overflow 0. 독립 R1 Checker 최종 PASS.
 - TODO: 없음. 비차단 선택 개선으로 계열 토글 `aria-controls`를 selector 컨테이너 ID에 직접 연결할 수 있음.
@@ -341,3 +353,28 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
 - Checker 재작업: 공용 `positionDuring`의 기본 이징을 기존 quadratic으로
   복원하고, 200ms 초과 선형 옵션은 보호자 트윈 호출에만 적용해 강아지 520ms
   트윈의 기존 이징 의미를 유지했다.
+
+## 2026-08-10 — Bonpuri 카드 상세 팝업 Maker 통합
+
+- 기준 HEAD `889f463df3028cab50f2cfa62b2310406143aa25`, 시작 clean. 기존 상세 WIP는 없었다.
+- 읽기 전용 Checker가 역할을 벗어나 만든 허용 범위 초안을 Maker가 보존·통합했다.
+- `story/background/tip/motif/theme` 45종 카탈로그와 `baseCardId()` 일련번호 조회를 추가했다.
+- CSS 가상 뒷면 대신 800×1200 실제 `card-back.webp`를 앞/뒷면 토글로 연결했다.
+- 전투 상세는 현재 비용 감소·연계 스택을 반영한다. 짧은 탭은 그대로이고, 400ms 길게와
+  `유형 · 상세` 배지로 열며 덱의 비활성 카드도 상세를 연다.
+- 공용 dialog에 `aria-modal`, Escape, 바깥 닫기, 초기 초점, Tab 순환, 트리거 초점 복귀와
+  320px 단일 열/내부 스크롤을 구현했다. 8개 theme을 실제 광원·강조색에 적용했다.
+- 계약에 활성 45 ID 정확 일치, 빈 문구 0, base/serial 동일 조회, 카드 수치 불변을 추가했다.
+- 중간 확인: `git diff --check` exit 0, `npx tsc --noEmit` exit 0.
+- 최종 정적 검증: `git diff --check` exit 0, `npm run bonpuri:contract` exit 0
+  (`98/98`, 상세 계약 2건 포함), `npx tsc --noEmit` exit 0, `npm run build` exit 0
+  (Vite 1,583 modules transformed).
+- 브라우저 실검: Battle/Reward/Deck에서 상세 배지는 상태 무변경, 카드 본문은 기존 사용·선택을
+  유지했고 450ms 길게 누르기는 카드 사용 없이 상세만 열었다. 비활성 카드 상세, 앞/뒷면,
+  Escape·바깥 닫기, Tab 순환·초점 복귀, 320/375px 가로 overflow 0을 확인했다.
+- 원고 QA에서 칠성신 별 신격 혼동, 초감제 자동 탐색, 측간신·명두 시너지, turnStart 표현과
+  문화적 어조를 25개 필드에서 교정했다. 재검수 SHA-256은
+  `60328f7cf79a531699c021c90ede99afe3ad7f481d3a62853387d1e2496ff4e7`, 문제 문구 잔존 0건이다.
+- 독립 R2 Checker가 전체 산출물과 교정 문구를 재검수해 최종 `PASS`로 판정했다.
+- TODO: 없음. 상업 배포 전 기존 전면 원화와 신규 뒷면 이용권, `needsReview` 전승 11종의
+  원전·문화 전문가 검토가 필요하다.

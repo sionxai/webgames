@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { createStartingDeck } from '../core/cards';
+import type { BattleCard } from '../core/types';
 import { rewardCards } from '../content/cards';
 import { DEFAULT_STARTING_DECK, type BonpuriProfile, validateStartingDeck } from '../services/profile';
+import { CardDetailModal } from './CardDetailModal';
 import { CardView } from './CardView';
 
 const basicTemplates = createStartingDeck().filter((card, index, cards) =>
@@ -15,6 +17,7 @@ export function DeckEditor({ profile, onSave, onBack, onStart }: {
 }) {
   const [deck, setDeck] = useState([...profile.startingDeck]);
   const [error, setError] = useState('');
+  const [detailCard, setDetailCard] = useState<BattleCard | null>(null);
   const cards = [...basicTemplates, ...rewardCards.filter((card) => (profile.collection[card.id] ?? 0) > 0)];
   const count = (id: string) => deck.filter((candidate) => candidate === id).length;
   const change = (next: string[]) => {
@@ -55,7 +58,7 @@ export function DeckEditor({ profile, onSave, onBack, onStart }: {
       const id = card.id.split('#')[0];
       const owned = profile.collection[id] ?? 0;
       return <div className="deck-row" key={id}>
-        <CardView card={card} disabled />
+        <CardView card={card} disabled onTooltip={() => setDetailCard(card)} />
         <div><b>덱 {count(id)}장</b><small>{['sinkal', 'neokgarim', 'saseol'].includes(id) ? '무제한' : `보유 ${owned}장`}</small>
           <div className="deck-controls">
             <button onClick={() => remove(id, 5)} disabled={count(id) < 5}>−5</button>
@@ -71,5 +74,6 @@ export function DeckEditor({ profile, onSave, onBack, onStart }: {
     <button className="secondary" onClick={() => change([...DEFAULT_STARTING_DECK])}>기본 덱으로 되돌리기</button>
     <button className="secondary" disabled={deck.length >= 50} onClick={fillDefaults}>남는 자리 기본 카드로 채우기</button>
     <button className="primary" disabled={!validation.ok} onClick={() => onStart(deck)}>이 덱으로 런 시작</button>
+    {detailCard && <CardDetailModal card={detailCard} onClose={() => setDetailCard(null)} />}
   </main>;
 }

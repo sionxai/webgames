@@ -31,6 +31,8 @@ small { color: #c9bda7; }
 .piles { display: flex; justify-content: center; gap: 7px; padding: 4px 0 10px; color: #d7c9b1; }
 .hand, .rewards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .hand { position: relative; }
+.card-shell { position: relative; display: grid; min-width: 0; }
+.card-shell .card { width: 100%; height: 100%; }
 .card { position: relative; min-width: 0; min-height: 164px; padding: 25px 9px 10px; overflow: hidden; color: #f8f0df; text-align: left; border: 3px double var(--frame); border-radius: 10px; background: linear-gradient(160deg, color-mix(in srgb, var(--frame) 22%, #221d18), #171411 70%); box-shadow: inset 0 0 0 2px #0008; cursor: pointer; }
 .card:hover:not([aria-disabled="true"]) { transform: translateY(-2px); filter: brightness(1.15); }
 .card[aria-disabled="true"] { opacity: .4; cursor: not-allowed; filter: grayscale(.6); }
@@ -38,12 +40,13 @@ small { color: #c9bda7; }
 /* button 은 내용을 세로 가운데로 모은다. 164px 일 때는 문제가 없었지만 그림이 붙어 220px 이 되면
    글자가 그림 한복판에 뜨고 아래를 어둡게 깐 그라데이션은 빈 채로 남는다. 글자를 그 어두운 띠로 내린다. */
 .card.has-art { display: flex; flex-direction: column; justify-content: flex-end; }
-/* 유형 배지는 툴팁 클릭 대상이다. flex 기본 stretch 로 넓어지면 그 줄 전체가 카드 사용 클릭을 가로챈다. */
-.card.has-art .card-type { align-self: flex-start; }
 .card.has-art::after { content: ""; position: absolute; z-index: 1; inset: 0; pointer-events: none; background: linear-gradient(to bottom, #090806ed 0, #0b0907c9 22%, #0b090740 38%, #0b09071f 55%, #0b09078f 73%, #090806f2 100%); }
 .card-art { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
 .card.has-art .card-cost { z-index: 2; }
-.card.has-art .card-type, .card.has-art strong, .card.has-art small, .card.has-art .card-effects, .card.has-art em { position: relative; z-index: 2; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
+.card-type { position: absolute; z-index: 3; top: 6px; left: 7px; padding: 2px 5px; border: 1px solid #e2c26c88; border-radius: 999px; color: #f8f0df; background: #120f0bd9; font-size: .72rem; text-shadow: 0 1px 3px #000; }
+.card-detail-trigger { cursor: help; }
+.card-detail-affordance { color: #f2d16b; font-weight: 900; }
+.card.has-art strong, .card.has-art small, .card.has-art .card-effects, .card.has-art em { position: relative; z-index: 2; text-shadow: 0 1px 3px #000, 0 0 8px #000; }
 .card strong, .card small, .card-effects, .card em { display: block; }
 .card strong { font-size: 1rem; padding-right: 20px; }
 .card small { min-height: 34px; margin-top: 3px; font-size: .68rem; }
@@ -77,6 +80,8 @@ small { color: #c9bda7; }
 .deck-row .card { min-height: 125px; }
 .deck-row > div { display: grid; align-content: center; gap: 7px; }
 .deck-row > div button { min-height: 35px; }
+.deck-row > .card-shell { align-content: stretch; gap: 0; }
+.deck-row .card-detail-trigger { min-height: 24px; }
 .deck-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
 .deck-controls button { min-width: 0; padding: 4px; }
 .deck-count-invalid { padding: 4px 7px; border-radius: 6px; color: #ffd1c9; background: #6b201c; }
@@ -93,9 +98,36 @@ small { color: #c9bda7; }
 .intent { width: 100%; color: inherit; text-align: left; border-top: 0; border-right: 0; border-bottom: 0; }
 /* 명이 줄어드는 원인이 둘 이상일 때만 뜨는 내역 줄. 값이 아니라 왜 그 값인지를 알려준다. */
 .intent-breakdown { display: block; margin-top: 3px; color: #e2a89a; font-size: .72rem; }
-.tooltip-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 12px; background: #0008; }
-.tooltip { position: relative; width: min(100%, 340px); max-height: calc(100vh - 24px); overflow: auto; padding: 18px; border: 1px solid #e2c26c; border-radius: 12px; color: #f4ead4; background: #211c17; box-shadow: 0 8px 30px #000b; }
+.tooltip-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: 12px; background: #000b; }
+.tooltip { position: relative; width: min(100%, 340px); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px); overflow: auto; padding: 18px; border: 1px solid #e2c26c; border-radius: 12px; color: #f4ead4; background: #211c17; box-shadow: 0 8px 30px #000b; }
 .tooltip-close { position: absolute; top: 5px; right: 7px; color: #f4ead4; border: 0; background: transparent; font-size: 1.4rem; }
+.tooltip.card-detail-modal { --detail-accent: #d6bc62; --detail-glow: #8b671a55; width: min(calc(100vw - 24px), 900px); padding: 22px; border-color: var(--detail-accent); background: radial-gradient(circle at 92% 5%, var(--detail-glow), transparent 36%), linear-gradient(150deg, #292119 0, #14110e 68%); box-shadow: 0 18px 48px #000d, inset 0 0 42px var(--detail-glow); }
+.card-detail-modal > strong { display: block; margin: 0 34px 14px 0; color: var(--detail-accent); font-size: clamp(1.35rem, 3vw, 1.9rem); }
+.card-detail-theme-blade { --detail-accent: #d9e5f4 !important; --detail-glow: #547fa25c !important; }
+.card-detail-theme-field { --detail-accent: #e2c35e !important; --detail-glow: #8e722c66 !important; }
+.card-detail-theme-underworld { --detail-accent: #b99ee7 !important; --detail-glow: #4e337a66 !important; }
+.card-detail-theme-cosmos { --detail-accent: #82cad9 !important; --detail-glow: #2b738166 !important; }
+.card-detail-theme-home { --detail-accent: #e3a76d !important; --detail-glow: #88491f61 !important; }
+.card-detail-theme-sea { --detail-accent: #70cfc4 !important; --detail-glow: #176b6766 !important; }
+.card-detail-theme-ritual { --detail-accent: #ead17c !important; --detail-glow: #8b611c61 !important; }
+.card-detail-theme-earth { --detail-accent: #bdc681 !important; --detail-glow: #53632d66 !important; }
+.card-detail-layout { display: grid; grid-template-columns: minmax(220px, 270px) minmax(0, 1fr); gap: 18px; align-items: start; }
+.card-detail-previews { display: grid; justify-items: center; gap: 10px; }
+.card-detail-face { width: min(100%, 250px); aspect-ratio: 2 / 3; overflow: hidden; border: 2px solid var(--detail-accent); border-radius: 15px; background: #0d0b09; box-shadow: 0 12px 24px #000a, 0 0 22px var(--detail-glow); }
+.card-detail-face img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.card-detail-art-missing { display: grid; place-items: center; height: 100%; padding: 16px; color: var(--detail-accent); text-align: center; }
+.card-detail-side-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: min(100%, 250px); gap: 6px; }
+.card-detail-side-toggle button { min-height: 44px; border: 1px solid #806a49; border-radius: 8px; color: #f4ead4; background: #0d0b09; }
+.card-detail-side-toggle button[aria-pressed="true"] { color: #15120f; border-color: var(--detail-accent); background: var(--detail-accent); font-weight: 900; }
+.card-detail-copy { display: grid; gap: 9px; }
+.card-detail-copy section { padding: 11px 12px; border: 1px solid color-mix(in srgb, var(--detail-accent) 42%, transparent); border-radius: 11px; background: #0c0a0873; }
+.card-detail-copy h2 { margin: 0 0 5px; color: var(--detail-accent); font-size: .78rem; letter-spacing: .04em; }
+.card-detail-copy p { line-height: 1.55; }
+.card-detail-copy small { display: block; margin-top: 6px; color: #d9caaa; line-height: 1.45; }
+.card-detail-facts { display: flex; flex-wrap: wrap; gap: 6px; }
+.card-detail-facts span { padding: 4px 8px; border: 1px solid var(--detail-accent); border-radius: 999px; color: var(--detail-accent); background: #07060599; font-size: .7rem; }
+.card-detail-tip { border-left-width: 4px !important; }
+.card-detail-motif p { color: #d9caaa; font-size: .84rem; }
 .result-cards { width: 100%; }
 .centered { display: flex; flex-direction: column; justify-content: center; text-align: center; }
 .centered > p { margin-bottom: 20px; color: #cdbfa8; }
@@ -231,6 +263,11 @@ small { color: #c9bda7; }
   .card { min-height: 151px; }
   .deck-row { grid-template-columns: minmax(105px, 1fr) minmax(135px, 1fr); }
   .rules-panel dl { grid-template-columns: 1fr; }
+  .tooltip-backdrop { padding: 8px; }
+  .tooltip.card-detail-modal { width: calc(100vw - 16px); padding: 17px 12px; }
+  .card-detail-layout { grid-template-columns: 1fr; }
+  .card-detail-face { width: min(72vw, 230px); }
+  .card-detail-side-toggle { width: min(72vw, 230px); }
 }
 
 @media (prefers-reduced-motion: reduce) {

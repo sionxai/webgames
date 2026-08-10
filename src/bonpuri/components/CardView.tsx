@@ -84,23 +84,24 @@ export function CardView({ card, stacks = 0, disabled = false, displayedCost = c
   const click = () => { if (!longPressed.current && !disabled) onClick?.(); longPressed.current = false; };
   const summary = card.passive ? passiveText(card) : previewEffects(card, stacks).map(effectText).join(' · ');
   return (
-    <button className={`card card-${card.cardType ?? '신'} card-${card.id.length % 5}${art ? ' has-art' : ''}`} style={frameStyle} aria-disabled={disabled}
-      aria-label={`${card.name}, ${card.cardType ?? '신'}, 비용 ${displayedCost}, ${summary}`}
-      onPointerDown={pointerDown} onPointerUp={stopTimer} onPointerCancel={stopTimer} onClick={click}>
-      {art && <img className="card-art" src={art.src} alt="" aria-hidden="true" loading="lazy"
-        style={art.objectPosition ? { objectPosition: art.objectPosition } : undefined} />}
-      <span className="card-cost">{displayedCost}</span>
-      <span className="card-type" role={onTooltip ? 'button' : undefined} tabIndex={onTooltip ? 0 : undefined}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => { if (onTooltip) { event.stopPropagation(); onTooltip(); } }}
-        onKeyDown={(event) => { if (onTooltip && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onTooltip(); } }}>
-        {card.cardType ?? '신'}
-      </span>
-      <strong>{card.name}</strong>
-      {card.bondGroup && <small>{card.bondGroup}</small>}
-      <span className="card-effects">{summary}</span>
-      {replacingInstalled && <em>기존 좌정 교체</em>}
-      {card.bond && <em>연계 {card.bond.applyTo === 'damage' ? '피해' : '넋'} +{card.bond.perStack}{bonus > 0 ? ` → 이번 +${bonus}` : ''}</em>}
-    </button>
+    <div className="card-shell">
+      <button className={`card card-${card.cardType ?? '신'} card-${card.id.length % 5}${art ? ' has-art' : ''}`} style={frameStyle} aria-disabled={disabled}
+        aria-label={`${card.name}, ${card.cardType ?? '신'}, 비용 ${displayedCost}, ${summary}`}
+        onPointerDown={pointerDown} onPointerUp={stopTimer} onPointerCancel={stopTimer} onClick={click}>
+        {art && <img className="card-art" src={art.src} alt="" aria-hidden="true" loading="lazy"
+          style={art.objectPosition ? { objectPosition: art.objectPosition } : undefined} />}
+        <span className="card-cost">{displayedCost}</span>
+        <strong>{card.name}</strong>
+        {card.bondGroup && <small>{card.bondGroup}</small>}
+        <span className="card-effects">{summary}</span>
+        {replacingInstalled && <em>기존 좌정 교체</em>}
+        {card.bond && <em>연계 {card.bond.applyTo === 'damage' ? '피해' : '넋'} +{card.bond.perStack}{bonus > 0 ? ` → 이번 +${bonus}` : ''}</em>}
+      </button>
+      {onTooltip
+        ? <button type="button" className="card-type card-detail-trigger" aria-label={`${card.name} 상세 열기`} onClick={onTooltip}>
+          {card.cardType ?? '신'}<span className="card-detail-affordance" aria-hidden="true"> · 상세</span>
+        </button>
+        : <span className="card-type card-type-label">{card.cardType ?? '신'}</span>}
+    </div>
   );
 }
