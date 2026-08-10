@@ -17,8 +17,53 @@ import {
   nextAscensionUnlocked,
   saveProfile,
   validateStartingDeck,
+  type BonpuriProfile,
   type StorageAdapter,
 } from '../src/bonpuri/services/profile';
+import {
+  applyCloudProfile, backupProfile, canonicalProfileJson, classifyOwner, isMeaningfulProfile,
+  isSupportedEnvelope, MAX_CLOUD_PAYLOAD_LENGTH, parseCloudPayload, PROFILE_BACKUP_KEY,
+  PROFILE_JOURNAL_KEY, PROFILE_META_KEY, readBackup, readJournal, readMeta, recoverFromJournal,
+  restoreBackup, sameProfile, summarizeProfile, writeMeta,
+  type CloudStorageAdapter, type ProfileBackup, type ProfileMeta, type ProfileOwner,
+} from '../src/bonpuri/services/cloudProfile';
+import { BONPURI_PROFILE_KEY } from '../src/bonpuri/services/profile';
+
+/** 키별로 쓰기를 실패시킬 수 있는 가짜 저장소. 다중 키 쓰기의 중간 실패를 재현한다. */
+type Box = { data: Record<string, string>; failOn: Set<string>; storage: CloudStorageAdapter };
+function mkBox(): Box {
+  const data: Record<string, string> = {};
+  const failOn = new Set<string>();
+  const box: Box = {
+    data,
+    failOn,
+    storage: {
+      getItem: (key) => data[key] ?? null,
+      setItem: (key, value) => {
+        if (box.failOn.has(key)) throw new Error('quota');
+        data[key] = value;
+      },
+      removeItem: (key) => { delete data[key]; },
+    },
+  };
+  return box;
+}
+
+const mkBackup = (payload: string, meta: ProfileMeta, backedUpAt: number): ProfileBackup =>
+  ({ schemaVersion: 2, payload, source: 'local', backedUpAt, meta, profileSchema: 3 });
+
+/** 계정 B 상태에서 계정 A 의 백업을 들고 있는 상황을 만든다. */
+function seedRestore(box: Box) {
+  const targetMeta: ProfileMeta = { schemaVersion: 1, owner: { kind: 'google', uid: 'uid-A' }, savedAt: 100, device: 'dev-A' };
+  const currentMeta: ProfileMeta = { schemaVersion: 1, owner: { kind: 'google', uid: 'uid-B' }, savedAt: 200, device: 'dev-B' };
+  const targetProfile = { ...createDefaultProfile(), collection: { jacheongbi: 4 }, runsWon: 3, ascensionUnlocked: 1 };
+  const currentProfile = { ...createDefaultProfile(), collection: { sanpan: 1 } };
+  const backupPayload = JSON.stringify(targetProfile);
+  box.data[BONPURI_PROFILE_KEY] = JSON.stringify(currentProfile);
+  box.data[PROFILE_META_KEY] = JSON.stringify(currentMeta);
+  box.data[PROFILE_BACKUP_KEY] = JSON.stringify(mkBackup(backupPayload, targetMeta, 100));
+  return { current: { profile: currentProfile, meta: currentMeta }, targetProfile, targetMeta, backupPayload };
+}
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -927,6 +972,227 @@ const tests: Array<[string, () => void]> = [
     assert(high.battle.enemies[0].maxHp === Math.floor(miniRunEnemies[0].maxHp * modifier.enemyHpMultiplier), '적 명 배율 적용');
     assert(high.battle.enemies[0].maxHp > base.battle.enemies[0].maxHp, '승천이 높을수록 적 명 증가');
     assert(high.playerHp === modifier.startingHp, '시작 명 적용');
+  }],
+
+  // ── WO-009 Phase 1 클라우드 저장 · 순수 데이터 경계 ──────────────────
+  ['79 소유자 메타 왕복 — guest 도 UID 를 갖는다', () => {
+    const box = mkBox();
+    const meta: ProfileMeta = { schemaVersion: 1, owner: { kind: 'guest', uid: 'anon-1' }, savedAt: 1000, device: 'dev-1' };
+    assert(writeMeta(box.storage, meta).ok, '메타 저장');
+    equal(readMeta(box.storage), meta, '메타 왕복');
+    box.data[PROFILE_META_KEY] = '{';
+    assert(readMeta(box.storage) === null, '손상 메타는 null');
+    for (const bad of [{ kind: 'guest' }, { kind: 'google' }, { kind: 'guest', uid: '' }]) {
+      box.data[PROFILE_META_KEY] = JSON.stringify({ schemaVersion: 1, owner: bad, savedAt: 1, device: 'd' });
+      assert(readMeta(box.storage) === null, `UID 없는 ${JSON.stringify(bad)} 거부`);
+    }
+  }],
+  ['80 소유권 — 익명 UID 가 Google 연결로 유지되면 same-owner', () => {
+    const meta = (owner: ProfileOwner): ProfileMeta => ({ schemaVersion: 1, owner, savedAt: 1, device: 'd' });
+    const guest = meta({ kind: 'guest', uid: 'anon-1' });
+    equal(classifyOwner(guest, true, { kind: 'signed-in', uid: 'anon-1' }).kind, 'same-owner', 'guest UID 동일');
+    equal(classifyOwner(guest, true, { kind: 'signed-in', uid: 'google-9' }).kind, 'account-changed', 'guest UID 다름');
+    equal(classifyOwner(guest, true, { kind: 'signed-out' }).kind, 'account-changed', '로그아웃 상태');
+    equal(classifyOwner(guest, true, { kind: 'pending' }).kind, 'unresolved', '인증 확인 전');
+    equal(classifyOwner(null, true, { kind: 'signed-in', uid: 'x' }).kind, 'legacy-local', '메타 없는 기존 기록');
+    equal(classifyOwner(meta({ kind: 'legacy-local' }), true, { kind: 'signed-in', uid: 'x' }).kind, 'legacy-local', 'legacy 명시');
+    equal(classifyOwner(null, false, { kind: 'signed-in', uid: 'x' }).kind, 'no-local-record', '로컬 기록 없음');
+    const google = meta({ kind: 'google', uid: 'g-1' });
+    equal(classifyOwner(google, true, { kind: 'signed-in', uid: 'g-1' }).kind, 'same-owner', 'google 동일');
+    equal(classifyOwner(google, true, { kind: 'signed-in', uid: 'g-2' }).kind, 'account-changed', 'google 전환');
+  }],
+  ['81 의미 있는 기록 판정', () => {
+    const empty = createDefaultProfile();
+    assert(!isMeaningfulProfile(empty), '빈 기록');
+    assert(isMeaningfulProfile({ ...empty, collection: { jacheongbi: 1 } }), '획득 카드');
+    assert(isMeaningfulProfile({ ...empty, runsCompleted: 1 }), '완료 런');
+    assert(isMeaningfulProfile({ ...empty, runsWon: 1 }), '승리 기록');
+    assert(isMeaningfulProfile({ ...empty, ascensionUnlocked: 1 }), '승천 해금');
+    const deck = [...empty.startingDeck]; deck[0] = 'neokgarim';
+    assert(isMeaningfulProfile({ ...empty, startingDeck: deck }), '기본과 다른 덱');
+    assert(!isMeaningfulProfile({ ...empty, collection: { jacheongbi: 0 } }), '0장 보유는 의미 없음');
+  }],
+  ['82 payload 검증 — 정상 v3 · v1·v2 마이그레이션', () => {
+    const profile = { ...createDefaultProfile(), collection: { jacheongbi: 2 }, runsCompleted: 3, runsWon: 1, ascensionUnlocked: 1, ascensionSelected: 1 };
+    const r3 = parseCloudPayload(JSON.stringify(profile));
+    assert(r3.ok && r3.from === 3 && !r3.deckReset, 'v3 통과');
+    const v2 = { schemaVersion: 2, collection: { sanpan: 1 }, startingDeck: Array(50).fill('sinkal'), runsCompleted: 2, runsWon: 1, rulesPanelOpen: false };
+    const r2 = parseCloudPayload(JSON.stringify(v2));
+    assert(r2.ok && r2.from === 2 && !r2.deckReset && r2.profile.ascensionUnlocked === 1, 'v2 → v3 · 승천 1 해금');
+    const v1 = { schemaVersion: 1, collection: {}, startingDeck: Array(10).fill('sinkal'), runsCompleted: 0, runsWon: 0, rulesPanelOpen: true };
+    const r1 = parseCloudPayload(JSON.stringify(v1));
+    assert(r1.ok && r1.from === 1 && r1.deckReset && r1.profile.startingDeck.length === 50, 'v1 → v3 · 덱 복구');
+  }],
+  ['83 payload 거부 — 알 수 없는 collection 카드 ID', () => {
+    const base = createDefaultProfile();
+    assert(!parseCloudPayload(JSON.stringify({ ...base, collection: { not_a_card: 3 } })).ok, '가짜 ID 거부');
+    assert(!parseCloudPayload(JSON.stringify({ ...base, collection: { jacheongbi: 1, ghostcard: 2 } })).ok, '섞여 있어도 전체 거부');
+    assert(parseCloudPayload(JSON.stringify({ ...base, collection: { ghostcard: 0 } })).ok, '0장은 무시');
+    assert(parseCloudPayload(JSON.stringify({ ...base, collection: { jacheongbi: 4, sinkal: 2 } })).ok, '기본·보상 ID 허용');
+  }],
+  ['84 payload 거부 — malformed·덱·보유량·범위', () => {
+    const base = createDefaultProfile();
+    const bad: [string, unknown][] = [
+      ['문자열 아님', 42],
+      ['빈 문자열', ''],
+      ['깨진 JSON', '{'],
+      ['알 수 없는 스키마', JSON.stringify({ schemaVersion: 9, collection: {}, startingDeck: [], runsCompleted: 0, runsWon: 0, rulesPanelOpen: true })],
+      ['덱 49장', JSON.stringify({ ...base, startingDeck: Array(49).fill('sinkal') })],
+      ['덱에 없는 카드', JSON.stringify({ ...base, startingDeck: [...Array(49).fill('sinkal'), 'not_a_card'] })],
+      ['보유량 초과', JSON.stringify({ ...base, collection: { jacheongbi: 1 }, startingDeck: [...Array(48).fill('sinkal'), 'jacheongbi', 'jacheongbi'] })],
+      ['같은 카드 5장', JSON.stringify({ ...base, collection: { jacheongbi: 9 }, startingDeck: [...Array(45).fill('sinkal'), ...Array(5).fill('jacheongbi')] })],
+      ['음수 보유량', JSON.stringify({ ...base, collection: { jacheongbi: -1 } })],
+      ['승천 범위 밖', JSON.stringify({ ...base, ascensionUnlocked: 99 })],
+      ['선택 > 해금', JSON.stringify({ ...base, ascensionUnlocked: 1, ascensionSelected: 5 })],
+    ];
+    for (const [label, raw] of bad) assert(!parseCloudPayload(raw).ok, `${label}: 거부해야 함`);
+  }],
+  ['85 크기 경계 — 199,999 허용 / 200,000 이상 거부', () => {
+    // JSON 은 토큰 사이 공백을 허용한다. 여는 중괄호 뒤를 공백으로 채워 정확한 길이의 '유효한' payload 를 만든다.
+    const base = JSON.stringify(createDefaultProfile());
+    const padTo = (length: number): string => {
+      assert(length > base.length, '기준 payload 가 더 짧아야 함');
+      return `${base.slice(0, 1)}${' '.repeat(length - base.length)}${base.slice(1)}`;
+    };
+    const under = padTo(MAX_CLOUD_PAYLOAD_LENGTH - 1);
+    assert(under.length === 199_999, `경계 아래 길이 ${under.length}`);
+    assert(parseCloudPayload(under).ok, '199,999 허용');
+    const exact = padTo(MAX_CLOUD_PAYLOAD_LENGTH);
+    assert(exact.length === 200_000 && JSON.parse(exact) !== null, '200,000 은 유효 JSON');
+    assert(!parseCloudPayload(exact).ok, '200,000 거부');
+    assert(!parseCloudPayload(padTo(MAX_CLOUD_PAYLOAD_LENGTH + 1)).ok, '200,001 거부');
+  }],
+  ['86 envelope schema 는 3만 허용', () => {
+    assert(isSupportedEnvelope(3), 'schema 3 허용');
+    for (const bad of [2, 1, 4, '3', null, undefined]) assert(!isSupportedEnvelope(bad), `envelope ${String(bad)} 거부`);
+  }],
+  ['87 rulesPanelOpen 은 기기 설정 — 동일성 제외 · 적용 시 보존', () => {
+    const base = { ...createDefaultProfile(), collection: { jacheongbi: 2, sanpan: 1 } };
+    assert(sameProfile(base, { ...base, rulesPanelOpen: !base.rulesPanelOpen }), 'rulesPanelOpen 만 다르면 같은 기록');
+    assert(sameProfile(base, { ...base, collection: { sanpan: 1, jacheongbi: 2 } }), '키 순서 무관');
+    assert(!sameProfile(base, { ...base, runsWon: 1 }), '전적이 다르면 다른 기록');
+    assert(!canonicalProfileJson(base).includes('rulesPanelOpen'), '정규화에 미포함');
+    const cloud = { ...base, rulesPanelOpen: true, runsWon: 5 };
+    const local = { ...base, rulesPanelOpen: false };
+    const applied = applyCloudProfile(cloud, local);
+    assert(applied.rulesPanelOpen === false, '로컬 설정 유지');
+    assert(applied.runsWon === 5, '나머지는 클라우드 값');
+    assert(applyCloudProfile(cloud, null).rulesPanelOpen === true, '로컬이 없으면 클라우드 값');
+  }],
+  ['88 충돌 요약은 UID·원시 JSON 을 담지 않음', () => {
+    const profile = { ...createDefaultProfile(), collection: { jacheongbi: 2, sanpan: 1, mulsaek: 0 }, runsCompleted: 4, runsWon: 2, ascensionUnlocked: 2, ascensionSelected: 1 };
+    const summary = summarizeProfile(profile, 'cloud', 1700);
+    equal(summary, { source: 'cloud', cards: 3, kinds: 2, runsCompleted: 4, runsWon: 2, ascensionUnlocked: 2, deckSize: 50, savedAt: 1700 }, '요약 내용');
+    const serialized = JSON.stringify(summary);
+    for (const leak of ['uid', 'startingDeck', 'collection', 'portal/saves', 'schemaVersion']) {
+      assert(!serialized.includes(leak), `요약에 ${leak} 누출`);
+    }
+  }],
+  ['89 백업은 소유자·기기까지 함께 보관', () => {
+    const box = mkBox();
+    assert(readBackup(box.storage) === null, '백업 없음');
+    const meta: ProfileMeta = { schemaVersion: 1, owner: { kind: 'guest', uid: 'anon-A' }, savedAt: 111, device: 'dev-A' };
+    assert(backupProfile(box.storage, mkBackup(JSON.stringify(createDefaultProfile()), meta, 500)).ok, '백업 저장');
+    const read = readBackup(box.storage);
+    assert(read !== null && read.backedUpAt === 500, '백업 왕복');
+    equal(read.meta, meta, '소유자·시각·기기 보관');
+    box.data[PROFILE_BACKUP_KEY] = JSON.stringify({ ...mkBackup('x', meta, 1), payload: '' });
+    assert(readBackup(box.storage) === null, '빈 payload 거부');
+    box.data[PROFILE_BACKUP_KEY] = JSON.stringify({ ...mkBackup('{}', meta, 1), meta: { kind: 'guest' } });
+    assert(readBackup(box.storage) === null, '메타 손상 거부');
+  }],
+  ['90 A 기록을 B 상태에서 복원하면 소유자도 A 가 된다', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    const restored = restoreBackup(box.storage, st.current, 900);
+    assert(restored.ok, '복원 성공');
+    equal(restored.profile.collection, st.targetProfile.collection, 'A 기록 복원');
+    equal(restored.meta, st.targetMeta, '소유자도 A');
+    equal(readMeta(box.storage), st.targetMeta, '저장된 메타도 A — profile A + owner B 금지');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.targetProfile.collection, '프로필 키에 A');
+    const swapped = readBackup(box.storage);
+    assert(swapped !== null && swapped.backedUpAt === 900, 'B 가 새 백업');
+    equal(swapped.meta, st.current.meta, '새 백업의 소유자는 B');
+    assert(box.data[PROFILE_JOURNAL_KEY] === undefined, 'journal 정리');
+  }],
+  ['91 write 1(profile) 실패 — 원본 보존 후 재로드 복구', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    box.failOn = new Set([BONPURI_PROFILE_KEY]);
+    assert(!restoreBackup(box.storage, st.current, 900).ok, '실패로 반환');
+    const journal = readJournal(box.storage);
+    assert(journal !== null && journal.target.payload === st.backupPayload, 'journal 에 대상 보존');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.current.profile.collection, '프로필 무변경');
+    equal(readMeta(box.storage), st.current.meta, '메타 무변경 — profile B + owner A 금지');
+    box.failOn = new Set();
+    const recovered = recoverFromJournal(box.storage);
+    assert(recovered.kind === 'recovered', '복구 성공');
+    equal(recovered.profile.collection, st.targetProfile.collection, 'A 기록 도달');
+    equal(readMeta(box.storage), st.targetMeta, '소유자도 A');
+    assert(box.data[PROFILE_JOURNAL_KEY] === undefined, 'journal 정리');
+  }],
+  ['92 write 2(meta) 실패 — profile A + owner B 를 재로드가 해소', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    box.failOn = new Set([PROFILE_META_KEY]);
+    assert(!restoreBackup(box.storage, st.current, 900).ok, '실패로 반환');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.targetProfile.collection, 'profile 은 A');
+    equal(readMeta(box.storage), st.current.meta, 'meta 는 아직 B (금지 상태)');
+    assert(readJournal(box.storage) !== null, 'journal 존재');
+    box.failOn = new Set();
+    assert(recoverFromJournal(box.storage).kind === 'recovered', '복구 성공');
+    equal(readMeta(box.storage), st.targetMeta, '소유자가 A 로 정정');
+    assert(box.data[PROFILE_JOURNAL_KEY] === undefined, 'journal 정리');
+  }],
+  ['93 write 3(backup 확정) 실패 — 밀려난 기록이 journal 에 남아 복구', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    box.failOn = new Set([PROFILE_BACKUP_KEY]);
+    assert(!restoreBackup(box.storage, st.current, 900).ok, '실패로 반환');
+    const journal = readJournal(box.storage);
+    assert(journal !== null && journal.previous !== null, 'journal 에 밀려난 기록 보존');
+    equal(JSON.parse(journal.previous.payload).collection, st.current.profile.collection, '밀려난 B 보존');
+    box.failOn = new Set();
+    assert(recoverFromJournal(box.storage).kind === 'recovered', '복구 성공');
+    const backup = readBackup(box.storage);
+    assert(backup !== null, '백업 확정');
+    equal(JSON.parse(backup.payload).collection, st.current.profile.collection, 'B 가 백업으로 확정');
+    equal(backup.meta, st.current.meta, '백업 소유자 B');
+  }],
+  ['94 journal 을 쓰지 못하면 시작하지 않는다', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    box.failOn = new Set([PROFILE_JOURNAL_KEY]);
+    assert(!restoreBackup(box.storage, st.current, 900).ok, '실패로 반환');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.current.profile.collection, '프로필 무변경');
+    equal(readMeta(box.storage), st.current.meta, '메타 무변경');
+    const backup = readBackup(box.storage);
+    assert(backup !== null && backup.payload === st.backupPayload, '원본 backup 그대로');
+  }],
+  ['95 손상된 journal·backup 은 현재 기록을 건드리지 않는다', () => {
+    const box = mkBox();
+    const st = seedRestore(box);
+    box.data[PROFILE_JOURNAL_KEY] = '{';
+    assert(recoverFromJournal(box.storage).kind === 'nothing', '깨진 journal 무시');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.current.profile.collection, '프로필 무변경');
+    assert(box.data[PROFILE_JOURNAL_KEY] === undefined, '깨진 journal 정리');
+    box.data[PROFILE_JOURNAL_KEY] = JSON.stringify({
+      schemaVersion: 1, operation: 'restore', startedAt: 1,
+      target: { payload: JSON.stringify({ ...createDefaultProfile(), collection: { fakecard: 2 } }), meta: st.targetMeta },
+      previous: null, previousSource: 'local', previousProfileSchema: 3,
+    });
+    assert(recoverFromJournal(box.storage).kind === 'failed', '검증 실패 target 은 적용 안 함');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.current.profile.collection, '프로필 여전히 무변경');
+    box.data[PROFILE_BACKUP_KEY] = JSON.stringify(mkBackup('{', st.targetMeta, 1));
+    assert(!restoreBackup(box.storage, st.current, 2).ok, '깨진 백업이면 복원 실패');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]).collection, st.current.profile.collection, '프로필 무변경');
+  }],
+  ['96 복원할 백업이 없으면 아무것도 바꾸지 않는다', () => {
+    const box = mkBox();
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(createDefaultProfile());
+    assert(!restoreBackup(box.storage, null, 1).ok, '백업 없음');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), createDefaultProfile(), '프로필 무변경');
+    assert(recoverFromJournal(box.storage).kind === 'nothing', 'journal 없음');
   }],
 ];
 
