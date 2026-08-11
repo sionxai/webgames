@@ -378,3 +378,54 @@ Original prompt: 지금 무기강화 게임을 구성해 뒀는데. 경제 시�
 - 독립 R2 Checker가 전체 산출물과 교정 문구를 재검수해 최종 `PASS`로 판정했다.
 - TODO: 없음. 상업 배포 전 기존 전면 원화와 신규 뒷면 이용권, `needsReview` 전승 11종의
   원전·문화 전문가 검토가 필요하다.
+
+## 2026-08-11 — Bonpuri 계정 동기화 구현 중
+
+- Original prompt: “316종으로 하고 계정동기화 작업부터 진행해, 워크트리는 새로 만들고”
+- 기준 HEAD `124bac57aa40ef5e03eeb1df9221ae340a838974`, 브랜치
+  `codex/bonpuri-account-sync-v1`, 시작 clean.
+- 장기 목표는 신격 300종과 비신격 16종을 합친 316종으로 고정했다. 이번 배치는 카드 확장이
+  아니라 계정별 덱·보관함·전적·승천 동기화만 다룬다.
+- 인증 확인 전 로컬 프로필을 읽지 않는 게이트, guest UID owner, Google pull 우선 병합,
+  legacy/account-changed/diverged 명시 선택, UID 변경 run 폐기, stale pull guard를 연결했다.
+- profile/meta/backup/journal 일반 원자 교체 helper를 추가했다. 기존 restore는 target 전진 복구를 유지하고,
+  신규 replace는 실패 시 시작 직전 raw snapshot으로 rollback하도록 분리했다.
+- 중간 검증: 첫 TypeScript 실행에서 narrowing 오류 3건을 발견·수정했고 재실행 exit 0.
+  본풀이 계약은 기존 98건에 auth/병합/stale/원자 실패 경계 14건을 더해 `112/112` exit 0.
+- 최종 Maker 검증: `npm run bonpuri:contract` 112/112, `npm run test:rules` RTDB 에뮬레이터
+  10/10, `npx tsc --noEmit`, `npm run build`(Vite 1,586 modules), `git diff --check` 모두 exit 0.
+- React 추가 검토에서 인증 effect cleanup, stale ref, 선택 버튼 접근성, 상태 badge와 번들 경계를
+  확인했다. 계정 lifecycle 밖 전투·덱·보상·시뮬레이션 계산은 변경하지 않았다.
+- 후속 검증은 root의 공식 브라우저 실검과 독립 R3 Checker PASS까지 완료했다. 커밋·푸시·배포는 하지 않았다.
+
+### 2026-08-11 — 계정 백업 경계 표적 재작업
+
+- v1/v2 로컬 로드는 `readLocalProfileSnapshot()`의 raw read + 순수 `migrateProfile()`로 바꿨다.
+  journal 복구를 제외하면 legacy/account-changed 선택 전 profile/meta/backup/journal 쓰기는 0회다.
+- replace journal에 적용 target·정확한 rollback raw snapshot·성공 시 backup 원문을 분리했다.
+  same-owner 일상 저장과 소유자 kind 갱신은 성공 시에도 기존 계정 전환 backup을 덮지 않는다.
+- diverged/legacy에서 로컬 기록을 고르면 선택하지 않은 cloud profile과 현재 Google owner meta를
+  `source: cloud` backup으로 보존한다. cloud 선택은 계속 현재 local을 backup한다.
+- Google 첫 pull이 offline/error여도 유효한 same-owner local만 `syncReady=false` 로 열며, badge에서
+  재시도할 수 있다. legacy/account-changed/no-local 및 손상 payload는 계속 gate한다.
+- 동일 UID cloud retry는 프로필 화면만 gate로 가리고 진행 중 run/result는 보존한다. UID/인증 경계가
+  바뀔 때만 run/result를 폐기하며, retry 뒤 다른 기록을 명시 선택하면 기존대로 폐기한다.
+- 계약 5건을 추가해 선택 전 무쓰기, 일상 저장·실패 복구의 backup 보존, cloud backup, offline
+  same-owner 경계를 확인했다. 최종 Maker 검증은 Bonpuri `117/117`, RTDB `10/10`, TypeScript,
+  production build(1,586 modules), diff check 모두 exit 0이다.
+
+### 2026-08-11 — replace rollback·동일 UID retry 표적 재작업
+
+- 기존 `restoreBackup`의 target 전진 복구와 계약 91–93은 유지했다. 신규 `replace` journal만 적용
+  target, 시작 직전 profile/meta/backup raw snapshot(null 포함), 성공 시 backup target으로 분리했다.
+- replace의 profile/meta/backup 중간 실패는 즉시 원문 rollback한다. rollback도 일부 실패하면 journal을
+  남기고, 다음 로드가 target 적용 없이 원문 복원을 완결한다. 이미 원래 값인 키는 다시 쓰지 않는다.
+- 동일 UID cloud retry는 gate 중에도 진행 중 run/result를 보존하고, UID·인증 경계 변경만 폐기한다.
+- Maker 관찰: Bonpuri 계약 `119/119`, RTDB 에뮬레이터 `10/10`, TypeScript noEmit,
+  production build(1,586 modules), diff check 모두 exit 0이었고 Maker 단계에서는 판정을 보류했다.
+- root 격리 브라우저 검증에서 오프라인 동일 UID 홈→런 시작→동기화 재시도 뒤 battle phase·번호·
+  명·손패가 그대로 유지됐다(1/1). 외부 요청 0건, 콘솔 오류 0건이며 공식 웹게임 클라이언트도 exit 0이다.
+- 독립 R3 Checker는 실패 rollback, 재로드 rollback, null 기록, 동일 UID retry와 UID 변경 반례를
+  재실행해 최종 `PASS`로 판정했다.
+- 운영 메모: 첫 임시 브라우저 harness의 인증 치환이 적용되지 않아 운영 Firebase 익명 로그인 요청이
+  최대 5건 발생했을 가능성이 있다. RTDB 쓰기·Google 로그인·배포는 없었고, 운영 Auth 감사가 필요하다.
