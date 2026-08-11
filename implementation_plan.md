@@ -540,3 +540,40 @@ RNG 소비, 기존 slide 구현은 변경하지 않으며 `waitdog-sim-contract.
 - [x] 계약·TypeScript·빌드·브라우저 실검 및 독립 검수
 
 고정 범위: 카드 효과·비용·코어·프로필·클라우드 계약은 변경하지 않는다.
+
+## 2026-08-11 — Bonpuri 계정별 덱·보관함 동기화
+
+### Goal
+
+로그인 확인이 끝난 뒤에만 본풀이 프로필을 열고, 덱·보관함·전적·승천을 Firebase UID별로
+분리해 로컬과 클라우드에 안전하게 동기화한다.
+
+### Work Packages
+
+- [x] BP-S1 — auth pending/error/setup fail-closed 게이트와 guest UID 소유 메타
+- [x] BP-S2 — Google pull 후 local-only/cloud-only/same/diverged 및 legacy/account-changed 판정
+- [x] BP-S3 — sequence+UID stale pull 방지, UID 변경 시 진행 중 run/result 폐기
+- [x] BP-S4 — profile/meta/backup/journal 원자 교체와 replace 실패 지점 rollback
+- [x] BP-S5 — 명시 선택 UI, 계정 설정 링크, 동기화 상태·오프라인 재시도
+- [x] BP-S6 — 기존 98건 + 계정·병합·원자성 경계 계약 확장
+- [x] BP-S7 — 규칙·TypeScript·production build·diff 최종 검증 및 독립 R3 Checker PASS
+
+### Fixed Decisions
+
+- 장기 카드 목표는 `신격 300종 + 기본·무구·굿 등 비신격 16종 = 총 316종`이다.
+- 이번 배치는 계정 동기화만 구현한다. 316종 카드 데이터·효과·밸런스·이미지는 변경하지 않는다.
+- 인증이 확정되지 않으면 기존 계정 프로필을 읽거나 화면·자동화 상태에 노출하거나 저장하지 않는다.
+- guest는 로컬 전용이며 Firebase 익명 UID를 owner로 기록한다. 같은 UID의 Google 연결만 같은 소유자로 본다.
+- legacy-local과 account-changed는 명시 선택 전에 업로드하지 않는다. account-changed 기록의 상세는 새 계정에 표시하지 않는다.
+- Google 기록은 pull과 payload 검증을 먼저 하며, diverged 상태에서는 자동 덮어쓰지 않는다.
+- UID가 바뀌면 진행 중 런과 결과를 폐기하고 홈의 계정 선택 게이트로 돌아간다.
+- profile schema v3, 전투·덱·보상 계약, 공용 cloudSave와 RTDB 규칙은 변경하지 않는다.
+
+### Checker 표적 재작업 반영
+
+- [x] 선택 전 v1/v2 raw read 무쓰기와 deckReset 알림 유지
+- [x] same-owner replace 실패 시 raw snapshot rollback + 계정 전환 backup 보존
+- [x] 로컬 선택 시 선택하지 않은 cloud profile/Google owner backup
+- [x] pull offline/error에서 same-owner local-only 진입, 그 외 gate 유지
+- [x] 동일 UID cloud retry에서 진행 중 run/result 보존, UID 변경만 폐기
+- [x] 계약 119/119·RTDB 10/10·TypeScript·build·diff 재검증

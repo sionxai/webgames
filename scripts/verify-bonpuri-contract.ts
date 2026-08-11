@@ -25,24 +25,39 @@ import {
 import {
   applyCloudProfile, backupProfile, canonicalProfileJson, classifyOwner, isMeaningfulProfile,
   isSupportedEnvelope, MAX_CLOUD_PAYLOAD_LENGTH, parseCloudPayload, PROFILE_BACKUP_KEY,
-  PROFILE_JOURNAL_KEY, PROFILE_META_KEY, readBackup, readJournal, readMeta, recoverFromJournal,
-  restoreBackup, sameProfile, summarizeProfile, writeMeta,
+  PROFILE_JOURNAL_KEY, PROFILE_META_KEY, readBackup, readJournal, readLocalProfileSnapshot, readMeta, recoverFromJournal,
+  replaceProfileRecord, restoreBackup, sameProfile, summarizeProfile, writeMeta,
   type CloudStorageAdapter, type ProfileBackup, type ProfileMeta, type ProfileOwner,
 } from '../src/bonpuri/services/cloudProfile';
+import {
+  authAccessPolicy, canOpenLocalAfterCloudFailure, canPushProfile, createProfileMeta, decideCloudMerge, isCurrentSyncAttempt,
+  shouldDiscardAccountSession, syncSessionAction,
+} from '../src/bonpuri/services/cloudSync';
+import type { CloudSaveRecord } from '../src/lib/cloudSave';
 import { BONPURI_PROFILE_KEY } from '../src/bonpuri/services/profile';
 
-/** 키별로 쓰기를 실패시킬 수 있는 가짜 저장소. 다중 키 쓰기의 중간 실패를 재현한다. */
-type Box = { data: Record<string, string>; failOn: Set<string>; storage: CloudStorageAdapter };
+/** 키별·쓰기 순번별로 실패시킬 수 있는 가짜 저장소. commit과 rollback의 서로 다른 실패를 재현한다. */
+type Box = {
+  data: Record<string, string>;
+  failOn: Set<string>;
+  failAt: Record<string, Set<number>>;
+  writeCounts: Record<string, number>;
+  storage: CloudStorageAdapter;
+};
 function mkBox(): Box {
   const data: Record<string, string> = {};
   const failOn = new Set<string>();
   const box: Box = {
     data,
     failOn,
+    failAt: {},
+    writeCounts: {},
     storage: {
       getItem: (key) => data[key] ?? null,
       setItem: (key, value) => {
-        if (box.failOn.has(key)) throw new Error('quota');
+        const count = (box.writeCounts[key] ?? 0) + 1;
+        box.writeCounts[key] = count;
+        if (box.failOn.has(key) || box.failAt[key]?.has(count)) throw new Error('quota');
         data[key] = value;
       },
       removeItem: (key) => { delete data[key]; },
@@ -1152,7 +1167,7 @@ const tests: Array<[string, () => void]> = [
     box.failOn = new Set([PROFILE_BACKUP_KEY]);
     assert(!restoreBackup(box.storage, st.current, 900).ok, '실패로 반환');
     const journal = readJournal(box.storage);
-    assert(journal !== null && journal.previous !== null, 'journal 에 밀려난 기록 보존');
+    assert(journal !== null && journal.operation === 'restore' && journal.previous !== null, 'journal 에 밀려난 기록 보존');
     equal(JSON.parse(journal.previous.payload).collection, st.current.profile.collection, '밀려난 B 보존');
     box.failOn = new Set();
     assert(recoverFromJournal(box.storage).kind === 'recovered', '복구 성공');
@@ -1218,6 +1233,307 @@ const tests: Array<[string, () => void]> = [
     }
     assert(cardDetail('not-an-active-card') === undefined, '알 수 없는 카드에 상세 원고 반환');
     equal(JSON.stringify({ starting: createStartingDeck(), rewards: rewardCards }), before, '상세 조회가 카드 수치 변경');
+  }],
+  ['99 auth pending/error/setup 은 로컬 read·display·write 모두 차단', () => {
+    equal(authAccessPolicy({ kind: 'pending' }),
+      { canReadLocal: false, canDisplayProfile: false, canWriteLocal: false }, 'pending');
+    equal(authAccessPolicy({ kind: 'blocked', reason: 'error' }),
+      { canReadLocal: false, canDisplayProfile: false, canWriteLocal: false }, 'auth error');
+    equal(authAccessPolicy({ kind: 'blocked', reason: 'setup-required' }),
+      { canReadLocal: false, canDisplayProfile: false, canWriteLocal: false }, 'setup required');
+    equal(authAccessPolicy({ kind: 'guest', uid: 'anon-1' }),
+      { canReadLocal: true, canDisplayProfile: true, canWriteLocal: true }, 'guest resolved');
+  }],
+  ['100 신규 guest 는 UID 소유 메타를 얻고 cloud push 대상이 아님', () => {
+    const auth = { kind: 'guest' as const, uid: 'anon-1' };
+    const meta = createProfileMeta(auth, 10, 'dev-1');
+    equal(meta.owner, { kind: 'guest', uid: 'anon-1' }, 'guest owner');
+    assert(!canPushProfile(auth, meta, true, false), 'guest cloud push 차단');
+  }],
+  ['101 guest→Google 동일 UID 는 owner 전환 뒤에만 자동 push 가능', () => {
+    const google = { kind: 'google' as const, uid: 'same-uid' };
+    const guestMeta = createProfileMeta({ kind: 'guest', uid: 'same-uid' }, 1, 'dev-1');
+    const googleMeta = createProfileMeta(google, 2, 'dev-1');
+    assert(!canPushProfile(google, guestMeta, true, false), 'guest 메타인 동안 push 금지');
+    assert(canPushProfile(google, googleMeta, true, false), '원자 owner 전환 뒤 push 허용');
+    assert(!canPushProfile(google, googleMeta, false, false), 'pull 전 push 금지');
+  }],
+  ['102 legacy/account-changed·명시 선택 중에는 업로드 불가', () => {
+    const auth = { kind: 'google' as const, uid: 'uid-B' };
+    const metaB = createProfileMeta(auth, 2, 'dev-B');
+    const metaA = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    assert(!canPushProfile(auth, null, true, false), 'legacy meta 없음');
+    assert(!canPushProfile(auth, metaA, true, false), '다른 계정 owner');
+    assert(!canPushProfile(auth, metaB, true, true), '선택 대기');
+  }],
+  ['103 Google 병합 판정 — empty/local-only/cloud-only/same/diverged', () => {
+    const local = { ...createDefaultProfile(), collection: { jacheongbi: 1 } };
+    const cloud = { ...createDefaultProfile(), collection: { sanpan: 2 } };
+    const record = (profile: BonpuriProfile): CloudSaveRecord => ({
+      payload: JSON.stringify(profile), updatedAt: 100, schema: 3, device: 'cloud001',
+    });
+    assert(decideCloudMerge(null, null).kind === 'empty', 'empty');
+    assert(decideCloudMerge(local, null).kind === 'local-only', 'local-only');
+    assert(decideCloudMerge(null, record(cloud)).kind === 'cloud-only', 'cloud-only');
+    assert(decideCloudMerge(local, record({ ...local, rulesPanelOpen: !local.rulesPanelOpen })).kind === 'same', 'same');
+    assert(decideCloudMerge(local, record(cloud)).kind === 'diverged', 'diverged');
+  }],
+  ['104 손상·미지원 cloud 는 로컬 적용 없이 거부', () => {
+    const base: CloudSaveRecord = { payload: '{', updatedAt: 1, schema: 3, device: 'cloud001' };
+    assert(decideCloudMerge(createDefaultProfile(), base).kind === 'invalid-cloud', '깨진 payload');
+    assert(decideCloudMerge(createDefaultProfile(), { ...base, payload: JSON.stringify(createDefaultProfile()), schema: 2 }).kind === 'invalid-cloud', '미지원 envelope');
+    assert(decideCloudMerge(createDefaultProfile(), { ...base, payload: JSON.stringify({ ...createDefaultProfile(), collection: { fakecard: 1 } }) }).kind === 'invalid-cloud', '알 수 없는 카드');
+  }],
+  ['105 stale pull 은 sequence와 UID 중 하나라도 바뀌면 무시', () => {
+    const auth = { kind: 'google' as const, uid: 'uid-A' };
+    assert(isCurrentSyncAttempt(4, 4, 'uid-A', auth), '현재 pull');
+    assert(!isCurrentSyncAttempt(3, 4, 'uid-A', auth), '이전 sequence');
+    assert(!isCurrentSyncAttempt(4, 4, 'uid-B', auth), '기대 UID 불일치');
+    assert(!isCurrentSyncAttempt(4, 4, 'uid-A', { kind: 'google', uid: 'uid-B' }), '현재 계정 변경');
+    assert(!isCurrentSyncAttempt(4, 4, 'uid-A', { kind: 'pending' }), 'auth pending 전환');
+  }],
+  ['106 계정 UID 변경/인증 불명은 진행 중 런 폐기 결정', () => {
+    assert(!shouldDiscardAccountSession(null, { kind: 'google', uid: 'uid-A' }), '첫 계정은 폐기 대상 없음');
+    assert(!shouldDiscardAccountSession('uid-A', { kind: 'google', uid: 'uid-A' }), '같은 UID 유지');
+    assert(!shouldDiscardAccountSession('uid-A', { kind: 'guest', uid: 'uid-A' }), '같은 UID 연결 유지');
+    assert(shouldDiscardAccountSession('uid-A', { kind: 'google', uid: 'uid-B' }), 'A→B');
+    assert(shouldDiscardAccountSession('uid-A', { kind: 'pending' }), '인증 불명');
+    assert(syncSessionAction('uid-A', { kind: 'google', uid: 'uid-A' }, true) === 'hide', 'same UID retry는 run 보존·화면만 gate');
+    assert(syncSessionAction('uid-A', { kind: 'google', uid: 'uid-B' }, true) === 'discard', 'retry 중 UID 변경은 run 폐기');
+  }],
+  ['107 일반 원자 교체는 profile+meta를 함께 바꾸고 이전 기록을 backup', () => {
+    const box = mkBox();
+    const oldProfile = { ...createDefaultProfile(), collection: { jacheongbi: 1 } };
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 10, 'dev-A');
+    const nextProfile = { ...createDefaultProfile(), collection: { sanpan: 2 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 20, 'dev-B');
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(oldProfile);
+    box.data[PROFILE_META_KEY] = JSON.stringify(oldMeta);
+    const changed = replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta },
+      { profile: oldProfile, meta: oldMeta }, 20);
+    assert(changed.ok, '교체 성공');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), nextProfile, 'profile B');
+    equal(readMeta(box.storage), nextMeta, 'meta B');
+    const backup = readBackup(box.storage);
+    assert(backup !== null, 'A backup');
+    equal(JSON.parse(backup.payload), oldProfile, 'backup profile A');
+    equal(backup.meta, oldMeta, 'backup owner A');
+    assert(readJournal(box.storage) === null, 'journal 정리');
+  }],
+  ['108 legacy 원자 교체는 이전 기록을 legacy-local owner로 백업', () => {
+    const box = mkBox();
+    const legacy = { ...createDefaultProfile(), collection: { jacheongbi: 3 } };
+    const next = createDefaultProfile();
+    const meta = createProfileMeta({ kind: 'guest', uid: 'anon-new' }, 30, 'dev-new');
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(legacy);
+    const changed = replaceProfileRecord(box.storage, { profile: next, meta }, { profile: legacy, meta: null }, 30);
+    assert(changed.ok, 'legacy 교체');
+    const backup = readBackup(box.storage);
+    assert(backup?.meta.owner.kind === 'legacy-local', 'legacy owner 보존');
+  }],
+  ['109 replace profile 실패는 원 profile/meta/backup 원문으로 즉시 rollback', () => {
+    const box = mkBox();
+    const oldProfile = createDefaultProfile();
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const nextProfile = { ...oldProfile, collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 2, 'dev-A');
+    const oldProfileRaw = `${JSON.stringify(oldProfile)} `;
+    const oldMetaRaw = ` ${JSON.stringify(oldMeta)}`;
+    box.data[BONPURI_PROFILE_KEY] = oldProfileRaw;
+    box.data[PROFILE_META_KEY] = oldMetaRaw;
+    box.failOn = new Set([BONPURI_PROFILE_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta }, { profile: oldProfile, meta: oldMeta }, 2).ok, '실패 반환');
+    assert(box.data[BONPURI_PROFILE_KEY] === oldProfileRaw, 'profile 원문 복원');
+    assert(box.data[PROFILE_META_KEY] === oldMetaRaw, 'meta 원문 복원');
+    assert(box.data[PROFILE_BACKUP_KEY] === undefined, 'backup null 복원');
+    assert(readJournal(box.storage) === null, '즉시 rollback 뒤 journal 정리');
+  }],
+  ['110 replace meta 실패는 이미 원래 meta인 키를 다시 쓰지 않고 즉시 rollback', () => {
+    const box = mkBox();
+    const oldProfile = createDefaultProfile();
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackup = mkBackup(JSON.stringify({ ...oldProfile, collection: { jacheongbi: 2 } }), oldMeta, 1);
+    const nextProfile = { ...oldProfile, collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    const oldProfileRaw = ` ${JSON.stringify(oldProfile)}`;
+    const oldMetaRaw = `${JSON.stringify(oldMeta)} `;
+    const oldBackupRaw = ` ${JSON.stringify(protectedBackup)} `;
+    box.data[BONPURI_PROFILE_KEY] = oldProfileRaw;
+    box.data[PROFILE_META_KEY] = oldMetaRaw;
+    box.data[PROFILE_BACKUP_KEY] = oldBackupRaw;
+    box.failOn = new Set([PROFILE_META_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta }, { profile: oldProfile, meta: oldMeta }, 2).ok, '실패 반환');
+    assert(box.data[BONPURI_PROFILE_KEY] === oldProfileRaw, 'profile 원문 복원');
+    assert(box.data[PROFILE_META_KEY] === oldMetaRaw, '실패 주입 meta 원문 유지');
+    assert(box.data[PROFILE_BACKUP_KEY] === oldBackupRaw, 'backup 원문 유지');
+    assert(readJournal(box.storage) === null, '즉시 rollback 뒤 journal 정리');
+  }],
+  ['111 replace backup 실패는 profile/meta/backup을 모두 원문으로 즉시 rollback', () => {
+    const box = mkBox();
+    const oldProfile = { ...createDefaultProfile(), collection: { jacheongbi: 1 } };
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackup = mkBackup(JSON.stringify({ ...oldProfile, runsCompleted: 4 }), oldMeta, 1);
+    const nextProfile = createDefaultProfile();
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    const oldProfileRaw = `${JSON.stringify(oldProfile)} `;
+    const oldMetaRaw = ` ${JSON.stringify(oldMeta)}`;
+    const oldBackupRaw = `${JSON.stringify(protectedBackup)} `;
+    box.data[BONPURI_PROFILE_KEY] = oldProfileRaw;
+    box.data[PROFILE_META_KEY] = oldMetaRaw;
+    box.data[PROFILE_BACKUP_KEY] = oldBackupRaw;
+    box.failOn = new Set([PROFILE_BACKUP_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta }, { profile: oldProfile, meta: oldMeta }, 2).ok, '실패 반환');
+    assert(box.data[BONPURI_PROFILE_KEY] === oldProfileRaw, 'profile 원문 복원');
+    assert(box.data[PROFILE_META_KEY] === oldMetaRaw, 'meta 원문 복원');
+    assert(box.data[PROFILE_BACKUP_KEY] === oldBackupRaw, 'backup 원문 복원');
+    assert(readJournal(box.storage) === null, '즉시 rollback 뒤 journal 정리');
+  }],
+  ['112 replace journal 실패는 profile/meta/backup을 전혀 변경하지 않음', () => {
+    const box = mkBox();
+    const oldProfile = createDefaultProfile();
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const nextProfile = { ...oldProfile, collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 2, 'dev-A');
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(oldProfile);
+    box.data[PROFILE_META_KEY] = JSON.stringify(oldMeta);
+    box.failOn = new Set([PROFILE_JOURNAL_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta }, { profile: oldProfile, meta: oldMeta }, 2).ok, '실패 반환');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), oldProfile, 'profile 불변');
+    equal(readMeta(box.storage), oldMeta, 'meta 불변');
+    assert(readBackup(box.storage) === null, 'backup 불변');
+  }],
+  ['113 소유권 판정 전 v1/v2 raw read는 메모리 변환만 하고 어떤 키도 쓰지 않음', () => {
+    const samples = [
+      { schemaVersion: 1, collection: { jacheongbi: 1 }, startingDeck: Array(10).fill('sinkal'), runsCompleted: 1, runsWon: 0, rulesPanelOpen: true },
+      { schemaVersion: 2, collection: { sanpan: 1 }, startingDeck: Array(50).fill('sinkal'), runsCompleted: 2, runsWon: 1, rulesPanelOpen: false },
+    ];
+    for (const sample of samples) {
+      let writes = 0;
+      const storage: StorageAdapter = {
+        getItem: (key) => key === BONPURI_PROFILE_KEY ? JSON.stringify(sample) : null,
+        setItem: () => { writes += 1; },
+      };
+      const read = readLocalProfileSnapshot(storage);
+      assert(read.ok && read.local.profile?.schemaVersion === 3, `v${sample.schemaVersion} 메모리 변환`);
+      assert(read.ok && read.local.needsMigration, `v${sample.schemaVersion} migration 표시`);
+      assert(read.ok && read.local.migrated === (sample.schemaVersion === 1), `v${sample.schemaVersion} deckReset 알림`);
+      assert(writes === 0, `v${sample.schemaVersion} 선택 전 쓰기 ${writes}회`);
+    }
+  }],
+  ['114 same-owner 일상 저장은 계정 전환 backup을 덮지 않음', () => {
+    const box = mkBox();
+    const protectedProfile = { ...createDefaultProfile(), collection: { jacheongbi: 4 } };
+    const protectedMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackup = mkBackup(JSON.stringify(protectedProfile), protectedMeta, 1);
+    const current = createDefaultProfile();
+    const currentMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    const next = { ...current, collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 3, 'dev-B');
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(current);
+    box.data[PROFILE_META_KEY] = JSON.stringify(currentMeta);
+    box.data[PROFILE_BACKUP_KEY] = JSON.stringify(protectedBackup);
+    assert(replaceProfileRecord(box.storage, { profile: next, meta: nextMeta },
+      { profile: current, meta: currentMeta }, 3, { backupPrevious: false }).ok, '일상 저장');
+    equal(readBackup(box.storage), protectedBackup, 'A backup 보존');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), next, 'B 저장 반영');
+  }],
+  ['115 same-owner 일상 저장 실패는 rollback하고 기존 backup 원문 보존', () => {
+    const box = mkBox();
+    const protectedProfile = { ...createDefaultProfile(), collection: { jacheongbi: 2 } };
+    const protectedMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackup = mkBackup(JSON.stringify(protectedProfile), protectedMeta, 1);
+    const current = createDefaultProfile();
+    const currentMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    const next = { ...current, collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 3, 'dev-B');
+    const currentRaw = `${JSON.stringify(current)} `;
+    const currentMetaRaw = ` ${JSON.stringify(currentMeta)}`;
+    const protectedBackupRaw = `${JSON.stringify(protectedBackup)} `;
+    box.data[BONPURI_PROFILE_KEY] = currentRaw;
+    box.data[PROFILE_META_KEY] = currentMetaRaw;
+    box.data[PROFILE_BACKUP_KEY] = protectedBackupRaw;
+    box.failOn = new Set([PROFILE_META_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: next, meta: nextMeta },
+      { profile: current, meta: currentMeta }, 3, { backupPrevious: false }).ok, '중간 실패');
+    assert(box.data[BONPURI_PROFILE_KEY] === currentRaw, 'B profile rollback');
+    assert(box.data[PROFILE_META_KEY] === currentMetaRaw, 'B meta rollback');
+    assert(box.data[PROFILE_BACKUP_KEY] === protectedBackupRaw, 'A backup 원문 보존');
+    assert(readJournal(box.storage) === null, 'rollback 뒤 journal 정리');
+  }],
+  ['116 로컬 선택은 선택하지 않은 cloud profile+현재 Google owner를 backup', () => {
+    const box = mkBox();
+    const local = { ...createDefaultProfile(), collection: { jacheongbi: 1 } };
+    const cloud = { ...createDefaultProfile(), collection: { sanpan: 3 }, runsCompleted: 5, runsWon: 2 };
+    const localMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 10, 'local-B');
+    const cloudMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 20, 'cloud001');
+    const targetMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 30, 'local-B');
+    box.data[BONPURI_PROFILE_KEY] = JSON.stringify(local);
+    box.data[PROFILE_META_KEY] = JSON.stringify(localMeta);
+    assert(replaceProfileRecord(box.storage, { profile: local, meta: targetMeta },
+      { profile: local, meta: localMeta }, 30,
+      { backupRecord: { profile: cloud, meta: cloudMeta }, previousSource: 'cloud' }).ok, '로컬 선택');
+    const backup = readBackup(box.storage);
+    assert(backup !== null && backup.source === 'cloud', 'cloud source backup');
+    equal(JSON.parse(backup.payload), cloud, '선택하지 않은 cloud profile');
+    equal(backup.meta, cloudMeta, '현재 Google owner meta');
+    equal(JSON.parse(box.data[BONPURI_PROFILE_KEY]), local, '선택한 local 유지');
+  }],
+  ['117 cloud 실패 시 same-owner local만 로컬 전용으로 열고 push는 차단', () => {
+    const same = { kind: 'same-owner' as const };
+    assert(canOpenLocalAfterCloudFailure(same, true, true), 'same-owner 유효 local');
+    assert(!canOpenLocalAfterCloudFailure({ kind: 'legacy-local' }, true, false), 'legacy gate');
+    assert(!canOpenLocalAfterCloudFailure({ kind: 'account-changed' }, true, true), 'account-changed gate');
+    assert(!canOpenLocalAfterCloudFailure({ kind: 'no-local-record' }, false, false), 'no-local gate');
+    const auth = { kind: 'google' as const, uid: 'uid-B' };
+    const meta = createProfileMeta(auth, 1, 'dev-B');
+    assert(!canPushProfile(auth, meta, false, false), 'offline local 전용은 push 금지');
+  }],
+  ['118 신규 record replace 중 실패는 원래 null profile/meta와 backup 원문을 복원', () => {
+    const box = mkBox();
+    const protectedMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackupRaw = ` ${JSON.stringify(mkBackup(JSON.stringify(createDefaultProfile()), protectedMeta, 1))} `;
+    const nextProfile = { ...createDefaultProfile(), collection: { sanpan: 1 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    box.data[PROFILE_BACKUP_KEY] = protectedBackupRaw;
+    box.failOn = new Set([PROFILE_META_KEY]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta }, null, 2,
+      { backupPrevious: false }).ok, '중간 실패');
+    assert(box.data[BONPURI_PROFILE_KEY] === undefined, 'profile null 복원');
+    assert(box.data[PROFILE_META_KEY] === undefined, 'meta null 복원');
+    assert(box.data[PROFILE_BACKUP_KEY] === protectedBackupRaw, 'backup 원문 보존');
+    assert(readJournal(box.storage) === null, 'rollback 뒤 journal 정리');
+  }],
+  ['119 즉시 rollback도 한 번 실패하면 journal이 남고 재로드가 rollback을 완결', () => {
+    const box = mkBox();
+    const oldProfile = { ...createDefaultProfile(), collection: { jacheongbi: 2 } };
+    const oldMeta = createProfileMeta({ kind: 'google', uid: 'uid-A' }, 1, 'dev-A');
+    const protectedBackup = mkBackup(JSON.stringify({ ...oldProfile, runsCompleted: 7 }), oldMeta, 1);
+    const nextProfile = { ...createDefaultProfile(), collection: { sanpan: 2 } };
+    const nextMeta = createProfileMeta({ kind: 'google', uid: 'uid-B' }, 2, 'dev-B');
+    const oldProfileRaw = ` ${JSON.stringify(oldProfile)} `;
+    const oldMetaRaw = `${JSON.stringify(oldMeta)} `;
+    const oldBackupRaw = ` ${JSON.stringify(protectedBackup)}`;
+    box.data[BONPURI_PROFILE_KEY] = oldProfileRaw;
+    box.data[PROFILE_META_KEY] = oldMetaRaw;
+    box.data[PROFILE_BACKUP_KEY] = oldBackupRaw;
+    box.failAt[PROFILE_BACKUP_KEY] = new Set([1]);
+    box.failAt[BONPURI_PROFILE_KEY] = new Set([2]);
+    assert(!replaceProfileRecord(box.storage, { profile: nextProfile, meta: nextMeta },
+      { profile: oldProfile, meta: oldMeta }, 2).ok, 'commit과 즉시 rollback 실패 반환');
+    const journal = readJournal(box.storage);
+    assert(journal?.operation === 'replace', '미완료 rollback journal 유지');
+    equal(JSON.parse(journal.target.payload), nextProfile, '적용 target 분리');
+    assert(journal.rollback.profile === oldProfileRaw && journal.rollback.meta === oldMetaRaw &&
+      journal.rollback.backup === oldBackupRaw, '정확한 raw rollback snapshot 분리');
+    assert(journal.successBackup !== oldBackupRaw, '성공 시 backup target 분리');
+    assert(box.data[BONPURI_PROFILE_KEY] !== oldProfileRaw, '첫 rollback의 profile 복원 실패 재현');
+    box.failAt = {};
+    const recovered = recoverFromJournal(box.storage);
+    assert(recovered.kind === 'rolled-back', '재로드는 target이 아니라 rollback 완결');
+    assert(box.data[BONPURI_PROFILE_KEY] === oldProfileRaw, 'profile 원문 최종 복원');
+    assert(box.data[PROFILE_META_KEY] === oldMetaRaw, 'meta 원문 최종 복원');
+    assert(box.data[PROFILE_BACKUP_KEY] === oldBackupRaw, 'backup 원문 최종 복원');
+    assert(readJournal(box.storage) === null, '복구 완료 후 journal 정리');
   }],
 ];
 

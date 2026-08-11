@@ -59,6 +59,23 @@ small { color: #c9bda7; }
 .secondary { color: #f4ead4; background: transparent; }
 .primary:disabled { opacity: .45; }
 .notice { padding: 10px; border: 1px solid #b94438; border-radius: 8px; color: #ffd1c9 !important; background: #6b201c55; }
+.bonpuri-cloud-gate { width: min(100%, 680px); }
+.bonpuri-cloud-panel { width: 100%; padding: clamp(16px, 4vw, 28px); text-align: left; }
+.bonpuri-cloud-panel > strong { display: block; color: #f2d16b; font-size: 1.08rem; }
+.bonpuri-cloud-panel > p { margin: 8px 0 15px; color: #d7c9b1; line-height: 1.55; }
+.bonpuri-cloud-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.bonpuri-cloud-summary { min-width: 0; padding: 12px; border: 1px solid #806a49; border-radius: 10px; background: #0b090733; }
+.bonpuri-cloud-summary > strong { color: #dfc690; }
+.bonpuri-cloud-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; margin: 10px 0 0; }
+.bonpuri-cloud-summary dl div { min-width: 0; padding: 7px; border-radius: 7px; background: #fff1; }
+.bonpuri-cloud-summary dt { color: #c9bda7; font-size: .7rem; }
+.bonpuri-cloud-summary dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: .83rem; font-weight: 900; }
+.bonpuri-cloud-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bonpuri-account-link { display: inline-block; margin-top: 18px; color: #dfc690; }
+.bonpuri-cloud-badge { position: fixed; z-index: 40; top: max(8px, env(safe-area-inset-top)); right: max(8px, env(safe-area-inset-right)); min-height: 32px; max-width: min(70vw, 260px); padding: 6px 10px; border: 1px solid #806a49; border-radius: 999px; color: #f4ead4; background: #211c17ee; box-shadow: 0 3px 12px #0008; font-size: .72rem; }
+button.bonpuri-cloud-badge { cursor: pointer; }
+.bonpuri-cloud-badge--synced { border-color: #6e9875; color: #c9f2cf; }
+.bonpuri-cloud-badge--offline, .bonpuri-cloud-badge--error, .bonpuri-cloud-badge--conflict { border-color: #b94438; color: #ffd1c9; }
 .home-summary { width: 100%; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
 /* 승천 0~10을 버튼 11개로 늘어놓으면 모바일에서 못 누른다. 단계 조절 방식으로 두고 터치 44px 확보. */
 .ascension { width: 100%; text-align: left; }
@@ -260,6 +277,8 @@ small { color: #c9bda7; }
   .player { grid-template-columns: 1fr; }
   .ascension-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ascension-heading { flex-direction: column; align-items: flex-start; }
+  .bonpuri-cloud-choices, .bonpuri-cloud-actions { grid-template-columns: 1fr; }
+  .bonpuri-cloud-summary dl { grid-template-columns: 1fr 1fr; }
   .card { min-height: 151px; }
   .deck-row { grid-template-columns: minmax(105px, 1fr) minmax(135px, 1fr); }
   .rules-panel dl { grid-template-columns: 1fr; }

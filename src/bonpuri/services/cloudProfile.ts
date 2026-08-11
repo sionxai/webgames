@@ -83,6 +83,47 @@ export function readMeta(storage: StorageAdapter): ProfileMeta | null {
   }
 }
 
+export type LocalProfileSnapshot = {
+  profile: BonpuriProfile | null;
+  meta: ProfileMeta | null;
+  /** v1 덱이 기본 50장으로 바뀌었음을 사용자에게 알린다. */
+  migrated: boolean;
+  /** 메모리에서는 v3이지만 디스크 원문은 아직 v1/v2임을 뜻한다. */
+  needsMigration: boolean;
+};
+
+/**
+ * 소유권 판정 전 로컬 프로필을 읽는 순수 read 경계. v1/v2도 메모리에서만 변환하며,
+ * 사용자가 legacy/account-changed 선택을 마치기 전에는 어느 키도 쓰지 않는다.
+ */
+export function readLocalProfileSnapshot(storage: StorageAdapter):
+  { ok: true; local: LocalProfileSnapshot } | { ok: false; error: string } {
+  try {
+    const raw = storage.getItem(BONPURI_PROFILE_KEY);
+    if (raw === null) {
+      return {
+        ok: true,
+        local: { profile: null, meta: null, migrated: false, needsMigration: false },
+      };
+    }
+    const parsed = migrateProfile(JSON.parse(raw));
+    if (parsed === null) {
+      return { ok: false, error: '저장된 본풀이 기록의 형식이 올바르지 않습니다.' };
+    }
+    return {
+      ok: true,
+      local: {
+        profile: parsed.profile,
+        meta: readMeta(storage),
+        migrated: parsed.deckReset,
+        needsMigration: parsed.from !== 3,
+      },
+    };
+  } catch {
+    return { ok: false, error: '저장된 본풀이 기록을 읽지 못했습니다.' };
+  }
+}
+
 export type WriteResult = { ok: true } | { ok: false; error: string };
 
 export function writeMeta(storage: StorageAdapter, meta: ProfileMeta): WriteResult {
@@ -289,32 +330,56 @@ export function readBackup(storage: StorageAdapter): ProfileBackup | null {
 /** 프로필·메타를 한 덩어리로 다룬다. 둘 중 하나만 바뀐 상태는 존재해서는 안 된다. */
 export type ProfileRecord = { payload: string; meta: ProfileMeta };
 
-/**
- * 여러 키를 걸친 쓰기의 write-ahead journal.
- * target 을 적용하기 '전에' target 과 previous 를 함께 남긴다. 중간에 어디서 죽어도
- * 다음 로드에서 전진 복구(roll forward)로 일관된 상태에 도달할 수 있다.
- */
-export type ProfileJournal = {
+/** 기존 restoreBackup 전용 journal. 이 계약은 target으로 roll-forward한다. */
+export type RestoreProfileJournal = {
   schemaVersion: 1;
   operation: 'restore';
   startedAt: number;
-  /** 적용하려는 기록 */
   target: ProfileRecord;
-  /** 적용으로 밀려나는 현재 기록. 성공 후 새 backup 이 된다 */
   previous: ProfileRecord | null;
   previousSource: 'local' | 'cloud';
   previousProfileSchema: number;
 };
 
+/** replace 시작 직전 세 키의 원문. null도 값이며 rollback에서 정확히 복원한다. */
+export type ReplaceRawSnapshot = {
+  profile: string | null;
+  meta: string | null;
+  backup: string | null;
+};
+
+/** 신규 replace 전용 journal. 실패·재로드 시 target이 아니라 rollback으로 돌아간다. */
+export type ReplaceProfileJournal = {
+  schemaVersion: 2;
+  operation: 'replace';
+  startedAt: number;
+  target: ProfileRecord;
+  rollback: ReplaceRawSnapshot;
+  /** 성공했을 때 PROFILE_BACKUP_KEY에 남길 원문. 기존 backup 보존도 원문으로 고정한다. */
+  successBackup: string | null;
+};
+
+export type ProfileJournal = RestoreProfileJournal | ReplaceProfileJournal;
+
+const isProfileRecord = (value: unknown): value is ProfileRecord =>
+  isRecord(value) && typeof value.payload === 'string' && value.payload.length > 0 && isProfileMeta(value.meta);
+
+const isRawValue = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isReplaceRawSnapshot = (value: unknown): value is ReplaceRawSnapshot =>
+  isRecord(value) && isRawValue(value.profile) && isRawValue(value.meta) && isRawValue(value.backup);
+
 export function isProfileJournal(value: unknown): value is ProfileJournal {
-  if (!isRecord(value) || value.schemaVersion !== 1 || value.operation !== 'restore') return false;
-  if (!Number.isFinite(value.startedAt)) return false;
-  const isRecordShape = (v: unknown): boolean =>
-    isRecord(v) && typeof v.payload === 'string' && v.payload.length > 0 && isProfileMeta(v.meta);
-  if (!isRecordShape(value.target)) return false;
-  if (value.previous !== null && !isRecordShape(value.previous)) return false;
-  return (value.previousSource === 'local' || value.previousSource === 'cloud') &&
-    Number.isFinite(value.previousProfileSchema);
+  if (!isRecord(value) || !Number.isFinite(value.startedAt) || !isProfileRecord(value.target)) return false;
+  if (value.schemaVersion === 1 && value.operation === 'restore') {
+    return (value.previous === null || isProfileRecord(value.previous)) &&
+      (value.previousSource === 'local' || value.previousSource === 'cloud') &&
+      Number.isFinite(value.previousProfileSchema);
+  }
+  if (value.schemaVersion === 2 && value.operation === 'replace') {
+    return isReplaceRawSnapshot(value.rollback) && isRawValue(value.successBackup);
+  }
+  return false;
 }
 
 export function readJournal(storage: StorageAdapter): ProfileJournal | null {
@@ -328,12 +393,12 @@ export function readJournal(storage: StorageAdapter): ProfileJournal | null {
   }
 }
 
-/** journal 이 남긴 target 을 끝까지 밀어붙여 일관된 상태로 만든다. */
-function commitJournal(storage: CloudStorageAdapter, journal: ProfileJournal): WriteResult {
+/** 기존 restore journal의 target을 끝까지 밀어붙인다. */
+function commitRestoreJournal(storage: CloudStorageAdapter, journal: RestoreProfileJournal): WriteResult {
   try {
     storage.setItem(BONPURI_PROFILE_KEY, journal.target.payload);
   } catch {
-    return { ok: false, error: '복원한 기록을 저장하지 못했습니다.' };
+    return { ok: false, error: '변경할 기록을 저장하지 못했습니다.' };
   }
   const meta = writeMeta(storage, journal.target.meta);
   if (!meta.ok) return meta;
@@ -356,14 +421,88 @@ function commitJournal(storage: CloudStorageAdapter, journal: ProfileJournal): W
   return { ok: true };
 }
 
+function readReplaceSnapshot(storage: StorageAdapter):
+  { ok: true; snapshot: ReplaceRawSnapshot } | { ok: false; error: string } {
+  try {
+    return {
+      ok: true,
+      snapshot: {
+        profile: storage.getItem(BONPURI_PROFILE_KEY),
+        meta: storage.getItem(PROFILE_META_KEY),
+        backup: storage.getItem(PROFILE_BACKUP_KEY),
+      },
+    };
+  } catch {
+    return { ok: false, error: '기존 기록의 복구 지점을 읽지 못했습니다.' };
+  }
+}
+
+/** 이미 원하는 원문이면 쓰지 않는다. 실패 주입 중에도 원래 값인 키는 rollback을 막지 않는다. */
+function writeRawValue(storage: CloudStorageAdapter, key: string, target: string | null): boolean {
+  let current: string | null;
+  try {
+    current = storage.getItem(key);
+  } catch {
+    return false;
+  }
+  if (current === target) return true;
+  try {
+    if (target === null) storage.removeItem(key);
+    else storage.setItem(key, target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function removeJournal(storage: CloudStorageAdapter): boolean {
+  try {
+    storage.removeItem(PROFILE_JOURNAL_KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function rollbackReplaceJournal(storage: CloudStorageAdapter, journal: ReplaceProfileJournal): WriteResult {
+  const profile = writeRawValue(storage, BONPURI_PROFILE_KEY, journal.rollback.profile);
+  const meta = writeRawValue(storage, PROFILE_META_KEY, journal.rollback.meta);
+  const backup = writeRawValue(storage, PROFILE_BACKUP_KEY, journal.rollback.backup);
+  if (!profile || !meta || !backup) {
+    return { ok: false, error: '원래 기록을 모두 복구하지 못했습니다. 다음 실행에서 다시 복구합니다.' };
+  }
+  if (!removeJournal(storage)) {
+    return { ok: false, error: '원래 기록은 복구했지만 복구 표시를 정리하지 못했습니다.' };
+  }
+  return { ok: true };
+}
+
+function commitReplaceJournal(storage: CloudStorageAdapter, journal: ReplaceProfileJournal): WriteResult {
+  const targetMeta = JSON.stringify(journal.target.meta);
+  if (!writeRawValue(storage, BONPURI_PROFILE_KEY, journal.target.payload)) {
+    return { ok: false, error: '변경할 기록을 저장하지 못했습니다.' };
+  }
+  if (!writeRawValue(storage, PROFILE_META_KEY, targetMeta)) {
+    return { ok: false, error: '저장 소유자 정보를 기록하지 못했습니다.' };
+  }
+  if (!writeRawValue(storage, PROFILE_BACKUP_KEY, journal.successBackup)) {
+    return { ok: false, error: '이전 기록을 백업하지 못했습니다.' };
+  }
+  if (!removeJournal(storage)) {
+    return { ok: false, error: '기록 변경을 확정하지 못했습니다.' };
+  }
+  return { ok: true };
+}
+
 export type RecoverResult =
   | { kind: 'nothing' }
   | { kind: 'recovered'; profile: BonpuriProfile }
+  | { kind: 'rolled-back'; profile: BonpuriProfile | null }
   | { kind: 'failed'; error: string };
 
 /**
- * 로드 시점에 미완료 journal 을 감지해 복구한다.
- * target 은 journal 을 쓰기 전에 이미 검증된 기록이므로 전진 복구가 안전하다.
+ * 로드 시점에 미완료 journal 을 감지해 복구한다. restore는 기존대로 target으로 전진 복구하고,
+ * replace는 target을 적용하지 않고 시작 직전 raw snapshot으로 rollback한다.
  * 손상된 journal 은 현재 기록을 건드리지 않고 지운다 — 무엇을 하려던 건지 알 수 없으면 아무것도 하지 않는다.
  */
 export function recoverFromJournal(storage: CloudStorageAdapter): RecoverResult {
@@ -374,12 +513,23 @@ export function recoverFromJournal(storage: CloudStorageAdapter): RecoverResult 
     try { storage.removeItem(PROFILE_JOURNAL_KEY); } catch { /* 지우지 못해도 기록은 무변경 */ }
     return { kind: 'nothing' };
   }
+  if (journal.operation === 'replace') {
+    const rolledBack = rollbackReplaceJournal(storage, journal);
+    if (!rolledBack.ok) return { kind: 'failed', error: rolledBack.error };
+    if (journal.rollback.profile === null) return { kind: 'rolled-back', profile: null };
+    try {
+      const migrated = migrateProfile(JSON.parse(journal.rollback.profile));
+      return { kind: 'rolled-back', profile: migrated?.profile ?? null };
+    } catch {
+      return { kind: 'rolled-back', profile: null };
+    }
+  }
   const parsed = parseCloudPayload(journal.target.payload);
   if (!parsed.ok) {
     try { storage.removeItem(PROFILE_JOURNAL_KEY); } catch { /* 무변경 */ }
     return { kind: 'failed', error: parsed.error };
   }
-  const committed = commitJournal(storage, journal);
+  const committed = commitRestoreJournal(storage, journal);
   if (!committed.ok) return { kind: 'failed', error: committed.error };
   return { kind: 'recovered', profile: parsed.profile };
 }
@@ -387,6 +537,101 @@ export function recoverFromJournal(storage: CloudStorageAdapter): RecoverResult 
 export type RestoreResult =
   | { ok: true; profile: BonpuriProfile; meta: ProfileMeta }
   | { ok: false; error: string };
+
+export type LocalProfileRecord = {
+  profile: BonpuriProfile;
+  /** null 은 소유자 메타가 없던 구버전 로컬 기록을 뜻한다. */
+  meta: ProfileMeta | null;
+};
+
+export type ReplaceProfileOptions = {
+  previousSource?: 'local' | 'cloud';
+  /** false면 교체 성공 시에도 기존 PROFILE_BACKUP_KEY 원문을 보존한다. */
+  backupPrevious?: boolean;
+  /** 디스크 current와 다른, 선택하지 않은 기록을 backup 대상으로 지정할 때 사용한다. */
+  backupRecord?: LocalProfileRecord;
+};
+
+/**
+ * 클라우드 기록 적용, 새 계정 생성, 소유자 전환이 공유하는 원자적 로컬 교체 경계.
+ * 호출자는 이 함수가 성공하기 전에 target 을 화면 상태로 적용하면 안 된다.
+ *
+ * 순서는 journal → profile → meta → backup → journal 정리다. 중간 실패 시 journal의
+ * 시작 직전 raw snapshot으로 즉시 rollback하고, rollback이 미완료면 다음 로드가 마저 복원한다.
+ * 기존 기록에 메타가 없으면 legacy-local 소유자로 백업해, 새 계정의 소유물로
+ * 조용히 재분류하지 않는다.
+ */
+export function replaceProfileRecord(
+  storage: CloudStorageAdapter,
+  target: { profile: BonpuriProfile; meta: ProfileMeta },
+  current: LocalProfileRecord | null,
+  now: number,
+  options: ReplaceProfileOptions = {},
+): RestoreResult {
+  const targetPayload = JSON.stringify(target.profile);
+  const parsedTarget = parseCloudPayload(targetPayload);
+  if (!parsedTarget.ok || parsedTarget.from !== 3 || !isProfileMeta(target.meta)) {
+    return { ok: false, error: '변경할 기록이 올바르지 않습니다.' };
+  }
+
+  const backupCandidate = options.backupRecord ?? current;
+  let backupRecord: ProfileRecord | null = null;
+  if (backupCandidate !== null) {
+    const previousPayload = JSON.stringify(backupCandidate.profile);
+    const parsedPrevious = parseCloudPayload(previousPayload);
+    if (!parsedPrevious.ok || parsedPrevious.from !== 3) {
+      return { ok: false, error: '기존 기록을 보존할 수 없어 변경하지 않았습니다.' };
+    }
+    backupRecord = {
+      payload: previousPayload,
+      meta: backupCandidate.meta ?? {
+        schemaVersion: 1,
+        owner: { kind: 'legacy-local' },
+        savedAt: 0,
+        device: target.meta.device,
+      },
+    };
+  }
+
+  const snapshot = readReplaceSnapshot(storage);
+  if (!snapshot.ok) return snapshot;
+  const successBackup = options.backupPrevious === false || backupRecord === null
+    ? snapshot.snapshot.backup
+    : JSON.stringify({
+      schemaVersion: 2,
+      payload: backupRecord.payload,
+      source: options.previousSource ?? 'local',
+      backedUpAt: now,
+      meta: backupRecord.meta,
+      profileSchema: backupCandidate?.profile.schemaVersion ?? target.profile.schemaVersion,
+    } satisfies ProfileBackup);
+
+  const journal: ReplaceProfileJournal = {
+    schemaVersion: 2,
+    operation: 'replace',
+    startedAt: now,
+    target: { payload: targetPayload, meta: target.meta },
+    rollback: snapshot.snapshot,
+    successBackup,
+  };
+  try {
+    storage.setItem(PROFILE_JOURNAL_KEY, JSON.stringify(journal));
+  } catch {
+    return { ok: false, error: '기록 변경을 시작하지 못했습니다. 기존 기록은 그대로입니다.' };
+  }
+
+  const committed = commitReplaceJournal(storage, journal);
+  if (!committed.ok) {
+    const rolledBack = rollbackReplaceJournal(storage, journal);
+    return {
+      ok: false,
+      error: rolledBack.ok
+        ? committed.error
+        : `${committed.error} ${rolledBack.error}`,
+    };
+  }
+  return { ok: true, profile: parsedTarget.profile, meta: target.meta };
+}
 
 /**
  * 백업을 되살린다. 순서가 계약이다 —
@@ -405,7 +650,7 @@ export function restoreBackup(
   const parsed = parseCloudPayload(backup.payload);
   if (!parsed.ok) return { ok: false, error: '이전 기록을 복원하지 못했습니다.' };
 
-  const journal: ProfileJournal = {
+  const journal: RestoreProfileJournal = {
     schemaVersion: 1,
     operation: 'restore',
     startedAt: now,
@@ -421,7 +666,7 @@ export function restoreBackup(
     // journal 을 남기지 못하면 시작하지 않는다. 아무것도 바뀌지 않았다.
     return { ok: false, error: '복원을 시작하지 못했습니다. 이전 기록은 그대로입니다.' };
   }
-  const committed = commitJournal(storage, journal);
+  const committed = commitRestoreJournal(storage, journal);
   if (!committed.ok) return { ok: false, error: committed.error };
   return { ok: true, profile: parsed.profile, meta: backup.meta };
 }
